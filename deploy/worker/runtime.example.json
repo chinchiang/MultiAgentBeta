@@ -1,0 +1,11 @@
+{
+  "profiles": {
+    "default": {
+      "backend": "docker",
+      "work_root": "/var/lib/vibeaudit/workers",
+      "database_url_env": "VIBEAUDIT_DATABASE_URL",
+      "ttl_seconds": 5,
+      "image_pins": {}
+    }
+  }
+}

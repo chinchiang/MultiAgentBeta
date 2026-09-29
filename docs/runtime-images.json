@@ -1,0 +1,65 @@
+{
+  "worker": {
+    "reference": "vibeaudit-worker:test",
+    "image_id": "sha256:f36919dd1e762fcde1a0fcdb246a183b57ec5731988b1bac5214d93eecde8ad9",
+    "repository_digests": [
+      "vibeaudit-worker@sha256:f36919dd1e762fcde1a0fcdb246a183b57ec5731988b1bac5214d93eecde8ad9"
+    ]
+  },
+  "semgrep": {
+    "reference": "semgrep/semgrep:1.153.0",
+    "image_id": "sha256:6fe804189b0cc51d2f174882a228666ddb8835685bced62ab3aa8b231b7e6af1",
+    "repository_digests": [
+      "semgrep/semgrep@sha256:6fe804189b0cc51d2f174882a228666ddb8835685bced62ab3aa8b231b7e6af1"
+    ]
+  },
+  "gitleaks": {
+    "reference": "vibeaudit-gitleaks:8.30.1",
+    "image_id": "sha256:005ce508b81775bd644f4052e05fd3b7135db5302fc302ea355e5a770b53f620",
+    "repository_digests": [
+      "vibeaudit-gitleaks@sha256:005ce508b81775bd644f4052e05fd3b7135db5302fc302ea355e5a770b53f620"
+    ]
+  },
+  "osv": {
+    "reference": "vibeaudit-osv:2.3.5",
+    "image_id": "sha256:dda023d3b7fcc1482a3c06d3a9f682ad476b7410c0e4697eb021a507bd4b0f55",
+    "repository_digests": [
+      "vibeaudit-osv@sha256:dda023d3b7fcc1482a3c06d3a9f682ad476b7410c0e4697eb021a507bd4b0f55"
+    ]
+  },
+  "zap": {
+    "reference": "ghcr.io/zaproxy/zaproxy:2.17.0",
+    "image_id": "sha256:781a2bdaea47324e7bab583e2263f21d257b0aee61ed51521a5be45f5f5081ef",
+    "repository_digests": [
+      "ghcr.io/zaproxy/zaproxy@sha256:781a2bdaea47324e7bab583e2263f21d257b0aee61ed51521a5be45f5f5081ef"
+    ]
+  },
+  "schemathesis": {
+    "reference": "vibeaudit-tools:integration",
+    "image_id": "sha256:f4f438037d33ae77aa0f845b9b6989dd3396c7ac103fd9b8b27d6c94eb8b3b72",
+    "repository_digests": [
+      "vibeaudit-tools@sha256:f4f438037d33ae77aa0f845b9b6989dd3396c7ac103fd9b8b27d6c94eb8b3b72"
+    ]
+  },
+  "playwright": {
+    "reference": "vibeaudit-tools:integration",
+    "image_id": "sha256:f4f438037d33ae77aa0f845b9b6989dd3396c7ac103fd9b8b27d6c94eb8b3b72",
+    "repository_digests": [
+      "vibeaudit-tools@sha256:f4f438037d33ae77aa0f845b9b6989dd3396c7ac103fd9b8b27d6c94eb8b3b72"
+    ]
+  },
+  "promptfoo": {
+    "reference": "vibeaudit-tools:integration",
+    "image_id": "sha256:f4f438037d33ae77aa0f845b9b6989dd3396c7ac103fd9b8b27d6c94eb8b3b72",
+    "repository_digests": [
+      "vibeaudit-tools@sha256:f4f438037d33ae77aa0f845b9b6989dd3396c7ac103fd9b8b27d6c94eb8b3b72"
+    ]
+  },
+  "pyrit": {
+    "reference": "vibeaudit-tools:integration",
+    "image_id": "sha256:f4f438037d33ae77aa0f845b9b6989dd3396c7ac103fd9b8b27d6c94eb8b3b72",
+    "repository_digests": [
+      "vibeaudit-tools@sha256:f4f438037d33ae77aa0f845b9b6989dd3396c7ac103fd9b8b27d6c94eb8b3b72"
+    ]
+  }
+}

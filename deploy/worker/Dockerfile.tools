@@ -1,0 +1,23 @@
+# Build-time internet is allowed for provisioning. Runtime has --network none.
+# The final image ID is recorded and is the only value accepted by the runtime.
+FROM node@sha256:a9f5f7c91a432850b2a8a7797adf5eadb6c733ceed61167806cee7ea7fbc29df AS node
+FROM python@sha256:392307d22300de8b5986851a12d9176dfc0fc073e65bf6523ebd7dcbeb23564e
+COPY --from=node /usr/local/bin/node /usr/local/bin/node
+COPY --from=node /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
+RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends libodbc2 build-essential \
+ && rm -rf /var/lib/apt/lists/*
+RUN pip install --no-cache-dir schemathesis==4.28.0 pyrit==1.1.0 \
+ && pip freeze > /opt/python-tool-versions.lock.txt
+WORKDIR /opt/vibe-tools
+RUN npm init -y \
+ && npm install --save-exact --no-audit --no-fund playwright@1.63.0 promptfoo@0.123.1 \
+ && ln -s /opt/vibe-tools/node_modules/.bin/promptfoo /usr/local/bin/promptfoo \
+ && npm cache clean --force
+RUN mkdir -p /node_modules \
+ && ln -s /opt/vibe-tools/node_modules/playwright /node_modules/playwright
+ENV HOME=/tmp DO_NOT_TRACK=1 PROMPTFOO_DISABLE_TELEMETRY=1
+WORKDIR /tmp
+USER 65533:65533
+ENTRYPOINT ["python3"]

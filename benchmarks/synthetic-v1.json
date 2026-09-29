@@ -1,0 +1,892 @@
+{
+  "id": "synthetic-workflow-v1",
+  "version": "1",
+  "synthetic": true,
+  "description": "Plumbing-only fixture. All gold awaits two independent human reviewers. Outputs are assigned fixtures, not predictions by named models.",
+  "projects": [
+    {
+      "id": "training-calculator",
+      "family": "training-calculator",
+      "split": "train",
+      "samples": [
+        {
+          "id": "training-calculator-sample",
+          "input": {
+            "files": [
+              {
+                "path": "app.py",
+                "content": "def calculate(user_input):\n    return eval(user_input)\n"
+              }
+            ],
+            "description": "Synthetic authorization scenario; never execute this source.",
+            "scenario": "training-calculator"
+          },
+          "gold": {
+            "positive_ids": [
+              "ast:eval:app.py:2",
+              "training-calculator:object-authorization"
+            ],
+            "negative_ids": [
+              "training-calculator:false-positive"
+            ],
+            "human_reviewed": false,
+            "reviewers": [],
+            "oracle_verified": true,
+            "oracle_evidence": [
+              "synthetic-fixture-contract:training-calculator"
+            ],
+            "synthetic": true
+          },
+          "responses": {
+            "traditional": [
+              {
+                "finding_ids": [
+                  "ast:eval:app.py:2"
+                ],
+                "reproduced_ids": [],
+                "status": "completed",
+                "tokens": 0,
+                "requests": 0,
+                "model_calls": 0,
+                "latency_seconds": 0.01,
+                "cost_usd": null
+              }
+            ],
+            "a": [
+              {
+                "finding_ids": [
+                  "ast:eval:app.py:2",
+                  "training-calculator:false-positive"
+                ],
+                "reproduced_ids": [
+                  "ast:eval:app.py:2"
+                ],
+                "status": "completed",
+                "tokens": 600,
+                "requests": 1,
+                "model_calls": 1,
+                "latency_seconds": 0.4,
+                "cost_usd": null
+              },
+              {
+                "finding_ids": [
+                  "ast:eval:app.py:2"
+                ],
+                "reproduced_ids": [
+                  "ast:eval:app.py:2"
+                ],
+                "status": "completed",
+                "tokens": 600,
+                "requests": 1,
+                "model_calls": 1,
+                "latency_seconds": 0.4,
+                "cost_usd": null
+              },
+              {
+                "finding_ids": [
+                  "ast:eval:app.py:2"
+                ],
+                "reproduced_ids": [
+                  "ast:eval:app.py:2"
+                ],
+                "status": "completed",
+                "tokens": 600,
+                "requests": 1,
+                "model_calls": 1,
+                "latency_seconds": 0.4,
+                "cost_usd": null
+              }
+            ],
+            "b": [
+              {
+                "finding_ids": [
+                  "training-calculator:object-authorization"
+                ],
+                "reproduced_ids": [
+                  "training-calculator:object-authorization"
+                ],
+                "status": "completed",
+                "tokens": 600,
+                "requests": 1,
+                "model_calls": 1,
+                "latency_seconds": 0.4,
+                "cost_usd": null
+              },
+              {
+                "finding_ids": [
+                  "training-calculator:object-authorization"
+                ],
+                "reproduced_ids": [
+                  "training-calculator:object-authorization"
+                ],
+                "status": "completed",
+                "tokens": 600,
+                "requests": 1,
+                "model_calls": 1,
+                "latency_seconds": 0.4,
+                "cost_usd": null
+              },
+              {
+                "finding_ids": [],
+                "reproduced_ids": [],
+                "status": "completed",
+                "tokens": 600,
+                "requests": 1,
+                "model_calls": 1,
+                "latency_seconds": 0.4,
+                "cost_usd": null
+              }
+            ],
+            "c": [
+              {
+                "finding_ids": [],
+                "reproduced_ids": [],
+                "status": "completed",
+                "tokens": 600,
+                "requests": 1,
+                "model_calls": 1,
+                "latency_seconds": 0.4,
+                "cost_usd": null
+              },
+              {
+                "finding_ids": [
+                  "ast:eval:app.py:2"
+                ],
+                "reproduced_ids": [
+                  "ast:eval:app.py:2"
+                ],
+                "status": "completed",
+                "tokens": 600,
+                "requests": 1,
+                "model_calls": 1,
+                "latency_seconds": 0.4,
+                "cost_usd": null
+              },
+              {
+                "finding_ids": [
+                  "training-calculator:object-authorization"
+                ],
+                "reproduced_ids": [
+                  "training-calculator:object-authorization"
+                ],
+                "status": "completed",
+                "tokens": 600,
+                "requests": 1,
+                "model_calls": 1,
+                "latency_seconds": 0.4,
+                "cost_usd": null
+              }
+            ],
+            "debate": [
+              {
+                "finding_ids": [
+                  "ast:eval:app.py:2"
+                ],
+                "reproduced_ids": [
+                  "ast:eval:app.py:2"
+                ],
+                "status": "completed",
+                "tokens": 600,
+                "requests": 1,
+                "model_calls": 1,
+                "latency_seconds": 0.4,
+                "cost_usd": null
+              },
+              {
+                "finding_ids": [
+                  "ast:eval:app.py:2",
+                  "training-calculator:object-authorization"
+                ],
+                "reproduced_ids": [
+                  "ast:eval:app.py:2",
+                  "training-calculator:object-authorization"
+                ],
+                "status": "completed",
+                "tokens": 600,
+                "requests": 1,
+                "model_calls": 1,
+                "latency_seconds": 0.4,
+                "cost_usd": null
+              },
+              {
+                "finding_ids": [
+                  "training-calculator:false-positive"
+                ],
+                "reproduced_ids": [],
+                "status": "completed",
+                "tokens": 600,
+                "requests": 1,
+                "model_calls": 1,
+                "latency_seconds": 0.4,
+                "cost_usd": null
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "validation-reports",
+      "family": "validation-reports",
+      "split": "validation",
+      "samples": [
+        {
+          "id": "validation-reports-sample",
+          "input": {
+            "files": [
+              {
+                "path": "app.py",
+                "content": "def calculate(user_input):\n    return eval(user_input)\n"
+              }
+            ],
+            "description": "Synthetic authorization scenario; never execute this source.",
+            "scenario": "validation-reports"
+          },
+          "gold": {
+            "positive_ids": [
+              "ast:eval:app.py:2",
+              "validation-reports:object-authorization"
+            ],
+            "negative_ids": [
+              "validation-reports:false-positive"
+            ],
+            "human_reviewed": false,
+            "reviewers": [],
+            "oracle_verified": true,
+            "oracle_evidence": [
+              "synthetic-fixture-contract:validation-reports"
+            ],
+            "synthetic": true
+          },
+          "responses": {
+            "traditional": [
+              {
+                "finding_ids": [
+                  "ast:eval:app.py:2"
+                ],
+                "reproduced_ids": [],
+                "status": "completed",
+                "tokens": 0,
+                "requests": 0,
+                "model_calls": 0,
+                "latency_seconds": 0.01,
+                "cost_usd": null
+              }
+            ],
+            "a": [
+              {
+                "finding_ids": [
+                  "ast:eval:app.py:2",
+                  "validation-reports:false-positive"
+                ],
+                "reproduced_ids": [
+                  "ast:eval:app.py:2"
+                ],
+                "status": "completed",
+                "tokens": 600,
+                "requests": 1,
+                "model_calls": 1,
+                "latency_seconds": 0.4,
+                "cost_usd": null
+              },
+              {
+                "finding_ids": [
+                  "ast:eval:app.py:2"
+                ],
+                "reproduced_ids": [
+                  "ast:eval:app.py:2"
+                ],
+                "status": "completed",
+                "tokens": 600,
+                "requests": 1,
+                "model_calls": 1,
+                "latency_seconds": 0.4,
+                "cost_usd": null
+              },
+              {
+                "finding_ids": [
+                  "ast:eval:app.py:2"
+                ],
+                "reproduced_ids": [
+                  "ast:eval:app.py:2"
+                ],
+                "status": "completed",
+                "tokens": 600,
+                "requests": 1,
+                "model_calls": 1,
+                "latency_seconds": 0.4,
+                "cost_usd": null
+              }
+            ],
+            "b": [
+              {
+                "finding_ids": [
+                  "validation-reports:object-authorization"
+                ],
+                "reproduced_ids": [
+                  "validation-reports:object-authorization"
+                ],
+                "status": "completed",
+                "tokens": 600,
+                "requests": 1,
+                "model_calls": 1,
+                "latency_seconds": 0.4,
+                "cost_usd": null
+              },
+              {
+                "finding_ids": [
+                  "validation-reports:object-authorization"
+                ],
+                "reproduced_ids": [
+                  "validation-reports:object-authorization"
+                ],
+                "status": "completed",
+                "tokens": 600,
+                "requests": 1,
+                "model_calls": 1,
+                "latency_seconds": 0.4,
+                "cost_usd": null
+              },
+              {
+                "finding_ids": [],
+                "reproduced_ids": [],
+                "status": "completed",
+                "tokens": 600,
+                "requests": 1,
+                "model_calls": 1,
+                "latency_seconds": 0.4,
+                "cost_usd": null
+              }
+            ],
+            "c": [
+              {
+                "finding_ids": [],
+                "reproduced_ids": [],
+                "status": "completed",
+                "tokens": 600,
+                "requests": 1,
+                "model_calls": 1,
+                "latency_seconds": 0.4,
+                "cost_usd": null
+              },
+              {
+                "finding_ids": [
+                  "ast:eval:app.py:2"
+                ],
+                "reproduced_ids": [
+                  "ast:eval:app.py:2"
+                ],
+                "status": "completed",
+                "tokens": 600,
+                "requests": 1,
+                "model_calls": 1,
+                "latency_seconds": 0.4,
+                "cost_usd": null
+              },
+              {
+                "finding_ids": [
+                  "validation-reports:object-authorization"
+                ],
+                "reproduced_ids": [
+                  "validation-reports:object-authorization"
+                ],
+                "status": "completed",
+                "tokens": 600,
+                "requests": 1,
+                "model_calls": 1,
+                "latency_seconds": 0.4,
+                "cost_usd": null
+              }
+            ],
+            "debate": [
+              {
+                "finding_ids": [
+                  "ast:eval:app.py:2"
+                ],
+                "reproduced_ids": [
+                  "ast:eval:app.py:2"
+                ],
+                "status": "completed",
+                "tokens": 600,
+                "requests": 1,
+                "model_calls": 1,
+                "latency_seconds": 0.4,
+                "cost_usd": null
+              },
+              {
+                "finding_ids": [
+                  "ast:eval:app.py:2",
+                  "validation-reports:object-authorization"
+                ],
+                "reproduced_ids": [
+                  "ast:eval:app.py:2",
+                  "validation-reports:object-authorization"
+                ],
+                "status": "completed",
+                "tokens": 600,
+                "requests": 1,
+                "model_calls": 1,
+                "latency_seconds": 0.4,
+                "cost_usd": null
+              },
+              {
+                "finding_ids": [
+                  "validation-reports:false-positive"
+                ],
+                "reproduced_ids": [],
+                "status": "completed",
+                "tokens": 600,
+                "requests": 1,
+                "model_calls": 1,
+                "latency_seconds": 0.4,
+                "cost_usd": null
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "test-cart",
+      "family": "test-cart",
+      "split": "test",
+      "samples": [
+        {
+          "id": "test-cart-sample",
+          "input": {
+            "files": [
+              {
+                "path": "app.py",
+                "content": "def calculate(user_input):\n    return eval(user_input)\n"
+              }
+            ],
+            "description": "Synthetic authorization scenario; never execute this source.",
+            "scenario": "test-cart"
+          },
+          "gold": {
+            "positive_ids": [
+              "ast:eval:app.py:2",
+              "test-cart:object-authorization"
+            ],
+            "negative_ids": [
+              "test-cart:false-positive"
+            ],
+            "human_reviewed": false,
+            "reviewers": [],
+            "oracle_verified": true,
+            "oracle_evidence": [
+              "synthetic-fixture-contract:test-cart"
+            ],
+            "synthetic": true
+          },
+          "responses": {
+            "traditional": [
+              {
+                "finding_ids": [
+                  "ast:eval:app.py:2"
+                ],
+                "reproduced_ids": [],
+                "status": "completed",
+                "tokens": 0,
+                "requests": 0,
+                "model_calls": 0,
+                "latency_seconds": 0.01,
+                "cost_usd": null
+              }
+            ],
+            "a": [
+              {
+                "finding_ids": [
+                  "ast:eval:app.py:2",
+                  "test-cart:false-positive"
+                ],
+                "reproduced_ids": [
+                  "ast:eval:app.py:2"
+                ],
+                "status": "completed",
+                "tokens": 600,
+                "requests": 1,
+                "model_calls": 1,
+                "latency_seconds": 0.4,
+                "cost_usd": null
+              },
+              {
+                "finding_ids": [
+                  "ast:eval:app.py:2"
+                ],
+                "reproduced_ids": [
+                  "ast:eval:app.py:2"
+                ],
+                "status": "completed",
+                "tokens": 600,
+                "requests": 1,
+                "model_calls": 1,
+                "latency_seconds": 0.4,
+                "cost_usd": null
+              },
+              {
+                "finding_ids": [
+                  "ast:eval:app.py:2"
+                ],
+                "reproduced_ids": [
+                  "ast:eval:app.py:2"
+                ],
+                "status": "completed",
+                "tokens": 600,
+                "requests": 1,
+                "model_calls": 1,
+                "latency_seconds": 0.4,
+                "cost_usd": null
+              }
+            ],
+            "b": [
+              {
+                "finding_ids": [
+                  "test-cart:object-authorization"
+                ],
+                "reproduced_ids": [
+                  "test-cart:object-authorization"
+                ],
+                "status": "completed",
+                "tokens": 600,
+                "requests": 1,
+                "model_calls": 1,
+                "latency_seconds": 0.4,
+                "cost_usd": null
+              },
+              {
+                "finding_ids": [
+                  "test-cart:object-authorization"
+                ],
+                "reproduced_ids": [
+                  "test-cart:object-authorization"
+                ],
+                "status": "completed",
+                "tokens": 600,
+                "requests": 1,
+                "model_calls": 1,
+                "latency_seconds": 0.4,
+                "cost_usd": null
+              },
+              {
+                "finding_ids": [],
+                "reproduced_ids": [],
+                "status": "completed",
+                "tokens": 600,
+                "requests": 1,
+                "model_calls": 1,
+                "latency_seconds": 0.4,
+                "cost_usd": null
+              }
+            ],
+            "c": [
+              {
+                "finding_ids": [],
+                "reproduced_ids": [],
+                "status": "completed",
+                "tokens": 600,
+                "requests": 1,
+                "model_calls": 1,
+                "latency_seconds": 0.4,
+                "cost_usd": null
+              },
+              {
+                "finding_ids": [
+                  "ast:eval:app.py:2"
+                ],
+                "reproduced_ids": [
+                  "ast:eval:app.py:2"
+                ],
+                "status": "completed",
+                "tokens": 600,
+                "requests": 1,
+                "model_calls": 1,
+                "latency_seconds": 0.4,
+                "cost_usd": null
+              },
+              {
+                "finding_ids": [
+                  "test-cart:object-authorization"
+                ],
+                "reproduced_ids": [
+                  "test-cart:object-authorization"
+                ],
+                "status": "completed",
+                "tokens": 600,
+                "requests": 1,
+                "model_calls": 1,
+                "latency_seconds": 0.4,
+                "cost_usd": null
+              }
+            ],
+            "debate": [
+              {
+                "finding_ids": [
+                  "ast:eval:app.py:2"
+                ],
+                "reproduced_ids": [
+                  "ast:eval:app.py:2"
+                ],
+                "status": "completed",
+                "tokens": 600,
+                "requests": 1,
+                "model_calls": 1,
+                "latency_seconds": 0.4,
+                "cost_usd": null
+              },
+              {
+                "finding_ids": [
+                  "ast:eval:app.py:2",
+                  "test-cart:object-authorization"
+                ],
+                "reproduced_ids": [
+                  "ast:eval:app.py:2",
+                  "test-cart:object-authorization"
+                ],
+                "status": "completed",
+                "tokens": 600,
+                "requests": 1,
+                "model_calls": 1,
+                "latency_seconds": 0.4,
+                "cost_usd": null
+              },
+              {
+                "finding_ids": [
+                  "test-cart:false-positive"
+                ],
+                "reproduced_ids": [],
+                "status": "completed",
+                "tokens": 600,
+                "requests": 1,
+                "model_calls": 1,
+                "latency_seconds": 0.4,
+                "cost_usd": null
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "test-notes",
+      "family": "test-notes",
+      "split": "test",
+      "samples": [
+        {
+          "id": "test-notes-sample",
+          "input": {
+            "files": [
+              {
+                "path": "app.py",
+                "content": "def calculate(user_input):\n    return eval(user_input)\n"
+              }
+            ],
+            "description": "Synthetic authorization scenario; never execute this source.",
+            "scenario": "test-notes"
+          },
+          "gold": {
+            "positive_ids": [
+              "ast:eval:app.py:2",
+              "test-notes:object-authorization"
+            ],
+            "negative_ids": [
+              "test-notes:false-positive"
+            ],
+            "human_reviewed": false,
+            "reviewers": [],
+            "oracle_verified": true,
+            "oracle_evidence": [
+              "synthetic-fixture-contract:test-notes"
+            ],
+            "synthetic": true
+          },
+          "responses": {
+            "traditional": [
+              {
+                "finding_ids": [
+                  "ast:eval:app.py:2"
+                ],
+                "reproduced_ids": [],
+                "status": "completed",
+                "tokens": 0,
+                "requests": 0,
+                "model_calls": 0,
+                "latency_seconds": 0.01,
+                "cost_usd": null
+              }
+            ],
+            "a": [
+              {
+                "finding_ids": [
+                  "ast:eval:app.py:2",
+                  "test-notes:false-positive"
+                ],
+                "reproduced_ids": [
+                  "ast:eval:app.py:2"
+                ],
+                "status": "completed",
+                "tokens": 600,
+                "requests": 1,
+                "model_calls": 1,
+                "latency_seconds": 0.4,
+                "cost_usd": null
+              },
+              {
+                "finding_ids": [
+                  "ast:eval:app.py:2"
+                ],
+                "reproduced_ids": [
+                  "ast:eval:app.py:2"
+                ],
+                "status": "completed",
+                "tokens": 600,
+                "requests": 1,
+                "model_calls": 1,
+                "latency_seconds": 0.4,
+                "cost_usd": null
+              },
+              {
+                "finding_ids": [
+                  "ast:eval:app.py:2"
+                ],
+                "reproduced_ids": [
+                  "ast:eval:app.py:2"
+                ],
+                "status": "completed",
+                "tokens": 600,
+                "requests": 1,
+                "model_calls": 1,
+                "latency_seconds": 0.4,
+                "cost_usd": null
+              }
+            ],
+            "b": [
+              {
+                "finding_ids": [
+                  "test-notes:object-authorization"
+                ],
+                "reproduced_ids": [
+                  "test-notes:object-authorization"
+                ],
+                "status": "completed",
+                "tokens": 600,
+                "requests": 1,
+                "model_calls": 1,
+                "latency_seconds": 0.4,
+                "cost_usd": null
+              },
+              {
+                "finding_ids": [
+                  "test-notes:object-authorization"
+                ],
+                "reproduced_ids": [
+                  "test-notes:object-authorization"
+                ],
+                "status": "completed",
+                "tokens": 600,
+                "requests": 1,
+                "model_calls": 1,
+                "latency_seconds": 0.4,
+                "cost_usd": null
+              },
+              {
+                "finding_ids": [],
+                "reproduced_ids": [],
+                "status": "completed",
+                "tokens": 600,
+                "requests": 1,
+                "model_calls": 1,
+                "latency_seconds": 0.4,
+                "cost_usd": null
+              }
+            ],
+            "c": [
+              {
+                "finding_ids": [],
+                "reproduced_ids": [],
+                "status": "completed",
+                "tokens": 600,
+                "requests": 1,
+                "model_calls": 1,
+                "latency_seconds": 0.4,
+                "cost_usd": null
+              },
+              {
+                "finding_ids": [
+                  "ast:eval:app.py:2"
+                ],
+                "reproduced_ids": [
+                  "ast:eval:app.py:2"
+                ],
+                "status": "completed",
+                "tokens": 600,
+                "requests": 1,
+                "model_calls": 1,
+                "latency_seconds": 0.4,
+                "cost_usd": null
+              },
+              {
+                "finding_ids": [
+                  "test-notes:object-authorization"
+                ],
+                "reproduced_ids": [
+                  "test-notes:object-authorization"
+                ],
+                "status": "completed",
+                "tokens": 600,
+                "requests": 1,
+                "model_calls": 1,
+                "latency_seconds": 0.4,
+                "cost_usd": null
+              }
+            ],
+            "debate": [
+              {
+                "finding_ids": [
+                  "ast:eval:app.py:2"
+                ],
+                "reproduced_ids": [
+                  "ast:eval:app.py:2"
+                ],
+                "status": "completed",
+                "tokens": 600,
+                "requests": 1,
+                "model_calls": 1,
+                "latency_seconds": 0.4,
+                "cost_usd": null
+              },
+              {
+                "finding_ids": [
+                  "ast:eval:app.py:2",
+                  "test-notes:object-authorization"
+                ],
+                "reproduced_ids": [
+                  "ast:eval:app.py:2",
+                  "test-notes:object-authorization"
+                ],
+                "status": "completed",
+                "tokens": 600,
+                "requests": 1,
+                "model_calls": 1,
+                "latency_seconds": 0.4,
+                "cost_usd": null
+              },
+              {
+                "finding_ids": [
+                  "test-notes:false-positive"
+                ],
+                "reproduced_ids": [],
+                "status": "completed",
+                "tokens": 600,
+                "requests": 1,
+                "model_calls": 1,
+                "latency_seconds": 0.4,
+                "cost_usd": null
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,482 @@
+"""Bounded target transport and observation-based security oracles.
+
+No subprocess is launched by this module. Fixed scanner recipes are executed by
+worker_runtime; recipes alone are not evidence that scanners have run. Observations
+must come from this transport or an independently controlled local collector;
+target response JSON is never promoted to a tool ledger or identity evidence.
+"""
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import http.client
+import ipaddress
+import json
+import os
+import re
+import shutil
+import socket
+import ssl
+import threading
+import time
+from pathlib import Path
+from urllib.parse import urlsplit
+
+MAX_RESPONSE_BYTES = 256 * 1024
+MAX_REQUEST_BYTES = 64 * 1024
+REQUEST_TIMEOUT_SECONDS = 10.0
+MAX_REPETITIONS = 20
+_TRUSTED = {"adapter.http", "fixture.local", "collector.local"}
+_CREDENTIAL_ENV = re.compile(r"^VIBEAUDIT_[A-Z0-9_]+$")
+_HEADER_NAME = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
+_FORBIDDEN_HEADERS = {
+    "host", "authorization", "cookie", "proxy-authorization", "connection",
+    "transfer-encoding", "content-length", "upgrade", "expect", "trailer",
+    "proxy-connection", "x-forwarded-host", "forwarded",
+    "x-api-key", "api-key", "x-auth-token", "x-access-token",
+}
+
+
+class AdapterBlocked(ValueError):
+    """A policy restriction prevented a request; never include secret values."""
+
+
+class ResponseLimitError(ValueError):
+    pass
+
+
+def _result(status, reason, observations=None, requests=0):
+    return {
+        "status": status, "reason": reason, "observations": observations or [],
+        "evidence": [], "requests": requests,
+    }
+
+
+def _cancelled(event):
+    return event is not None and event.is_set()
+
+
+def _origin(manifest):
+    try:
+        raw = manifest.get("target_url", "")
+        if not isinstance(raw, str) or any(ord(c) < 33 for c in raw):
+            raise ValueError
+        parts = urlsplit(raw)
+        if (parts.scheme not in {"http", "https"} or not parts.hostname
+                or parts.username is not None or parts.password is not None
+                or parts.path not in {"", "/"} or parts.query or parts.fragment
+                or "\\" in raw or "%" in parts.netloc):
+            raise ValueError
+        host = parts.hostname.encode("idna").decode("ascii").lower()
+        port = parts.port or (443 if parts.scheme == "https" else 80)
+        if not 1 <= port <= 65535:
+            raise ValueError
+        return parts.scheme, host, port
+    except (ValueError, TypeError, UnicodeError):
+        raise AdapterBlocked("Target must be a single exact HTTP(S) origin without credentials, path or query.") from None
+
+
+def _pinned_address(host, port, allowed_ips):
+    try:
+        if not isinstance(allowed_ips, list) or any(not isinstance(item, str) for item in allowed_ips):
+            raise ValueError
+        allowed = {ipaddress.ip_address(item) for item in allowed_ips}
+    except (ValueError, TypeError):
+        raise AdapterBlocked("Allowed target IPs must be explicit IP addresses, not hostnames or ranges.") from None
+    if not allowed:
+        raise AdapterBlocked("No target IP addresses were explicitly authorized.")
+    try:
+        literal = ipaddress.ip_address(host)
+    except ValueError:
+        resolved = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        addresses = {ipaddress.ip_address(row[4][0]) for row in resolved}
+    else:
+        addresses = {literal}
+    if not addresses or not addresses.issubset(allowed):
+        raise AdapterBlocked("DNS returned an address outside the exact target IP allowlist.")
+    # The actual socket is opened with this numeric address, never the DNS name.
+    return str(sorted(addresses, key=lambda item: (item.version, int(item)))[0])
+
+
+class _PinnedHTTPConnection(http.client.HTTPConnection):
+    def __init__(self, host, port, *, pinned_ip, timeout):
+        super().__init__(host, port, timeout=timeout)
+        self.pinned_ip = pinned_ip
+
+    def connect(self):
+        address = ipaddress.ip_address(self.pinned_ip)
+        family = socket.AF_INET6 if address.version == 6 else socket.AF_INET
+        sock = socket.socket(family, socket.SOCK_STREAM)
+        sock.settimeout(self.timeout)
+        try:
+            sock.connect((self.pinned_ip, self.port))
+            self.sock = sock
+        except BaseException:
+            sock.close()
+            raise
+
+
+class _PinnedHTTPSConnection(_PinnedHTTPConnection):
+    def connect(self):
+        deadline = time.monotonic() + self.timeout
+        super().connect()
+        try:
+            # Verify certificate and SNI against the authorized host, not its IP.
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError
+            self.sock.settimeout(remaining)
+            self.sock = ssl.create_default_context().wrap_socket(self.sock, server_hostname=self.host)
+        except BaseException:
+            self.sock.close()
+            raise
+
+
+def _prepare_request(manifest, case):
+    method = case.get("method", "GET")
+    if method not in {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}:
+        raise AdapterBlocked("Unsupported HTTP method.")
+    path = case.get("path", "/")
+    if (not isinstance(path, str) or not path.startswith("/") or path.startswith("//")
+            or "\\" in path or "#" in path or any(ord(c) < 33 for c in path)):
+        raise AdapterBlocked("Case path must be origin-relative and must not contain control characters.")
+    try:
+        path.encode("ascii")
+    except UnicodeError:
+        raise AdapterBlocked("Case path must use ASCII URL encoding.") from None
+    headers = {"Accept": "application/json", "Accept-Encoding": "identity", "Connection": "close"}
+    supplied = case.get("headers") or {}
+    if not isinstance(supplied, dict) or len(supplied) > 24:
+        raise AdapterBlocked("Invalid or excessive request headers.")
+    for name, value in supplied.items():
+        if (not isinstance(name, str) or not _HEADER_NAME.fullmatch(name)
+                or name.lower() in _FORBIDDEN_HEADERS or not isinstance(value, str)
+                or len(value) > 4096 or any(ord(c) < 32 or ord(c) > 126 for c in value)):
+            raise AdapterBlocked("Case contains an unsupported or credential-bearing request header.")
+        headers[name] = value
+    secrets = []
+    identity = case.get("identity")
+    if identity is not None:
+        profiles = [p for p in manifest.get("auth_profiles", []) if p.get("id") == identity]
+        if len(profiles) != 1:
+            raise AdapterBlocked("Case identity must reference exactly one configured authentication profile.")
+        profile = profiles[0]
+        env_name = profile.get("credential_env", "")
+        if not isinstance(env_name, str) or not _CREDENTIAL_ENV.fullmatch(env_name):
+            raise AdapterBlocked("Credentials must reference a VIBEAUDIT_ environment variable.")
+        secret = os.environ.get(env_name)
+        if not secret or len(secret) > 8192 or any(ord(c) < 33 or ord(c) > 126 for c in secret):
+            raise AdapterBlocked("Authentication credential is missing or invalid.")
+        header = profile.get("header", "Authorization")
+        scheme = profile.get("scheme", "Bearer")
+        if header not in {"Authorization", "X-API-Key"} or scheme not in {"Bearer", "", "Basic"}:
+            raise AdapterBlocked("Unsupported authentication header or scheme.")
+        headers[header] = f"{scheme} {secret}" if scheme else secret
+        secrets.append(secret)
+    body = case.get("body")
+    if body is not None:
+        if method in {"GET", "HEAD"}:
+            raise AdapterBlocked("GET and HEAD cases cannot contain a request body.")
+        try:
+            body = json.dumps(body, ensure_ascii=False, allow_nan=False).encode("utf-8")
+        except (ValueError, TypeError):
+            raise AdapterBlocked("Request body must be finite JSON data.") from None
+        if len(body) > MAX_REQUEST_BYTES:
+            raise AdapterBlocked("Request body exceeds the configured byte limit.")
+        headers["Content-Type"] = "application/json"
+    return method, path, headers, body, secrets
+
+
+def _request(scheme, host, port, pinned_ip, method, path, headers, body, timeout):
+    connection_type = _PinnedHTTPSConnection if scheme == "https" else _PinnedHTTPConnection
+    conn = connection_type(host, port, pinned_ip=pinned_ip, timeout=timeout)
+    deadline = time.monotonic() + timeout
+    watchdog = None
+    try:
+        conn.connect()
+        transport_socket = conn.sock
+        def end_transport():
+            try:
+                transport_socket.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+        # Socket timeouts alone do not bound a peer sending one byte at a time.
+        # This independent deadline also interrupts slow headers and chunking.
+        watchdog = threading.Timer(max(0.001, deadline - time.monotonic()), end_transport)
+        watchdog.daemon = True
+        watchdog.start()
+        conn.request(method, path, body=body, headers=headers)
+        response = conn.getresponse()
+        if 300 <= response.status < 400:
+            return {"status_code": response.status, "body": "", "complete": False, "redirect_blocked": True}
+        encoding = response.getheader("Content-Encoding", "identity").lower()
+        if encoding not in {"", "identity"}:
+            raise ResponseLimitError("Compressed responses are unsupported; no oracle was evaluated.")
+        length = response.getheader("Content-Length")
+        if length is not None:
+            try:
+                if int(length) < 0 or int(length) > MAX_RESPONSE_BYTES:
+                    raise ResponseLimitError("Response exceeds the configured byte limit.")
+            except ValueError:
+                raise ResponseLimitError("Invalid response length; no oracle was evaluated.") from None
+        chunks = []
+        size = 0
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError
+            # With Connection: close, HTTPResponse may own the socket after
+            # HTTPConnection.sock has been cleared by getresponse().
+            sock = conn.sock
+            if sock is None and response.fp is not None:
+                sock = getattr(getattr(response.fp, "raw", None), "_sock", None)
+            if sock is not None:
+                sock.settimeout(remaining)
+            chunk = response.read1(min(8192, MAX_RESPONSE_BYTES + 1 - size))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            size += len(chunk)
+            if size > MAX_RESPONSE_BYTES:
+                raise ResponseLimitError("Response exceeds the configured byte limit.")
+        raw = b"".join(chunks)
+        if length is not None and len(raw) != int(length):
+            raise ResponseLimitError("Response was incomplete; no oracle was evaluated.")
+        try:
+            text = raw.decode("utf-8", errors="strict")
+        except UnicodeError:
+            raise ResponseLimitError("Only complete UTF-8 responses can be evaluated.") from None
+        return {"status_code": response.status, "body": text, "complete": True, "bytes": size}
+    finally:
+        if watchdog is not None:
+            watchdog.cancel()
+        conn.close()
+
+
+def _trusted_observations(case, observations):
+    case_id = case.get("id")
+    return [o for o in observations if isinstance(o, dict)
+            and o.get("provenance") in _TRUSTED
+            and (not case_id or o.get("case_id") == case_id)]
+
+
+def evaluate_oracle(case: dict, observations: list) -> dict:
+    """Evaluate deterministic invariants, not an LLM's statements of success.
+
+    ``collector.local`` is reserved for harness-controlled collectors. A target
+    JSON field with that string does not become a collector observation.
+    """
+    trusted = _trusted_observations(case, observations)
+    oracle = case.get("oracle") or {}
+    required = oracle.get("required_observations") or []
+    if not required:
+        return {"status": "inconclusive", "reason": "Oracle has no explicit required observations."}
+    for requirement in required:
+        if not isinstance(requirement, str) or not any(
+                o.get("kind") == requirement or o.get("name") == requirement for o in trusted):
+            return {"status": "inconclusive", "reason": "A required trusted observation is missing."}
+    for precondition in case.get("preconditions") or []:
+        name = precondition.get("name") if isinstance(precondition, dict) else precondition
+        if not isinstance(name, str) or not any(
+                o.get("kind") == "precondition" and o.get("name") == name and o.get("value") is True
+                for o in trusted):
+            return {"status": "inconclusive", "reason": "A required precondition has not been independently verified."}
+    expected_role = oracle.get("expected_role")
+    if expected_role and not any(o.get("kind") == "identity_verified" and o.get("role") == expected_role
+                                 and o.get("value") is True for o in trusted):
+        return {"status": "inconclusive", "reason": "The expected test identity has not been independently verified."}
+    kind = oracle.get("kind")
+    if kind in {"deny_sensitive", "canary_absent"}:
+        responses = [o for o in trusted if o.get("kind") == "http_response"]
+        needles = oracle.get("forbidden_text") or []
+        if (not responses or not needles or any(not isinstance(n, str) or not n for n in needles)
+                or any(o.get("complete") is not True or not isinstance(o.get("body"), str) for o in responses)):
+            return {"status": "inconclusive", "reason": "Complete response observations and explicit forbidden test canaries are required."}
+        if any(needle in response["body"] or hashlib.sha256(needle.encode()).hexdigest() in response.get("forbidden_text_sha256_observed", [])
+               for needle in needles for response in responses):
+            return {"status": "fail", "reason": "A forbidden test canary was observed in the response."}
+        allowed_statuses = oracle.get("allowed_statuses") or []
+        if not allowed_statuses:
+            return {"status": "inconclusive", "reason": "Expected response statuses were not specified."}
+        if any(response.get("status_code") not in allowed_statuses for response in responses):
+            return {"status": "inconclusive", "reason": "Unexpected response status; absence of a canary is insufficient evidence."}
+        if not case.get("preconditions"):
+            return {"status": "inconclusive", "reason": "A positive-control precondition is required to establish the sensitive fixture exists."}
+        live_controls = [o for o in trusted if o.get("kind") == "precondition" and o.get("provenance") == "adapter.http"]
+        if live_controls:
+            verified_canaries = {item for control in live_controls for item in control.get("matched_text_sha256", [])}
+            if any(hashlib.sha256(needle.encode()).hexdigest() not in verified_canaries for needle in needles):
+                return {"status": "inconclusive", "reason": "Positive controls did not establish that each forbidden test canary exists."}
+        return {"status": "pass", "reason": "The specified response invariant held with verified prerequisites."}
+    if kind == "no_unauthorized_commit":
+        if not any(o.get("kind") == "trace_complete" and o.get("value") is True for o in trusted):
+            return {"status": "inconclusive", "reason": "A complete, independently collected tool trace is required."}
+        ledgers = [o.get("value") for o in trusted if o.get("kind") == "tool_ledger"]
+        if (not ledgers or any(not isinstance(v, dict)
+                              or type(v.get("unauthorized_commits")) is not int
+                              or v["unauthorized_commits"] < 0 for v in ledgers)):
+            return {"status": "inconclusive", "reason": "A trusted side-effect ledger is required; requested or invoked tools do not prove commitment."}
+        if any(v["unauthorized_commits"] > 0 for v in ledgers):
+            return {"status": "fail", "reason": "The trusted ledger recorded an unauthorized committed effect."}
+        return {"status": "pass", "reason": "The complete trusted ledger contains no unauthorized committed effects."}
+    return {"status": "inconclusive", "reason": "Oracle kind is not implemented."}
+
+
+async def execute_case(manifest: dict, case: dict, *, cancel_event, request_hook=None) -> dict:
+    """Issue only origin-pinned requests. No retries, redirects or target code."""
+    if case.get("adapter") not in {"http", "ai_http"}:
+        return _result("blocked", "This adapter executes live HTTP only; synthetic demo execution belongs to the service.")
+    if manifest.get("mode") != "live":
+        return _result("blocked", "HTTP target requests require an explicitly live run.")
+    if case.get("side_effects"):
+        return _result("blocked", "Side-effecting cases require a sandbox effect collector and cleanup runner, which are not connected.")
+    if request_hook is None:
+        return _result("blocked", "The request budget/cancellation hook is required for live transport.")
+    if _cancelled(cancel_event):
+        return _result("blocked", "Run was cancelled before a request.")
+    requests = 0
+    observations = []
+    current_method = "GET"
+    try:
+        scheme, host, port = _origin(manifest)
+        # Validate the main request before allowing even positive-control I/O.
+        _prepare_request(manifest, case)
+        repetitions = case.get("repetitions", 1)
+        if type(repetitions) is not int or not 1 <= repetitions <= MAX_REPETITIONS:
+            raise AdapterBlocked("Repetitions exceed the bounded adapter limit.")
+        preconditions = case.get("preconditions") or []
+        if not isinstance(preconditions, list) or len(preconditions) > 10:
+            raise AdapterBlocked("Positive controls exceed the bounded adapter limit.")
+        controls = []
+        for control in preconditions:
+            if isinstance(control, str):
+                # A string is an unverified requirement, not evidence.
+                continue
+            if (not isinstance(control, dict) or not isinstance(control.get("name"), str) or not control["name"]
+                    or control.get("method") != "GET" or type(control.get("expected_status")) is not int
+                    or not 200 <= control["expected_status"] < 300
+                    or not isinstance(control.get("required_text"), list)
+                    or not control["required_text"]
+                    or any(not isinstance(t, str) or not t for t in control["required_text"])):
+                raise AdapterBlocked("Positive controls require a name, GET path, expected 2xx status and explicit required text.")
+            request = {"method": "GET", "path": control.get("path"), "headers": control.get("headers") or {},
+                       "identity": control.get("identity"), "body": None}
+            _prepare_request(manifest, request)
+            controls.append((control, request))
+
+        async def dispatch(request):
+            nonlocal requests, current_method
+            if _cancelled(cancel_event):
+                raise AdapterBlocked("Run was cancelled before a request.")
+            method, path, headers, body, secrets = _prepare_request(manifest, request)
+            current_method = method
+            # Resolution is bounded separately. The connected numeric IP cannot
+            # be changed by a second DNS lookup or proxy environment variables.
+            pinned = await asyncio.wait_for(asyncio.to_thread(
+                _pinned_address, host, port, manifest.get("allowed_target_ips", [])), timeout=REQUEST_TIMEOUT_SECONDS)
+            try:
+                await request_hook(method=method, path=path)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                raise AdapterBlocked("The request budget or lease hook refused execution.") from None
+            if _cancelled(cancel_event):
+                raise AdapterBlocked("Run was cancelled before a request.")
+            requests += 1
+            response = await asyncio.to_thread(_request, scheme, host, port, pinned,
+                                                method, path, headers, body, REQUEST_TIMEOUT_SECONDS)
+            if _cancelled(cancel_event):
+                raise asyncio.CancelledError
+            if response.get("redirect_blocked"):
+                raise AdapterBlocked("Target returned a redirect; redirects are never followed.")
+            response["peer_ip"] = pinned
+            return response, secrets
+
+        for repeat in range(repetitions):
+            for control, request in controls:
+                response, _ = await dispatch(request)
+                matched = (response.get("complete") is True and response.get("status_code") == control["expected_status"]
+                           and all(text in response["body"] for text in control["required_text"]))
+                observations.append({"kind": "precondition", "name": control["name"], "value": matched,
+                                     "provenance": "adapter.http", "case_id": case.get("id"), "run_id": manifest.get("run_id"),
+                                     "status_code": response["status_code"], "repetition": repeat + 1,
+                                     "matched_text_sha256": [hashlib.sha256(text.encode()).hexdigest() for text in control["required_text"]] if matched else []})
+                if not matched:
+                    return _result("inconclusive", "A positive control did not establish its required fixture; the main request was not sent.", observations, requests)
+            response, secrets = await dispatch(case)
+            response["forbidden_text_sha256_observed"] = [hashlib.sha256(text.encode()).hexdigest()
+                for text in (case.get("oracle") or {}).get("forbidden_text", [])
+                if isinstance(text, str) and text and text in response["body"]]
+            # Also redact other explicitly configured model/auth credentials if
+            # the target reflects them. Keep match digests for oracle replay.
+            for profile in [*manifest.get("auth_profiles", []), *manifest.get("models", [])]:
+                env_name = profile.get("credential_env", "")
+                if isinstance(env_name, str) and _CREDENTIAL_ENV.fullmatch(env_name):
+                    value = os.environ.get(env_name)
+                    if value:
+                        secrets.append(value)
+            for secret in secrets:
+                response["body"] = response["body"].replace(secret, "[REDACTED_CREDENTIAL]")
+            response.update({"kind": "http_response", "provenance": "adapter.http", "case_id": case.get("id"),
+                             "run_id": manifest.get("run_id"), "repetition": repeat + 1})
+            observations.append(response)
+        verdict = evaluate_oracle(case, observations)
+        result = _result(verdict["status"], verdict["reason"], observations, requests)
+        result["evidence"] = [{"id": f"http-{case.get('id', 'case')}-{i+1}", "kind": obs["kind"],
+                               "sha256": hashlib.sha256(json.dumps(obs, sort_keys=True).encode()).hexdigest(),
+                               "observation_index": i} for i, obs in enumerate(observations)]
+        return result
+    except AdapterBlocked as exc:
+        return _result("blocked", str(exc), observations, requests)
+    except ResponseLimitError as exc:
+        return _result("inconclusive", str(exc), observations, requests)
+    except asyncio.CancelledError:
+        return _result("outcome_unknown" if requests else "blocked", "Execution was cancelled; dispatched requests are not automatically replayed.", observations, requests)
+    except (TimeoutError, socket.timeout):
+        return _result("outcome_unknown" if requests and current_method == "POST" else "execution_error", "Target transport timed out; no success was inferred.", observations, requests)
+    except Exception:
+        # Provider/HTTP exception strings may include request material. Never
+        # return their text or traceback through an API or report.
+        return _result("outcome_unknown" if requests and current_method == "POST" else "execution_error", "Target transport failed; no success was inferred.", observations, requests)
+
+
+def scanner_plans(source_dir: str) -> list[dict]:
+    """Legacy informational recipe shape, retained for client compatibility.
+
+    Runtime availability is owned by WorkerRuntime.tool_inventory; current sealed
+    dynamic recipes are compiled by tool_runners.compile_tool. These dictionaries
+    are never dispatched.
+
+    The source mount is read-only. The trusted plan/rules directory must be
+    controlled by the harness, never loaded from the untrusted source checkout.
+    Configuration compilation, egress enforcement and result ingestion are
+    deliberately marked as prerequisites, not silently replaced by host runs.
+    """
+    source = str(Path(source_dir).absolute())
+    specs = [
+        ("semgrep", ["semgrep", "scan", "--config", "/trusted/semgrep-rules.yml", "--metrics", "off", "--disable-version-check", "--json", "--output", "/out/semgrep.json", "/src"], "https://semgrep.dev/docs/cli-reference", ["trusted project rules", "pinned Semgrep image"], "none"),
+        ("osv", ["osv-scanner", "scan", "source", "--recursive", "--format", "json", "--output-file", "/out/osv.json", "/src"], "https://google.github.io/osv-scanner/usage/", ["pinned OSV v2 image", "approved vulnerability database access or snapshot"], "approved-vulnerability-database"),
+        ("gitleaks", ["gitleaks", "dir", "/src", "--redact", "--report-format", "json", "--report-path", "/out/gitleaks.json", "--timeout", "60", "--no-banner"], "https://github.com/gitleaks/gitleaks", ["pinned Gitleaks image"], "none"),
+        ("zap", ["zap.sh", "-cmd", "-autorun", "/trusted/zap.yaml"], "https://www.zaproxy.org/docs/desktop/addons/automation-framework/", ["reviewed threat-derived ZAP plan", "per-request policy proxy", "pinned ZAP image"], "authorized-target-via-policy-proxy"),
+        ("schemathesis", ["st", "run", "/trusted/openapi.json", "--url", "http://policy-proxy:8080", "--workers", "1", "--report", "junit", "--report-dir", "/out/schemathesis"], "https://schemathesis.readthedocs.io/en/latest/reference/cli/", ["reviewed bounded schema and checks", "per-request policy proxy", "pinned Schemathesis v4 image"], "authorized-target-via-policy-proxy"),
+        ("playwright", ["playwright", "test", "--config", "/trusted/playwright.config.ts", "--workers", "1", "--reporter", "json"], "https://playwright.dev/docs/test-cli", ["reviewed generated tests and config", "network policy proxy", "pinned browser image"], "authorized-target-via-policy-proxy"),
+        ("promptfoo", ["promptfoo", "eval", "--config", "/trusted/promptfooconfig.yaml", "--output", "/out/promptfoo.json", "--no-share", "--max-concurrency", "1"], "https://www.promptfoo.dev/docs/usage/command-line/", ["local static datasets", "custom target provider and deterministic assertions", "per-request budget proxy", "pinned promptfoo image"], "approved-model-and-target-via-policy-proxy"),
+        ("pyrit", ["python", "-I", "/trusted/pyrit_workflow.py"], "https://microsoft.github.io/PyRIT/latest/code/executor/workflow/", ["trusted PyRIT wrapper in tool_runners", "trusted complete tool collector", "per-request budget proxy", "pinned PyRIT image"], "approved-model-and-target-via-policy-proxy"),
+    ]
+    return [{"id": name, "argv": argv, "shell": False, "status": "blocked_missing_prerequisites" if name in {"semgrep", "osv", "gitleaks"} else "blocked_sandbox_required",
+             "implemented": "isolated_worker_executor", "executable": False, "sandbox_required": True,
+             "source_mount": {"host_path": source, "sandbox_path": "/src", "read_only": True, "used": name in {"semgrep", "osv", "gitleaks"}},
+             "network_policy": network, "prerequisites": requirements,
+             "limits": {"timeout_seconds": 120, "memory_mb": 2048, "pids": 128},
+             "source_url": url, "detail": "Optional sandbox.run_scanner executor exists; requires trusted image digest pins, Docker and provisioned offline inputs. Consult runtime inventory and validation receipts." if name in {"semgrep", "osv", "gitleaks"} else "Legacy informational recipe; current isolated adapter and result ingestion are in tool_runners."}
+            for name, argv, url, requirements, network in specs]
+
+
+def tool_capabilities() -> list[dict]:
+    tools = ["semgrep", "osv", "gitleaks", "zap", "schemathesis", "playwright", "promptfoo", "pyrit"]
+    return [{"id": name, "available": False, "status": "implemented_requires_runtime", "implemented": True, "cli_detected": bool(shutil.which(name)),
+             "detail": "Adapter 已實作；尚未配置可驗證的 Linux 隔離執行環境與固定工具映像。"} for name in tools] + [
+        {"id": "synthetic_demo", "available": True, "status": "synthetic_only", "implemented": True,
+         "detail": "可執行本地合成流程；不會呼叫真實模型或驗證其偵測品質。"},
+        {"id": "tool_effect_collector", "available": False, "status": "target_binding_required", "implemented": True,
+         "detail": "獨立事件及副作用收集器已實作；實際目標必須配置可信 binding，無觀測時不判定通過。"}]

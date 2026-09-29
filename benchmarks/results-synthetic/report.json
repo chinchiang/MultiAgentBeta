@@ -1,0 +1,5295 @@
+{
+  "schema_version": 1,
+  "dataset_id": "synthetic-workflow-v1",
+  "dataset_hash": "5b5df05c0a05e497283c1ad5dea49840829dd3616f24a2f2d460640745ac0b1b",
+  "mode": "synthetic",
+  "seed": 731,
+  "split": "test",
+  "repetitions": 3,
+  "budget": {
+    "max_tokens": 12000,
+    "max_seconds": 60,
+    "max_requests": 12,
+    "max_model_calls": 6
+  },
+  "protocol": "Identical per-arm caps; token/request/call/time budget divided evenly across steps, not multiplied by agent count. Actual spend may differ.",
+  "status": "completed",
+  "efficacy_status": "not_established",
+  "schedule": [
+    {
+      "project_id": "test-cart",
+      "sample_id": "test-cart-sample",
+      "repetition": 0,
+      "arm": "single_b",
+      "pair_id": "test-cart/test-cart-sample/0"
+    },
+    {
+      "project_id": "test-cart",
+      "sample_id": "test-cart-sample",
+      "repetition": 0,
+      "arm": "single_a",
+      "pair_id": "test-cart/test-cart-sample/0"
+    },
+    {
+      "project_id": "test-cart",
+      "sample_id": "test-cart-sample",
+      "repetition": 0,
+      "arm": "single_c",
+      "pair_id": "test-cart/test-cart-sample/0"
+    },
+    {
+      "project_id": "test-cart",
+      "sample_id": "test-cart-sample",
+      "repetition": 0,
+      "arm": "debate",
+      "pair_id": "test-cart/test-cart-sample/0"
+    },
+    {
+      "project_id": "test-cart",
+      "sample_id": "test-cart-sample",
+      "repetition": 0,
+      "arm": "same_model_repeat",
+      "pair_id": "test-cart/test-cart-sample/0"
+    },
+    {
+      "project_id": "test-cart",
+      "sample_id": "test-cart-sample",
+      "repetition": 0,
+      "arm": "traditional",
+      "pair_id": "test-cart/test-cart-sample/0"
+    },
+    {
+      "project_id": "test-cart",
+      "sample_id": "test-cart-sample",
+      "repetition": 0,
+      "arm": "heterogeneous_independent",
+      "pair_id": "test-cart/test-cart-sample/0"
+    },
+    {
+      "project_id": "test-cart",
+      "sample_id": "test-cart-sample",
+      "repetition": 1,
+      "arm": "heterogeneous_independent",
+      "pair_id": "test-cart/test-cart-sample/1"
+    },
+    {
+      "project_id": "test-cart",
+      "sample_id": "test-cart-sample",
+      "repetition": 1,
+      "arm": "single_a",
+      "pair_id": "test-cart/test-cart-sample/1"
+    },
+    {
+      "project_id": "test-cart",
+      "sample_id": "test-cart-sample",
+      "repetition": 1,
+      "arm": "single_b",
+      "pair_id": "test-cart/test-cart-sample/1"
+    },
+    {
+      "project_id": "test-cart",
+      "sample_id": "test-cart-sample",
+      "repetition": 1,
+      "arm": "debate",
+      "pair_id": "test-cart/test-cart-sample/1"
+    },
+    {
+      "project_id": "test-cart",
+      "sample_id": "test-cart-sample",
+      "repetition": 1,
+      "arm": "same_model_repeat",
+      "pair_id": "test-cart/test-cart-sample/1"
+    },
+    {
+      "project_id": "test-cart",
+      "sample_id": "test-cart-sample",
+      "repetition": 1,
+      "arm": "traditional",
+      "pair_id": "test-cart/test-cart-sample/1"
+    },
+    {
+      "project_id": "test-cart",
+      "sample_id": "test-cart-sample",
+      "repetition": 1,
+      "arm": "single_c",
+      "pair_id": "test-cart/test-cart-sample/1"
+    },
+    {
+      "project_id": "test-cart",
+      "sample_id": "test-cart-sample",
+      "repetition": 2,
+      "arm": "single_c",
+      "pair_id": "test-cart/test-cart-sample/2"
+    },
+    {
+      "project_id": "test-cart",
+      "sample_id": "test-cart-sample",
+      "repetition": 2,
+      "arm": "single_a",
+      "pair_id": "test-cart/test-cart-sample/2"
+    },
+    {
+      "project_id": "test-cart",
+      "sample_id": "test-cart-sample",
+      "repetition": 2,
+      "arm": "traditional",
+      "pair_id": "test-cart/test-cart-sample/2"
+    },
+    {
+      "project_id": "test-cart",
+      "sample_id": "test-cart-sample",
+      "repetition": 2,
+      "arm": "heterogeneous_independent",
+      "pair_id": "test-cart/test-cart-sample/2"
+    },
+    {
+      "project_id": "test-cart",
+      "sample_id": "test-cart-sample",
+      "repetition": 2,
+      "arm": "single_b",
+      "pair_id": "test-cart/test-cart-sample/2"
+    },
+    {
+      "project_id": "test-cart",
+      "sample_id": "test-cart-sample",
+      "repetition": 2,
+      "arm": "debate",
+      "pair_id": "test-cart/test-cart-sample/2"
+    },
+    {
+      "project_id": "test-cart",
+      "sample_id": "test-cart-sample",
+      "repetition": 2,
+      "arm": "same_model_repeat",
+      "pair_id": "test-cart/test-cart-sample/2"
+    },
+    {
+      "project_id": "test-notes",
+      "sample_id": "test-notes-sample",
+      "repetition": 0,
+      "arm": "debate",
+      "pair_id": "test-notes/test-notes-sample/0"
+    },
+    {
+      "project_id": "test-notes",
+      "sample_id": "test-notes-sample",
+      "repetition": 0,
+      "arm": "heterogeneous_independent",
+      "pair_id": "test-notes/test-notes-sample/0"
+    },
+    {
+      "project_id": "test-notes",
+      "sample_id": "test-notes-sample",
+      "repetition": 0,
+      "arm": "same_model_repeat",
+      "pair_id": "test-notes/test-notes-sample/0"
+    },
+    {
+      "project_id": "test-notes",
+      "sample_id": "test-notes-sample",
+      "repetition": 0,
+      "arm": "single_b",
+      "pair_id": "test-notes/test-notes-sample/0"
+    },
+    {
+      "project_id": "test-notes",
+      "sample_id": "test-notes-sample",
+      "repetition": 0,
+      "arm": "single_a",
+      "pair_id": "test-notes/test-notes-sample/0"
+    },
+    {
+      "project_id": "test-notes",
+      "sample_id": "test-notes-sample",
+      "repetition": 0,
+      "arm": "single_c",
+      "pair_id": "test-notes/test-notes-sample/0"
+    },
+    {
+      "project_id": "test-notes",
+      "sample_id": "test-notes-sample",
+      "repetition": 0,
+      "arm": "traditional",
+      "pair_id": "test-notes/test-notes-sample/0"
+    },
+    {
+      "project_id": "test-notes",
+      "sample_id": "test-notes-sample",
+      "repetition": 1,
+      "arm": "single_a",
+      "pair_id": "test-notes/test-notes-sample/1"
+    },
+    {
+      "project_id": "test-notes",
+      "sample_id": "test-notes-sample",
+      "repetition": 1,
+      "arm": "traditional",
+      "pair_id": "test-notes/test-notes-sample/1"
+    },
+    {
+      "project_id": "test-notes",
+      "sample_id": "test-notes-sample",
+      "repetition": 1,
+      "arm": "same_model_repeat",
+      "pair_id": "test-notes/test-notes-sample/1"
+    },
+    {
+      "project_id": "test-notes",
+      "sample_id": "test-notes-sample",
+      "repetition": 1,
+      "arm": "single_b",
+      "pair_id": "test-notes/test-notes-sample/1"
+    },
+    {
+      "project_id": "test-notes",
+      "sample_id": "test-notes-sample",
+      "repetition": 1,
+      "arm": "single_c",
+      "pair_id": "test-notes/test-notes-sample/1"
+    },
+    {
+      "project_id": "test-notes",
+      "sample_id": "test-notes-sample",
+      "repetition": 1,
+      "arm": "heterogeneous_independent",
+      "pair_id": "test-notes/test-notes-sample/1"
+    },
+    {
+      "project_id": "test-notes",
+      "sample_id": "test-notes-sample",
+      "repetition": 1,
+      "arm": "debate",
+      "pair_id": "test-notes/test-notes-sample/1"
+    },
+    {
+      "project_id": "test-notes",
+      "sample_id": "test-notes-sample",
+      "repetition": 2,
+      "arm": "same_model_repeat",
+      "pair_id": "test-notes/test-notes-sample/2"
+    },
+    {
+      "project_id": "test-notes",
+      "sample_id": "test-notes-sample",
+      "repetition": 2,
+      "arm": "traditional",
+      "pair_id": "test-notes/test-notes-sample/2"
+    },
+    {
+      "project_id": "test-notes",
+      "sample_id": "test-notes-sample",
+      "repetition": 2,
+      "arm": "single_a",
+      "pair_id": "test-notes/test-notes-sample/2"
+    },
+    {
+      "project_id": "test-notes",
+      "sample_id": "test-notes-sample",
+      "repetition": 2,
+      "arm": "single_c",
+      "pair_id": "test-notes/test-notes-sample/2"
+    },
+    {
+      "project_id": "test-notes",
+      "sample_id": "test-notes-sample",
+      "repetition": 2,
+      "arm": "heterogeneous_independent",
+      "pair_id": "test-notes/test-notes-sample/2"
+    },
+    {
+      "project_id": "test-notes",
+      "sample_id": "test-notes-sample",
+      "repetition": 2,
+      "arm": "debate",
+      "pair_id": "test-notes/test-notes-sample/2"
+    },
+    {
+      "project_id": "test-notes",
+      "sample_id": "test-notes-sample",
+      "repetition": 2,
+      "arm": "single_b",
+      "pair_id": "test-notes/test-notes-sample/2"
+    }
+  ],
+  "records": [
+    {
+      "project_id": "test-cart",
+      "sample_id": "test-cart-sample",
+      "repetition": 0,
+      "arm": "single_b",
+      "pair_id": "test-cart/test-cart-sample/0",
+      "status": "completed",
+      "budget": {
+        "max_tokens": 12000,
+        "max_seconds": 60,
+        "max_requests": 12,
+        "max_model_calls": 6
+      },
+      "usage": {
+        "tokens": 600,
+        "requests": 1,
+        "model_calls": 1,
+        "latency_seconds": 0.4
+      },
+      "measured_wall_seconds": 0.034261399996466935,
+      "cost_usd": null,
+      "observations": [
+        {
+          "step": 0,
+          "model_alias": "b",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 12000,
+            "requests": 12,
+            "model_calls": 6,
+            "latency_seconds": 60.0
+          },
+          "input_hash": "835e810cf73bdb8557fe0d532752659bce9e30f8c745fbabda9e15e7a02fe5a9",
+          "sealed_output_hash": "6dcaeeebc1d24c6577e14b115dfa1ee8d2ad3b81a43e5999719d4462131bcb14",
+          "response": {
+            "finding_ids": [
+              "test-cart:object-authorization"
+            ],
+            "reproduced_ids": [
+              "test-cart:object-authorization"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        }
+      ],
+      "finding_ids": [
+        "test-cart:object-authorization"
+      ],
+      "reproduced_ids": [
+        "test-cart:object-authorization"
+      ],
+      "metrics": null,
+      "preview_metrics": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 1,
+        "unadjudicated_ids": [],
+        "precision": 1.0,
+        "recall": 0.5,
+        "common_miss_rate": null,
+        "common_missed_ids": null,
+        "minority_retention": null,
+        "minority_positive_ids": [],
+        "reproduce_rate": 1.0,
+        "completion": 1
+      },
+      "gold_eligible": false,
+      "simulated": true,
+      "issues": [],
+      "limitation": "No efficacy claim: synthetic, unreviewed gold or unavailable real model execution"
+    },
+    {
+      "project_id": "test-cart",
+      "sample_id": "test-cart-sample",
+      "repetition": 0,
+      "arm": "single_a",
+      "pair_id": "test-cart/test-cart-sample/0",
+      "status": "completed",
+      "budget": {
+        "max_tokens": 12000,
+        "max_seconds": 60,
+        "max_requests": 12,
+        "max_model_calls": 6
+      },
+      "usage": {
+        "tokens": 600,
+        "requests": 1,
+        "model_calls": 1,
+        "latency_seconds": 0.4
+      },
+      "measured_wall_seconds": 0.036131499997281935,
+      "cost_usd": null,
+      "observations": [
+        {
+          "step": 0,
+          "model_alias": "a",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 12000,
+            "requests": 12,
+            "model_calls": 6,
+            "latency_seconds": 60.0
+          },
+          "input_hash": "835e810cf73bdb8557fe0d532752659bce9e30f8c745fbabda9e15e7a02fe5a9",
+          "sealed_output_hash": "176cdbb9ff963abb6a456ad7084e70b912734f5f1468f77c2e989797a4186fa6",
+          "response": {
+            "finding_ids": [
+              "ast:eval:app.py:2",
+              "test-cart:false-positive"
+            ],
+            "reproduced_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        }
+      ],
+      "finding_ids": [
+        "ast:eval:app.py:2",
+        "test-cart:false-positive"
+      ],
+      "reproduced_ids": [
+        "ast:eval:app.py:2"
+      ],
+      "metrics": null,
+      "preview_metrics": {
+        "tp": 1,
+        "fp": 1,
+        "fn": 1,
+        "unadjudicated_ids": [],
+        "precision": 0.5,
+        "recall": 0.5,
+        "common_miss_rate": null,
+        "common_missed_ids": null,
+        "minority_retention": null,
+        "minority_positive_ids": [],
+        "reproduce_rate": 1.0,
+        "completion": 1
+      },
+      "gold_eligible": false,
+      "simulated": true,
+      "issues": [],
+      "limitation": "No efficacy claim: synthetic, unreviewed gold or unavailable real model execution"
+    },
+    {
+      "project_id": "test-cart",
+      "sample_id": "test-cart-sample",
+      "repetition": 0,
+      "arm": "single_c",
+      "pair_id": "test-cart/test-cart-sample/0",
+      "status": "completed",
+      "budget": {
+        "max_tokens": 12000,
+        "max_seconds": 60,
+        "max_requests": 12,
+        "max_model_calls": 6
+      },
+      "usage": {
+        "tokens": 600,
+        "requests": 1,
+        "model_calls": 1,
+        "latency_seconds": 0.4
+      },
+      "measured_wall_seconds": 0.01765210000303341,
+      "cost_usd": null,
+      "observations": [
+        {
+          "step": 0,
+          "model_alias": "c",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 12000,
+            "requests": 12,
+            "model_calls": 6,
+            "latency_seconds": 60.0
+          },
+          "input_hash": "835e810cf73bdb8557fe0d532752659bce9e30f8c745fbabda9e15e7a02fe5a9",
+          "sealed_output_hash": "4884ec71367c806440925befc126593a085a1eb7d03abc30f594cd1a90011055",
+          "response": {
+            "finding_ids": [],
+            "reproduced_ids": [],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        }
+      ],
+      "finding_ids": [],
+      "reproduced_ids": [],
+      "metrics": null,
+      "preview_metrics": {
+        "tp": 0,
+        "fp": 0,
+        "fn": 2,
+        "unadjudicated_ids": [],
+        "precision": null,
+        "recall": 0.0,
+        "common_miss_rate": null,
+        "common_missed_ids": null,
+        "minority_retention": null,
+        "minority_positive_ids": [],
+        "reproduce_rate": null,
+        "completion": 1
+      },
+      "gold_eligible": false,
+      "simulated": true,
+      "issues": [],
+      "limitation": "No efficacy claim: synthetic, unreviewed gold or unavailable real model execution"
+    },
+    {
+      "project_id": "test-cart",
+      "sample_id": "test-cart-sample",
+      "repetition": 0,
+      "arm": "debate",
+      "pair_id": "test-cart/test-cart-sample/0",
+      "status": "completed",
+      "budget": {
+        "max_tokens": 12000,
+        "max_seconds": 60,
+        "max_requests": 12,
+        "max_model_calls": 6
+      },
+      "usage": {
+        "tokens": 2400,
+        "requests": 4,
+        "model_calls": 4,
+        "latency_seconds": 1.6
+      },
+      "measured_wall_seconds": 0.09185920000163605,
+      "cost_usd": null,
+      "observations": [
+        {
+          "step": 0,
+          "model_alias": "a",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 3000,
+            "requests": 3,
+            "model_calls": 1,
+            "latency_seconds": 15.0
+          },
+          "input_hash": "835e810cf73bdb8557fe0d532752659bce9e30f8c745fbabda9e15e7a02fe5a9",
+          "sealed_output_hash": "176cdbb9ff963abb6a456ad7084e70b912734f5f1468f77c2e989797a4186fa6",
+          "response": {
+            "finding_ids": [
+              "ast:eval:app.py:2",
+              "test-cart:false-positive"
+            ],
+            "reproduced_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        },
+        {
+          "step": 1,
+          "model_alias": "b",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 3000,
+            "requests": 3,
+            "model_calls": 1,
+            "latency_seconds": 15.0
+          },
+          "input_hash": "835e810cf73bdb8557fe0d532752659bce9e30f8c745fbabda9e15e7a02fe5a9",
+          "sealed_output_hash": "6dcaeeebc1d24c6577e14b115dfa1ee8d2ad3b81a43e5999719d4462131bcb14",
+          "response": {
+            "finding_ids": [
+              "test-cart:object-authorization"
+            ],
+            "reproduced_ids": [
+              "test-cart:object-authorization"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        },
+        {
+          "step": 2,
+          "model_alias": "c",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 3000,
+            "requests": 3,
+            "model_calls": 1,
+            "latency_seconds": 15.0
+          },
+          "input_hash": "835e810cf73bdb8557fe0d532752659bce9e30f8c745fbabda9e15e7a02fe5a9",
+          "sealed_output_hash": "4884ec71367c806440925befc126593a085a1eb7d03abc30f594cd1a90011055",
+          "response": {
+            "finding_ids": [],
+            "reproduced_ids": [],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        },
+        {
+          "step": 3,
+          "model_alias": "debate",
+          "phase": "debate",
+          "allocation": {
+            "tokens": 3000,
+            "requests": 3,
+            "model_calls": 1,
+            "latency_seconds": 15.0
+          },
+          "input_hash": "066f2ff86301e3cd2c08b364173ca22c9c2e41cd5db24f1ce85bb05de71ef641",
+          "sealed_output_hash": "dbbb8701cb06d853d88a14590cdb1666cef71ecbb758bbb3374e65b850076d50",
+          "response": {
+            "finding_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "reproduced_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        }
+      ],
+      "finding_ids": [
+        "ast:eval:app.py:2"
+      ],
+      "reproduced_ids": [
+        "ast:eval:app.py:2"
+      ],
+      "metrics": null,
+      "preview_metrics": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 1,
+        "unadjudicated_ids": [],
+        "precision": 1.0,
+        "recall": 0.5,
+        "common_miss_rate": 0.0,
+        "common_missed_ids": [],
+        "minority_retention": 0.5,
+        "minority_positive_ids": [
+          "ast:eval:app.py:2",
+          "test-cart:object-authorization"
+        ],
+        "reproduce_rate": 1.0,
+        "completion": 1
+      },
+      "gold_eligible": false,
+      "simulated": true,
+      "issues": [],
+      "limitation": "No efficacy claim: synthetic, unreviewed gold or unavailable real model execution"
+    },
+    {
+      "project_id": "test-cart",
+      "sample_id": "test-cart-sample",
+      "repetition": 0,
+      "arm": "same_model_repeat",
+      "pair_id": "test-cart/test-cart-sample/0",
+      "status": "completed",
+      "budget": {
+        "max_tokens": 12000,
+        "max_seconds": 60,
+        "max_requests": 12,
+        "max_model_calls": 6
+      },
+      "usage": {
+        "tokens": 1800,
+        "requests": 3,
+        "model_calls": 3,
+        "latency_seconds": 1.2000000000000002
+      },
+      "measured_wall_seconds": 0.07043369999882998,
+      "cost_usd": null,
+      "observations": [
+        {
+          "step": 0,
+          "model_alias": "a",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 4000,
+            "requests": 4,
+            "model_calls": 2,
+            "latency_seconds": 20.0
+          },
+          "input_hash": "835e810cf73bdb8557fe0d532752659bce9e30f8c745fbabda9e15e7a02fe5a9",
+          "sealed_output_hash": "176cdbb9ff963abb6a456ad7084e70b912734f5f1468f77c2e989797a4186fa6",
+          "response": {
+            "finding_ids": [
+              "ast:eval:app.py:2",
+              "test-cart:false-positive"
+            ],
+            "reproduced_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        },
+        {
+          "step": 1,
+          "model_alias": "a",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 4000,
+            "requests": 4,
+            "model_calls": 2,
+            "latency_seconds": 20.0
+          },
+          "input_hash": "835e810cf73bdb8557fe0d532752659bce9e30f8c745fbabda9e15e7a02fe5a9",
+          "sealed_output_hash": "dbbb8701cb06d853d88a14590cdb1666cef71ecbb758bbb3374e65b850076d50",
+          "response": {
+            "finding_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "reproduced_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        },
+        {
+          "step": 2,
+          "model_alias": "a",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 4000,
+            "requests": 4,
+            "model_calls": 2,
+            "latency_seconds": 20.0
+          },
+          "input_hash": "835e810cf73bdb8557fe0d532752659bce9e30f8c745fbabda9e15e7a02fe5a9",
+          "sealed_output_hash": "dbbb8701cb06d853d88a14590cdb1666cef71ecbb758bbb3374e65b850076d50",
+          "response": {
+            "finding_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "reproduced_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        }
+      ],
+      "finding_ids": [
+        "ast:eval:app.py:2",
+        "test-cart:false-positive"
+      ],
+      "reproduced_ids": [
+        "ast:eval:app.py:2"
+      ],
+      "metrics": null,
+      "preview_metrics": {
+        "tp": 1,
+        "fp": 1,
+        "fn": 1,
+        "unadjudicated_ids": [],
+        "precision": 0.5,
+        "recall": 0.5,
+        "common_miss_rate": 0.5,
+        "common_missed_ids": [
+          "test-cart:object-authorization"
+        ],
+        "minority_retention": null,
+        "minority_positive_ids": [],
+        "reproduce_rate": 1.0,
+        "completion": 1
+      },
+      "gold_eligible": false,
+      "simulated": true,
+      "issues": [],
+      "limitation": "No efficacy claim: synthetic, unreviewed gold or unavailable real model execution"
+    },
+    {
+      "project_id": "test-cart",
+      "sample_id": "test-cart-sample",
+      "repetition": 0,
+      "arm": "traditional",
+      "pair_id": "test-cart/test-cart-sample/0",
+      "status": "completed",
+      "budget": {
+        "max_tokens": 12000,
+        "max_seconds": 60,
+        "max_requests": 12,
+        "max_model_calls": 6
+      },
+      "usage": {
+        "tokens": 0,
+        "requests": 0,
+        "model_calls": 0,
+        "latency_seconds": 0.01
+      },
+      "measured_wall_seconds": 0.022869599997648038,
+      "cost_usd": null,
+      "observations": [
+        {
+          "step": 0,
+          "model_alias": "traditional",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 12000,
+            "requests": 12,
+            "model_calls": 6,
+            "latency_seconds": 60.0
+          },
+          "input_hash": "835e810cf73bdb8557fe0d532752659bce9e30f8c745fbabda9e15e7a02fe5a9",
+          "sealed_output_hash": "d34bb7e5ff862a8c20a112fd753adde9a3ee5f4b1497ba5b36d3ecb69b0a0f63",
+          "response": {
+            "finding_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "reproduced_ids": [],
+            "status": "completed",
+            "tokens": 0,
+            "requests": 0,
+            "model_calls": 0,
+            "latency_seconds": 0.01,
+            "cost_usd": null
+          },
+          "simulated": true
+        }
+      ],
+      "finding_ids": [
+        "ast:eval:app.py:2"
+      ],
+      "reproduced_ids": [],
+      "metrics": null,
+      "preview_metrics": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 1,
+        "unadjudicated_ids": [],
+        "precision": 1.0,
+        "recall": 0.5,
+        "common_miss_rate": null,
+        "common_missed_ids": null,
+        "minority_retention": null,
+        "minority_positive_ids": [],
+        "reproduce_rate": 0.0,
+        "completion": 1
+      },
+      "gold_eligible": false,
+      "simulated": true,
+      "issues": [],
+      "limitation": "No efficacy claim: synthetic, unreviewed gold or unavailable real model execution"
+    },
+    {
+      "project_id": "test-cart",
+      "sample_id": "test-cart-sample",
+      "repetition": 0,
+      "arm": "heterogeneous_independent",
+      "pair_id": "test-cart/test-cart-sample/0",
+      "status": "completed",
+      "budget": {
+        "max_tokens": 12000,
+        "max_seconds": 60,
+        "max_requests": 12,
+        "max_model_calls": 6
+      },
+      "usage": {
+        "tokens": 1800,
+        "requests": 3,
+        "model_calls": 3,
+        "latency_seconds": 1.2000000000000002
+      },
+      "measured_wall_seconds": 0.0601193999973475,
+      "cost_usd": null,
+      "observations": [
+        {
+          "step": 0,
+          "model_alias": "a",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 4000,
+            "requests": 4,
+            "model_calls": 2,
+            "latency_seconds": 20.0
+          },
+          "input_hash": "835e810cf73bdb8557fe0d532752659bce9e30f8c745fbabda9e15e7a02fe5a9",
+          "sealed_output_hash": "176cdbb9ff963abb6a456ad7084e70b912734f5f1468f77c2e989797a4186fa6",
+          "response": {
+            "finding_ids": [
+              "ast:eval:app.py:2",
+              "test-cart:false-positive"
+            ],
+            "reproduced_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        },
+        {
+          "step": 1,
+          "model_alias": "b",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 4000,
+            "requests": 4,
+            "model_calls": 2,
+            "latency_seconds": 20.0
+          },
+          "input_hash": "835e810cf73bdb8557fe0d532752659bce9e30f8c745fbabda9e15e7a02fe5a9",
+          "sealed_output_hash": "6dcaeeebc1d24c6577e14b115dfa1ee8d2ad3b81a43e5999719d4462131bcb14",
+          "response": {
+            "finding_ids": [
+              "test-cart:object-authorization"
+            ],
+            "reproduced_ids": [
+              "test-cart:object-authorization"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        },
+        {
+          "step": 2,
+          "model_alias": "c",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 4000,
+            "requests": 4,
+            "model_calls": 2,
+            "latency_seconds": 20.0
+          },
+          "input_hash": "835e810cf73bdb8557fe0d532752659bce9e30f8c745fbabda9e15e7a02fe5a9",
+          "sealed_output_hash": "4884ec71367c806440925befc126593a085a1eb7d03abc30f594cd1a90011055",
+          "response": {
+            "finding_ids": [],
+            "reproduced_ids": [],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        }
+      ],
+      "finding_ids": [
+        "ast:eval:app.py:2",
+        "test-cart:false-positive",
+        "test-cart:object-authorization"
+      ],
+      "reproduced_ids": [
+        "ast:eval:app.py:2",
+        "test-cart:object-authorization"
+      ],
+      "metrics": null,
+      "preview_metrics": {
+        "tp": 2,
+        "fp": 1,
+        "fn": 0,
+        "unadjudicated_ids": [],
+        "precision": 0.6666666666666666,
+        "recall": 1.0,
+        "common_miss_rate": 0.0,
+        "common_missed_ids": [],
+        "minority_retention": 1.0,
+        "minority_positive_ids": [
+          "ast:eval:app.py:2",
+          "test-cart:object-authorization"
+        ],
+        "reproduce_rate": 1.0,
+        "completion": 1
+      },
+      "gold_eligible": false,
+      "simulated": true,
+      "issues": [],
+      "limitation": "No efficacy claim: synthetic, unreviewed gold or unavailable real model execution"
+    },
+    {
+      "project_id": "test-cart",
+      "sample_id": "test-cart-sample",
+      "repetition": 1,
+      "arm": "heterogeneous_independent",
+      "pair_id": "test-cart/test-cart-sample/1",
+      "status": "completed",
+      "budget": {
+        "max_tokens": 12000,
+        "max_seconds": 60,
+        "max_requests": 12,
+        "max_model_calls": 6
+      },
+      "usage": {
+        "tokens": 1800,
+        "requests": 3,
+        "model_calls": 3,
+        "latency_seconds": 1.2000000000000002
+      },
+      "measured_wall_seconds": 0.13305859999672975,
+      "cost_usd": null,
+      "observations": [
+        {
+          "step": 0,
+          "model_alias": "a",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 4000,
+            "requests": 4,
+            "model_calls": 2,
+            "latency_seconds": 20.0
+          },
+          "input_hash": "835e810cf73bdb8557fe0d532752659bce9e30f8c745fbabda9e15e7a02fe5a9",
+          "sealed_output_hash": "dbbb8701cb06d853d88a14590cdb1666cef71ecbb758bbb3374e65b850076d50",
+          "response": {
+            "finding_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "reproduced_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        },
+        {
+          "step": 1,
+          "model_alias": "b",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 4000,
+            "requests": 4,
+            "model_calls": 2,
+            "latency_seconds": 20.0
+          },
+          "input_hash": "835e810cf73bdb8557fe0d532752659bce9e30f8c745fbabda9e15e7a02fe5a9",
+          "sealed_output_hash": "6dcaeeebc1d24c6577e14b115dfa1ee8d2ad3b81a43e5999719d4462131bcb14",
+          "response": {
+            "finding_ids": [
+              "test-cart:object-authorization"
+            ],
+            "reproduced_ids": [
+              "test-cart:object-authorization"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        },
+        {
+          "step": 2,
+          "model_alias": "c",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 4000,
+            "requests": 4,
+            "model_calls": 2,
+            "latency_seconds": 20.0
+          },
+          "input_hash": "835e810cf73bdb8557fe0d532752659bce9e30f8c745fbabda9e15e7a02fe5a9",
+          "sealed_output_hash": "dbbb8701cb06d853d88a14590cdb1666cef71ecbb758bbb3374e65b850076d50",
+          "response": {
+            "finding_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "reproduced_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        }
+      ],
+      "finding_ids": [
+        "ast:eval:app.py:2",
+        "test-cart:object-authorization"
+      ],
+      "reproduced_ids": [
+        "ast:eval:app.py:2",
+        "test-cart:object-authorization"
+      ],
+      "metrics": null,
+      "preview_metrics": {
+        "tp": 2,
+        "fp": 0,
+        "fn": 0,
+        "unadjudicated_ids": [],
+        "precision": 1.0,
+        "recall": 1.0,
+        "common_miss_rate": 0.0,
+        "common_missed_ids": [],
+        "minority_retention": 1.0,
+        "minority_positive_ids": [
+          "test-cart:object-authorization"
+        ],
+        "reproduce_rate": 1.0,
+        "completion": 1
+      },
+      "gold_eligible": false,
+      "simulated": true,
+      "issues": [],
+      "limitation": "No efficacy claim: synthetic, unreviewed gold or unavailable real model execution"
+    },
+    {
+      "project_id": "test-cart",
+      "sample_id": "test-cart-sample",
+      "repetition": 1,
+      "arm": "single_a",
+      "pair_id": "test-cart/test-cart-sample/1",
+      "status": "completed",
+      "budget": {
+        "max_tokens": 12000,
+        "max_seconds": 60,
+        "max_requests": 12,
+        "max_model_calls": 6
+      },
+      "usage": {
+        "tokens": 600,
+        "requests": 1,
+        "model_calls": 1,
+        "latency_seconds": 0.4
+      },
+      "measured_wall_seconds": 0.05019330000504851,
+      "cost_usd": null,
+      "observations": [
+        {
+          "step": 0,
+          "model_alias": "a",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 12000,
+            "requests": 12,
+            "model_calls": 6,
+            "latency_seconds": 60.0
+          },
+          "input_hash": "835e810cf73bdb8557fe0d532752659bce9e30f8c745fbabda9e15e7a02fe5a9",
+          "sealed_output_hash": "dbbb8701cb06d853d88a14590cdb1666cef71ecbb758bbb3374e65b850076d50",
+          "response": {
+            "finding_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "reproduced_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        }
+      ],
+      "finding_ids": [
+        "ast:eval:app.py:2"
+      ],
+      "reproduced_ids": [
+        "ast:eval:app.py:2"
+      ],
+      "metrics": null,
+      "preview_metrics": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 1,
+        "unadjudicated_ids": [],
+        "precision": 1.0,
+        "recall": 0.5,
+        "common_miss_rate": null,
+        "common_missed_ids": null,
+        "minority_retention": null,
+        "minority_positive_ids": [],
+        "reproduce_rate": 1.0,
+        "completion": 1
+      },
+      "gold_eligible": false,
+      "simulated": true,
+      "issues": [],
+      "limitation": "No efficacy claim: synthetic, unreviewed gold or unavailable real model execution"
+    },
+    {
+      "project_id": "test-cart",
+      "sample_id": "test-cart-sample",
+      "repetition": 1,
+      "arm": "single_b",
+      "pair_id": "test-cart/test-cart-sample/1",
+      "status": "completed",
+      "budget": {
+        "max_tokens": 12000,
+        "max_seconds": 60,
+        "max_requests": 12,
+        "max_model_calls": 6
+      },
+      "usage": {
+        "tokens": 600,
+        "requests": 1,
+        "model_calls": 1,
+        "latency_seconds": 0.4
+      },
+      "measured_wall_seconds": 0.031287599995266646,
+      "cost_usd": null,
+      "observations": [
+        {
+          "step": 0,
+          "model_alias": "b",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 12000,
+            "requests": 12,
+            "model_calls": 6,
+            "latency_seconds": 60.0
+          },
+          "input_hash": "835e810cf73bdb8557fe0d532752659bce9e30f8c745fbabda9e15e7a02fe5a9",
+          "sealed_output_hash": "6dcaeeebc1d24c6577e14b115dfa1ee8d2ad3b81a43e5999719d4462131bcb14",
+          "response": {
+            "finding_ids": [
+              "test-cart:object-authorization"
+            ],
+            "reproduced_ids": [
+              "test-cart:object-authorization"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        }
+      ],
+      "finding_ids": [
+        "test-cart:object-authorization"
+      ],
+      "reproduced_ids": [
+        "test-cart:object-authorization"
+      ],
+      "metrics": null,
+      "preview_metrics": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 1,
+        "unadjudicated_ids": [],
+        "precision": 1.0,
+        "recall": 0.5,
+        "common_miss_rate": null,
+        "common_missed_ids": null,
+        "minority_retention": null,
+        "minority_positive_ids": [],
+        "reproduce_rate": 1.0,
+        "completion": 1
+      },
+      "gold_eligible": false,
+      "simulated": true,
+      "issues": [],
+      "limitation": "No efficacy claim: synthetic, unreviewed gold or unavailable real model execution"
+    },
+    {
+      "project_id": "test-cart",
+      "sample_id": "test-cart-sample",
+      "repetition": 1,
+      "arm": "debate",
+      "pair_id": "test-cart/test-cart-sample/1",
+      "status": "completed",
+      "budget": {
+        "max_tokens": 12000,
+        "max_seconds": 60,
+        "max_requests": 12,
+        "max_model_calls": 6
+      },
+      "usage": {
+        "tokens": 2400,
+        "requests": 4,
+        "model_calls": 4,
+        "latency_seconds": 1.6
+      },
+      "measured_wall_seconds": 0.0916739999956917,
+      "cost_usd": null,
+      "observations": [
+        {
+          "step": 0,
+          "model_alias": "a",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 3000,
+            "requests": 3,
+            "model_calls": 1,
+            "latency_seconds": 15.0
+          },
+          "input_hash": "835e810cf73bdb8557fe0d532752659bce9e30f8c745fbabda9e15e7a02fe5a9",
+          "sealed_output_hash": "dbbb8701cb06d853d88a14590cdb1666cef71ecbb758bbb3374e65b850076d50",
+          "response": {
+            "finding_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "reproduced_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        },
+        {
+          "step": 1,
+          "model_alias": "b",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 3000,
+            "requests": 3,
+            "model_calls": 1,
+            "latency_seconds": 15.0
+          },
+          "input_hash": "835e810cf73bdb8557fe0d532752659bce9e30f8c745fbabda9e15e7a02fe5a9",
+          "sealed_output_hash": "6dcaeeebc1d24c6577e14b115dfa1ee8d2ad3b81a43e5999719d4462131bcb14",
+          "response": {
+            "finding_ids": [
+              "test-cart:object-authorization"
+            ],
+            "reproduced_ids": [
+              "test-cart:object-authorization"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        },
+        {
+          "step": 2,
+          "model_alias": "c",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 3000,
+            "requests": 3,
+            "model_calls": 1,
+            "latency_seconds": 15.0
+          },
+          "input_hash": "835e810cf73bdb8557fe0d532752659bce9e30f8c745fbabda9e15e7a02fe5a9",
+          "sealed_output_hash": "dbbb8701cb06d853d88a14590cdb1666cef71ecbb758bbb3374e65b850076d50",
+          "response": {
+            "finding_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "reproduced_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        },
+        {
+          "step": 3,
+          "model_alias": "debate",
+          "phase": "debate",
+          "allocation": {
+            "tokens": 3000,
+            "requests": 3,
+            "model_calls": 1,
+            "latency_seconds": 15.0
+          },
+          "input_hash": "8041a8737af39b9540a05d75d30494f1e9db00f4fb29a9b6050d71d249809448",
+          "sealed_output_hash": "e073e19ed960fa714972757b98b147f5accbd58e47cd9c3e3b48f02319d79279",
+          "response": {
+            "finding_ids": [
+              "ast:eval:app.py:2",
+              "test-cart:object-authorization"
+            ],
+            "reproduced_ids": [
+              "ast:eval:app.py:2",
+              "test-cart:object-authorization"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        }
+      ],
+      "finding_ids": [
+        "ast:eval:app.py:2",
+        "test-cart:object-authorization"
+      ],
+      "reproduced_ids": [
+        "ast:eval:app.py:2",
+        "test-cart:object-authorization"
+      ],
+      "metrics": null,
+      "preview_metrics": {
+        "tp": 2,
+        "fp": 0,
+        "fn": 0,
+        "unadjudicated_ids": [],
+        "precision": 1.0,
+        "recall": 1.0,
+        "common_miss_rate": 0.0,
+        "common_missed_ids": [],
+        "minority_retention": 1.0,
+        "minority_positive_ids": [
+          "test-cart:object-authorization"
+        ],
+        "reproduce_rate": 1.0,
+        "completion": 1
+      },
+      "gold_eligible": false,
+      "simulated": true,
+      "issues": [],
+      "limitation": "No efficacy claim: synthetic, unreviewed gold or unavailable real model execution"
+    },
+    {
+      "project_id": "test-cart",
+      "sample_id": "test-cart-sample",
+      "repetition": 1,
+      "arm": "same_model_repeat",
+      "pair_id": "test-cart/test-cart-sample/1",
+      "status": "completed",
+      "budget": {
+        "max_tokens": 12000,
+        "max_seconds": 60,
+        "max_requests": 12,
+        "max_model_calls": 6
+      },
+      "usage": {
+        "tokens": 1800,
+        "requests": 3,
+        "model_calls": 3,
+        "latency_seconds": 1.2000000000000002
+      },
+      "measured_wall_seconds": 0.0704291000001831,
+      "cost_usd": null,
+      "observations": [
+        {
+          "step": 0,
+          "model_alias": "a",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 4000,
+            "requests": 4,
+            "model_calls": 2,
+            "latency_seconds": 20.0
+          },
+          "input_hash": "835e810cf73bdb8557fe0d532752659bce9e30f8c745fbabda9e15e7a02fe5a9",
+          "sealed_output_hash": "dbbb8701cb06d853d88a14590cdb1666cef71ecbb758bbb3374e65b850076d50",
+          "response": {
+            "finding_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "reproduced_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        },
+        {
+          "step": 1,
+          "model_alias": "a",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 4000,
+            "requests": 4,
+            "model_calls": 2,
+            "latency_seconds": 20.0
+          },
+          "input_hash": "835e810cf73bdb8557fe0d532752659bce9e30f8c745fbabda9e15e7a02fe5a9",
+          "sealed_output_hash": "dbbb8701cb06d853d88a14590cdb1666cef71ecbb758bbb3374e65b850076d50",
+          "response": {
+            "finding_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "reproduced_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        },
+        {
+          "step": 2,
+          "model_alias": "a",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 4000,
+            "requests": 4,
+            "model_calls": 2,
+            "latency_seconds": 20.0
+          },
+          "input_hash": "835e810cf73bdb8557fe0d532752659bce9e30f8c745fbabda9e15e7a02fe5a9",
+          "sealed_output_hash": "176cdbb9ff963abb6a456ad7084e70b912734f5f1468f77c2e989797a4186fa6",
+          "response": {
+            "finding_ids": [
+              "ast:eval:app.py:2",
+              "test-cart:false-positive"
+            ],
+            "reproduced_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        }
+      ],
+      "finding_ids": [
+        "ast:eval:app.py:2",
+        "test-cart:false-positive"
+      ],
+      "reproduced_ids": [
+        "ast:eval:app.py:2"
+      ],
+      "metrics": null,
+      "preview_metrics": {
+        "tp": 1,
+        "fp": 1,
+        "fn": 1,
+        "unadjudicated_ids": [],
+        "precision": 0.5,
+        "recall": 0.5,
+        "common_miss_rate": 0.5,
+        "common_missed_ids": [
+          "test-cart:object-authorization"
+        ],
+        "minority_retention": null,
+        "minority_positive_ids": [],
+        "reproduce_rate": 1.0,
+        "completion": 1
+      },
+      "gold_eligible": false,
+      "simulated": true,
+      "issues": [],
+      "limitation": "No efficacy claim: synthetic, unreviewed gold or unavailable real model execution"
+    },
+    {
+      "project_id": "test-cart",
+      "sample_id": "test-cart-sample",
+      "repetition": 1,
+      "arm": "traditional",
+      "pair_id": "test-cart/test-cart-sample/1",
+      "status": "completed",
+      "budget": {
+        "max_tokens": 12000,
+        "max_seconds": 60,
+        "max_requests": 12,
+        "max_model_calls": 6
+      },
+      "usage": {
+        "tokens": 0,
+        "requests": 0,
+        "model_calls": 0,
+        "latency_seconds": 0.01
+      },
+      "measured_wall_seconds": 0.021548899996560067,
+      "cost_usd": null,
+      "observations": [
+        {
+          "step": 0,
+          "model_alias": "traditional",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 12000,
+            "requests": 12,
+            "model_calls": 6,
+            "latency_seconds": 60.0
+          },
+          "input_hash": "835e810cf73bdb8557fe0d532752659bce9e30f8c745fbabda9e15e7a02fe5a9",
+          "sealed_output_hash": "d34bb7e5ff862a8c20a112fd753adde9a3ee5f4b1497ba5b36d3ecb69b0a0f63",
+          "response": {
+            "finding_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "reproduced_ids": [],
+            "status": "completed",
+            "tokens": 0,
+            "requests": 0,
+            "model_calls": 0,
+            "latency_seconds": 0.01,
+            "cost_usd": null
+          },
+          "simulated": true
+        }
+      ],
+      "finding_ids": [
+        "ast:eval:app.py:2"
+      ],
+      "reproduced_ids": [],
+      "metrics": null,
+      "preview_metrics": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 1,
+        "unadjudicated_ids": [],
+        "precision": 1.0,
+        "recall": 0.5,
+        "common_miss_rate": null,
+        "common_missed_ids": null,
+        "minority_retention": null,
+        "minority_positive_ids": [],
+        "reproduce_rate": 0.0,
+        "completion": 1
+      },
+      "gold_eligible": false,
+      "simulated": true,
+      "issues": [],
+      "limitation": "No efficacy claim: synthetic, unreviewed gold or unavailable real model execution"
+    },
+    {
+      "project_id": "test-cart",
+      "sample_id": "test-cart-sample",
+      "repetition": 1,
+      "arm": "single_c",
+      "pair_id": "test-cart/test-cart-sample/1",
+      "status": "completed",
+      "budget": {
+        "max_tokens": 12000,
+        "max_seconds": 60,
+        "max_requests": 12,
+        "max_model_calls": 6
+      },
+      "usage": {
+        "tokens": 600,
+        "requests": 1,
+        "model_calls": 1,
+        "latency_seconds": 0.4
+      },
+      "measured_wall_seconds": 0.03554270000313409,
+      "cost_usd": null,
+      "observations": [
+        {
+          "step": 0,
+          "model_alias": "c",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 12000,
+            "requests": 12,
+            "model_calls": 6,
+            "latency_seconds": 60.0
+          },
+          "input_hash": "835e810cf73bdb8557fe0d532752659bce9e30f8c745fbabda9e15e7a02fe5a9",
+          "sealed_output_hash": "dbbb8701cb06d853d88a14590cdb1666cef71ecbb758bbb3374e65b850076d50",
+          "response": {
+            "finding_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "reproduced_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        }
+      ],
+      "finding_ids": [
+        "ast:eval:app.py:2"
+      ],
+      "reproduced_ids": [
+        "ast:eval:app.py:2"
+      ],
+      "metrics": null,
+      "preview_metrics": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 1,
+        "unadjudicated_ids": [],
+        "precision": 1.0,
+        "recall": 0.5,
+        "common_miss_rate": null,
+        "common_missed_ids": null,
+        "minority_retention": null,
+        "minority_positive_ids": [],
+        "reproduce_rate": 1.0,
+        "completion": 1
+      },
+      "gold_eligible": false,
+      "simulated": true,
+      "issues": [],
+      "limitation": "No efficacy claim: synthetic, unreviewed gold or unavailable real model execution"
+    },
+    {
+      "project_id": "test-cart",
+      "sample_id": "test-cart-sample",
+      "repetition": 2,
+      "arm": "single_c",
+      "pair_id": "test-cart/test-cart-sample/2",
+      "status": "completed",
+      "budget": {
+        "max_tokens": 12000,
+        "max_seconds": 60,
+        "max_requests": 12,
+        "max_model_calls": 6
+      },
+      "usage": {
+        "tokens": 600,
+        "requests": 1,
+        "model_calls": 1,
+        "latency_seconds": 0.4
+      },
+      "measured_wall_seconds": 0.03088160000334028,
+      "cost_usd": null,
+      "observations": [
+        {
+          "step": 0,
+          "model_alias": "c",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 12000,
+            "requests": 12,
+            "model_calls": 6,
+            "latency_seconds": 60.0
+          },
+          "input_hash": "835e810cf73bdb8557fe0d532752659bce9e30f8c745fbabda9e15e7a02fe5a9",
+          "sealed_output_hash": "6dcaeeebc1d24c6577e14b115dfa1ee8d2ad3b81a43e5999719d4462131bcb14",
+          "response": {
+            "finding_ids": [
+              "test-cart:object-authorization"
+            ],
+            "reproduced_ids": [
+              "test-cart:object-authorization"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        }
+      ],
+      "finding_ids": [
+        "test-cart:object-authorization"
+      ],
+      "reproduced_ids": [
+        "test-cart:object-authorization"
+      ],
+      "metrics": null,
+      "preview_metrics": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 1,
+        "unadjudicated_ids": [],
+        "precision": 1.0,
+        "recall": 0.5,
+        "common_miss_rate": null,
+        "common_missed_ids": null,
+        "minority_retention": null,
+        "minority_positive_ids": [],
+        "reproduce_rate": 1.0,
+        "completion": 1
+      },
+      "gold_eligible": false,
+      "simulated": true,
+      "issues": [],
+      "limitation": "No efficacy claim: synthetic, unreviewed gold or unavailable real model execution"
+    },
+    {
+      "project_id": "test-cart",
+      "sample_id": "test-cart-sample",
+      "repetition": 2,
+      "arm": "single_a",
+      "pair_id": "test-cart/test-cart-sample/2",
+      "status": "completed",
+      "budget": {
+        "max_tokens": 12000,
+        "max_seconds": 60,
+        "max_requests": 12,
+        "max_model_calls": 6
+      },
+      "usage": {
+        "tokens": 600,
+        "requests": 1,
+        "model_calls": 1,
+        "latency_seconds": 0.4
+      },
+      "measured_wall_seconds": 0.027699099999153987,
+      "cost_usd": null,
+      "observations": [
+        {
+          "step": 0,
+          "model_alias": "a",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 12000,
+            "requests": 12,
+            "model_calls": 6,
+            "latency_seconds": 60.0
+          },
+          "input_hash": "835e810cf73bdb8557fe0d532752659bce9e30f8c745fbabda9e15e7a02fe5a9",
+          "sealed_output_hash": "dbbb8701cb06d853d88a14590cdb1666cef71ecbb758bbb3374e65b850076d50",
+          "response": {
+            "finding_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "reproduced_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        }
+      ],
+      "finding_ids": [
+        "ast:eval:app.py:2"
+      ],
+      "reproduced_ids": [
+        "ast:eval:app.py:2"
+      ],
+      "metrics": null,
+      "preview_metrics": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 1,
+        "unadjudicated_ids": [],
+        "precision": 1.0,
+        "recall": 0.5,
+        "common_miss_rate": null,
+        "common_missed_ids": null,
+        "minority_retention": null,
+        "minority_positive_ids": [],
+        "reproduce_rate": 1.0,
+        "completion": 1
+      },
+      "gold_eligible": false,
+      "simulated": true,
+      "issues": [],
+      "limitation": "No efficacy claim: synthetic, unreviewed gold or unavailable real model execution"
+    },
+    {
+      "project_id": "test-cart",
+      "sample_id": "test-cart-sample",
+      "repetition": 2,
+      "arm": "traditional",
+      "pair_id": "test-cart/test-cart-sample/2",
+      "status": "completed",
+      "budget": {
+        "max_tokens": 12000,
+        "max_seconds": 60,
+        "max_requests": 12,
+        "max_model_calls": 6
+      },
+      "usage": {
+        "tokens": 0,
+        "requests": 0,
+        "model_calls": 0,
+        "latency_seconds": 0.01
+      },
+      "measured_wall_seconds": 0.02328249999845866,
+      "cost_usd": null,
+      "observations": [
+        {
+          "step": 0,
+          "model_alias": "traditional",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 12000,
+            "requests": 12,
+            "model_calls": 6,
+            "latency_seconds": 60.0
+          },
+          "input_hash": "835e810cf73bdb8557fe0d532752659bce9e30f8c745fbabda9e15e7a02fe5a9",
+          "sealed_output_hash": "d34bb7e5ff862a8c20a112fd753adde9a3ee5f4b1497ba5b36d3ecb69b0a0f63",
+          "response": {
+            "finding_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "reproduced_ids": [],
+            "status": "completed",
+            "tokens": 0,
+            "requests": 0,
+            "model_calls": 0,
+            "latency_seconds": 0.01,
+            "cost_usd": null
+          },
+          "simulated": true
+        }
+      ],
+      "finding_ids": [
+        "ast:eval:app.py:2"
+      ],
+      "reproduced_ids": [],
+      "metrics": null,
+      "preview_metrics": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 1,
+        "unadjudicated_ids": [],
+        "precision": 1.0,
+        "recall": 0.5,
+        "common_miss_rate": null,
+        "common_missed_ids": null,
+        "minority_retention": null,
+        "minority_positive_ids": [],
+        "reproduce_rate": 0.0,
+        "completion": 1
+      },
+      "gold_eligible": false,
+      "simulated": true,
+      "issues": [],
+      "limitation": "No efficacy claim: synthetic, unreviewed gold or unavailable real model execution"
+    },
+    {
+      "project_id": "test-cart",
+      "sample_id": "test-cart-sample",
+      "repetition": 2,
+      "arm": "heterogeneous_independent",
+      "pair_id": "test-cart/test-cart-sample/2",
+      "status": "completed",
+      "budget": {
+        "max_tokens": 12000,
+        "max_seconds": 60,
+        "max_requests": 12,
+        "max_model_calls": 6
+      },
+      "usage": {
+        "tokens": 1800,
+        "requests": 3,
+        "model_calls": 3,
+        "latency_seconds": 1.2000000000000002
+      },
+      "measured_wall_seconds": 0.050648399999772664,
+      "cost_usd": null,
+      "observations": [
+        {
+          "step": 0,
+          "model_alias": "a",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 4000,
+            "requests": 4,
+            "model_calls": 2,
+            "latency_seconds": 20.0
+          },
+          "input_hash": "835e810cf73bdb8557fe0d532752659bce9e30f8c745fbabda9e15e7a02fe5a9",
+          "sealed_output_hash": "dbbb8701cb06d853d88a14590cdb1666cef71ecbb758bbb3374e65b850076d50",
+          "response": {
+            "finding_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "reproduced_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        },
+        {
+          "step": 1,
+          "model_alias": "b",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 4000,
+            "requests": 4,
+            "model_calls": 2,
+            "latency_seconds": 20.0
+          },
+          "input_hash": "835e810cf73bdb8557fe0d532752659bce9e30f8c745fbabda9e15e7a02fe5a9",
+          "sealed_output_hash": "4884ec71367c806440925befc126593a085a1eb7d03abc30f594cd1a90011055",
+          "response": {
+            "finding_ids": [],
+            "reproduced_ids": [],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        },
+        {
+          "step": 2,
+          "model_alias": "c",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 4000,
+            "requests": 4,
+            "model_calls": 2,
+            "latency_seconds": 20.0
+          },
+          "input_hash": "835e810cf73bdb8557fe0d532752659bce9e30f8c745fbabda9e15e7a02fe5a9",
+          "sealed_output_hash": "6dcaeeebc1d24c6577e14b115dfa1ee8d2ad3b81a43e5999719d4462131bcb14",
+          "response": {
+            "finding_ids": [
+              "test-cart:object-authorization"
+            ],
+            "reproduced_ids": [
+              "test-cart:object-authorization"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        }
+      ],
+      "finding_ids": [
+        "ast:eval:app.py:2",
+        "test-cart:object-authorization"
+      ],
+      "reproduced_ids": [
+        "ast:eval:app.py:2",
+        "test-cart:object-authorization"
+      ],
+      "metrics": null,
+      "preview_metrics": {
+        "tp": 2,
+        "fp": 0,
+        "fn": 0,
+        "unadjudicated_ids": [],
+        "precision": 1.0,
+        "recall": 1.0,
+        "common_miss_rate": 0.0,
+        "common_missed_ids": [],
+        "minority_retention": 1.0,
+        "minority_positive_ids": [
+          "ast:eval:app.py:2",
+          "test-cart:object-authorization"
+        ],
+        "reproduce_rate": 1.0,
+        "completion": 1
+      },
+      "gold_eligible": false,
+      "simulated": true,
+      "issues": [],
+      "limitation": "No efficacy claim: synthetic, unreviewed gold or unavailable real model execution"
+    },
+    {
+      "project_id": "test-cart",
+      "sample_id": "test-cart-sample",
+      "repetition": 2,
+      "arm": "single_b",
+      "pair_id": "test-cart/test-cart-sample/2",
+      "status": "completed",
+      "budget": {
+        "max_tokens": 12000,
+        "max_seconds": 60,
+        "max_requests": 12,
+        "max_model_calls": 6
+      },
+      "usage": {
+        "tokens": 600,
+        "requests": 1,
+        "model_calls": 1,
+        "latency_seconds": 0.4
+      },
+      "measured_wall_seconds": 0.01249880000250414,
+      "cost_usd": null,
+      "observations": [
+        {
+          "step": 0,
+          "model_alias": "b",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 12000,
+            "requests": 12,
+            "model_calls": 6,
+            "latency_seconds": 60.0
+          },
+          "input_hash": "835e810cf73bdb8557fe0d532752659bce9e30f8c745fbabda9e15e7a02fe5a9",
+          "sealed_output_hash": "4884ec71367c806440925befc126593a085a1eb7d03abc30f594cd1a90011055",
+          "response": {
+            "finding_ids": [],
+            "reproduced_ids": [],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        }
+      ],
+      "finding_ids": [],
+      "reproduced_ids": [],
+      "metrics": null,
+      "preview_metrics": {
+        "tp": 0,
+        "fp": 0,
+        "fn": 2,
+        "unadjudicated_ids": [],
+        "precision": null,
+        "recall": 0.0,
+        "common_miss_rate": null,
+        "common_missed_ids": null,
+        "minority_retention": null,
+        "minority_positive_ids": [],
+        "reproduce_rate": null,
+        "completion": 1
+      },
+      "gold_eligible": false,
+      "simulated": true,
+      "issues": [],
+      "limitation": "No efficacy claim: synthetic, unreviewed gold or unavailable real model execution"
+    },
+    {
+      "project_id": "test-cart",
+      "sample_id": "test-cart-sample",
+      "repetition": 2,
+      "arm": "debate",
+      "pair_id": "test-cart/test-cart-sample/2",
+      "status": "completed",
+      "budget": {
+        "max_tokens": 12000,
+        "max_seconds": 60,
+        "max_requests": 12,
+        "max_model_calls": 6
+      },
+      "usage": {
+        "tokens": 2400,
+        "requests": 4,
+        "model_calls": 4,
+        "latency_seconds": 1.6
+      },
+      "measured_wall_seconds": 0.0669458999982453,
+      "cost_usd": null,
+      "observations": [
+        {
+          "step": 0,
+          "model_alias": "a",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 3000,
+            "requests": 3,
+            "model_calls": 1,
+            "latency_seconds": 15.0
+          },
+          "input_hash": "835e810cf73bdb8557fe0d532752659bce9e30f8c745fbabda9e15e7a02fe5a9",
+          "sealed_output_hash": "dbbb8701cb06d853d88a14590cdb1666cef71ecbb758bbb3374e65b850076d50",
+          "response": {
+            "finding_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "reproduced_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        },
+        {
+          "step": 1,
+          "model_alias": "b",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 3000,
+            "requests": 3,
+            "model_calls": 1,
+            "latency_seconds": 15.0
+          },
+          "input_hash": "835e810cf73bdb8557fe0d532752659bce9e30f8c745fbabda9e15e7a02fe5a9",
+          "sealed_output_hash": "4884ec71367c806440925befc126593a085a1eb7d03abc30f594cd1a90011055",
+          "response": {
+            "finding_ids": [],
+            "reproduced_ids": [],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        },
+        {
+          "step": 2,
+          "model_alias": "c",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 3000,
+            "requests": 3,
+            "model_calls": 1,
+            "latency_seconds": 15.0
+          },
+          "input_hash": "835e810cf73bdb8557fe0d532752659bce9e30f8c745fbabda9e15e7a02fe5a9",
+          "sealed_output_hash": "6dcaeeebc1d24c6577e14b115dfa1ee8d2ad3b81a43e5999719d4462131bcb14",
+          "response": {
+            "finding_ids": [
+              "test-cart:object-authorization"
+            ],
+            "reproduced_ids": [
+              "test-cart:object-authorization"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        },
+        {
+          "step": 3,
+          "model_alias": "debate",
+          "phase": "debate",
+          "allocation": {
+            "tokens": 3000,
+            "requests": 3,
+            "model_calls": 1,
+            "latency_seconds": 15.0
+          },
+          "input_hash": "ce8bc939a2c64139a1415e1eb204fd3c24b2f16b5143e3d6e9f938c1438ef745",
+          "sealed_output_hash": "87f69f0895e3ba1be031a398548ff407241ecb8440a104a1c75183ea5243473c",
+          "response": {
+            "finding_ids": [
+              "test-cart:false-positive"
+            ],
+            "reproduced_ids": [],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        }
+      ],
+      "finding_ids": [
+        "test-cart:false-positive"
+      ],
+      "reproduced_ids": [],
+      "metrics": null,
+      "preview_metrics": {
+        "tp": 0,
+        "fp": 1,
+        "fn": 2,
+        "unadjudicated_ids": [],
+        "precision": 0.0,
+        "recall": 0.0,
+        "common_miss_rate": 0.0,
+        "common_missed_ids": [],
+        "minority_retention": 0.0,
+        "minority_positive_ids": [
+          "ast:eval:app.py:2",
+          "test-cart:object-authorization"
+        ],
+        "reproduce_rate": null,
+        "completion": 1
+      },
+      "gold_eligible": false,
+      "simulated": true,
+      "issues": [],
+      "limitation": "No efficacy claim: synthetic, unreviewed gold or unavailable real model execution"
+    },
+    {
+      "project_id": "test-cart",
+      "sample_id": "test-cart-sample",
+      "repetition": 2,
+      "arm": "same_model_repeat",
+      "pair_id": "test-cart/test-cart-sample/2",
+      "status": "completed",
+      "budget": {
+        "max_tokens": 12000,
+        "max_seconds": 60,
+        "max_requests": 12,
+        "max_model_calls": 6
+      },
+      "usage": {
+        "tokens": 1800,
+        "requests": 3,
+        "model_calls": 3,
+        "latency_seconds": 1.2000000000000002
+      },
+      "measured_wall_seconds": 0.09458119999908376,
+      "cost_usd": null,
+      "observations": [
+        {
+          "step": 0,
+          "model_alias": "a",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 4000,
+            "requests": 4,
+            "model_calls": 2,
+            "latency_seconds": 20.0
+          },
+          "input_hash": "835e810cf73bdb8557fe0d532752659bce9e30f8c745fbabda9e15e7a02fe5a9",
+          "sealed_output_hash": "dbbb8701cb06d853d88a14590cdb1666cef71ecbb758bbb3374e65b850076d50",
+          "response": {
+            "finding_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "reproduced_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        },
+        {
+          "step": 1,
+          "model_alias": "a",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 4000,
+            "requests": 4,
+            "model_calls": 2,
+            "latency_seconds": 20.0
+          },
+          "input_hash": "835e810cf73bdb8557fe0d532752659bce9e30f8c745fbabda9e15e7a02fe5a9",
+          "sealed_output_hash": "176cdbb9ff963abb6a456ad7084e70b912734f5f1468f77c2e989797a4186fa6",
+          "response": {
+            "finding_ids": [
+              "ast:eval:app.py:2",
+              "test-cart:false-positive"
+            ],
+            "reproduced_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        },
+        {
+          "step": 2,
+          "model_alias": "a",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 4000,
+            "requests": 4,
+            "model_calls": 2,
+            "latency_seconds": 20.0
+          },
+          "input_hash": "835e810cf73bdb8557fe0d532752659bce9e30f8c745fbabda9e15e7a02fe5a9",
+          "sealed_output_hash": "dbbb8701cb06d853d88a14590cdb1666cef71ecbb758bbb3374e65b850076d50",
+          "response": {
+            "finding_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "reproduced_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        }
+      ],
+      "finding_ids": [
+        "ast:eval:app.py:2",
+        "test-cart:false-positive"
+      ],
+      "reproduced_ids": [
+        "ast:eval:app.py:2"
+      ],
+      "metrics": null,
+      "preview_metrics": {
+        "tp": 1,
+        "fp": 1,
+        "fn": 1,
+        "unadjudicated_ids": [],
+        "precision": 0.5,
+        "recall": 0.5,
+        "common_miss_rate": 0.5,
+        "common_missed_ids": [
+          "test-cart:object-authorization"
+        ],
+        "minority_retention": null,
+        "minority_positive_ids": [],
+        "reproduce_rate": 1.0,
+        "completion": 1
+      },
+      "gold_eligible": false,
+      "simulated": true,
+      "issues": [],
+      "limitation": "No efficacy claim: synthetic, unreviewed gold or unavailable real model execution"
+    },
+    {
+      "project_id": "test-notes",
+      "sample_id": "test-notes-sample",
+      "repetition": 0,
+      "arm": "debate",
+      "pair_id": "test-notes/test-notes-sample/0",
+      "status": "completed",
+      "budget": {
+        "max_tokens": 12000,
+        "max_seconds": 60,
+        "max_requests": 12,
+        "max_model_calls": 6
+      },
+      "usage": {
+        "tokens": 2400,
+        "requests": 4,
+        "model_calls": 4,
+        "latency_seconds": 1.6
+      },
+      "measured_wall_seconds": 0.23341319999599364,
+      "cost_usd": null,
+      "observations": [
+        {
+          "step": 0,
+          "model_alias": "a",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 3000,
+            "requests": 3,
+            "model_calls": 1,
+            "latency_seconds": 15.0
+          },
+          "input_hash": "32fbfde4dd0ab68e2cdff1ddeb9507c996c31e0153182ed025e0bbf9642380bc",
+          "sealed_output_hash": "455df4aa0a084a584b8c8defb2c36302bc44cb6af3448acb6f406ab8c33268b7",
+          "response": {
+            "finding_ids": [
+              "ast:eval:app.py:2",
+              "test-notes:false-positive"
+            ],
+            "reproduced_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        },
+        {
+          "step": 1,
+          "model_alias": "b",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 3000,
+            "requests": 3,
+            "model_calls": 1,
+            "latency_seconds": 15.0
+          },
+          "input_hash": "32fbfde4dd0ab68e2cdff1ddeb9507c996c31e0153182ed025e0bbf9642380bc",
+          "sealed_output_hash": "c18cfc68465ff22c6bb56e54af541238cab33e6d3516ee5ae8835221f0093790",
+          "response": {
+            "finding_ids": [
+              "test-notes:object-authorization"
+            ],
+            "reproduced_ids": [
+              "test-notes:object-authorization"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        },
+        {
+          "step": 2,
+          "model_alias": "c",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 3000,
+            "requests": 3,
+            "model_calls": 1,
+            "latency_seconds": 15.0
+          },
+          "input_hash": "32fbfde4dd0ab68e2cdff1ddeb9507c996c31e0153182ed025e0bbf9642380bc",
+          "sealed_output_hash": "4884ec71367c806440925befc126593a085a1eb7d03abc30f594cd1a90011055",
+          "response": {
+            "finding_ids": [],
+            "reproduced_ids": [],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        },
+        {
+          "step": 3,
+          "model_alias": "debate",
+          "phase": "debate",
+          "allocation": {
+            "tokens": 3000,
+            "requests": 3,
+            "model_calls": 1,
+            "latency_seconds": 15.0
+          },
+          "input_hash": "3a2bc93ba755f922adbad770ccc9a399e090af9c8ddaf682ae6d0e0666e7fe86",
+          "sealed_output_hash": "dbbb8701cb06d853d88a14590cdb1666cef71ecbb758bbb3374e65b850076d50",
+          "response": {
+            "finding_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "reproduced_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        }
+      ],
+      "finding_ids": [
+        "ast:eval:app.py:2"
+      ],
+      "reproduced_ids": [
+        "ast:eval:app.py:2"
+      ],
+      "metrics": null,
+      "preview_metrics": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 1,
+        "unadjudicated_ids": [],
+        "precision": 1.0,
+        "recall": 0.5,
+        "common_miss_rate": 0.0,
+        "common_missed_ids": [],
+        "minority_retention": 0.5,
+        "minority_positive_ids": [
+          "ast:eval:app.py:2",
+          "test-notes:object-authorization"
+        ],
+        "reproduce_rate": 1.0,
+        "completion": 1
+      },
+      "gold_eligible": false,
+      "simulated": true,
+      "issues": [],
+      "limitation": "No efficacy claim: synthetic, unreviewed gold or unavailable real model execution"
+    },
+    {
+      "project_id": "test-notes",
+      "sample_id": "test-notes-sample",
+      "repetition": 0,
+      "arm": "heterogeneous_independent",
+      "pair_id": "test-notes/test-notes-sample/0",
+      "status": "completed",
+      "budget": {
+        "max_tokens": 12000,
+        "max_seconds": 60,
+        "max_requests": 12,
+        "max_model_calls": 6
+      },
+      "usage": {
+        "tokens": 1800,
+        "requests": 3,
+        "model_calls": 3,
+        "latency_seconds": 1.2000000000000002
+      },
+      "measured_wall_seconds": 0.08747690000018338,
+      "cost_usd": null,
+      "observations": [
+        {
+          "step": 0,
+          "model_alias": "a",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 4000,
+            "requests": 4,
+            "model_calls": 2,
+            "latency_seconds": 20.0
+          },
+          "input_hash": "32fbfde4dd0ab68e2cdff1ddeb9507c996c31e0153182ed025e0bbf9642380bc",
+          "sealed_output_hash": "455df4aa0a084a584b8c8defb2c36302bc44cb6af3448acb6f406ab8c33268b7",
+          "response": {
+            "finding_ids": [
+              "ast:eval:app.py:2",
+              "test-notes:false-positive"
+            ],
+            "reproduced_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        },
+        {
+          "step": 1,
+          "model_alias": "b",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 4000,
+            "requests": 4,
+            "model_calls": 2,
+            "latency_seconds": 20.0
+          },
+          "input_hash": "32fbfde4dd0ab68e2cdff1ddeb9507c996c31e0153182ed025e0bbf9642380bc",
+          "sealed_output_hash": "c18cfc68465ff22c6bb56e54af541238cab33e6d3516ee5ae8835221f0093790",
+          "response": {
+            "finding_ids": [
+              "test-notes:object-authorization"
+            ],
+            "reproduced_ids": [
+              "test-notes:object-authorization"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        },
+        {
+          "step": 2,
+          "model_alias": "c",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 4000,
+            "requests": 4,
+            "model_calls": 2,
+            "latency_seconds": 20.0
+          },
+          "input_hash": "32fbfde4dd0ab68e2cdff1ddeb9507c996c31e0153182ed025e0bbf9642380bc",
+          "sealed_output_hash": "4884ec71367c806440925befc126593a085a1eb7d03abc30f594cd1a90011055",
+          "response": {
+            "finding_ids": [],
+            "reproduced_ids": [],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        }
+      ],
+      "finding_ids": [
+        "ast:eval:app.py:2",
+        "test-notes:false-positive",
+        "test-notes:object-authorization"
+      ],
+      "reproduced_ids": [
+        "ast:eval:app.py:2",
+        "test-notes:object-authorization"
+      ],
+      "metrics": null,
+      "preview_metrics": {
+        "tp": 2,
+        "fp": 1,
+        "fn": 0,
+        "unadjudicated_ids": [],
+        "precision": 0.6666666666666666,
+        "recall": 1.0,
+        "common_miss_rate": 0.0,
+        "common_missed_ids": [],
+        "minority_retention": 1.0,
+        "minority_positive_ids": [
+          "ast:eval:app.py:2",
+          "test-notes:object-authorization"
+        ],
+        "reproduce_rate": 1.0,
+        "completion": 1
+      },
+      "gold_eligible": false,
+      "simulated": true,
+      "issues": [],
+      "limitation": "No efficacy claim: synthetic, unreviewed gold or unavailable real model execution"
+    },
+    {
+      "project_id": "test-notes",
+      "sample_id": "test-notes-sample",
+      "repetition": 0,
+      "arm": "same_model_repeat",
+      "pair_id": "test-notes/test-notes-sample/0",
+      "status": "completed",
+      "budget": {
+        "max_tokens": 12000,
+        "max_seconds": 60,
+        "max_requests": 12,
+        "max_model_calls": 6
+      },
+      "usage": {
+        "tokens": 1800,
+        "requests": 3,
+        "model_calls": 3,
+        "latency_seconds": 1.2000000000000002
+      },
+      "measured_wall_seconds": 0.06060360000265064,
+      "cost_usd": null,
+      "observations": [
+        {
+          "step": 0,
+          "model_alias": "a",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 4000,
+            "requests": 4,
+            "model_calls": 2,
+            "latency_seconds": 20.0
+          },
+          "input_hash": "32fbfde4dd0ab68e2cdff1ddeb9507c996c31e0153182ed025e0bbf9642380bc",
+          "sealed_output_hash": "455df4aa0a084a584b8c8defb2c36302bc44cb6af3448acb6f406ab8c33268b7",
+          "response": {
+            "finding_ids": [
+              "ast:eval:app.py:2",
+              "test-notes:false-positive"
+            ],
+            "reproduced_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        },
+        {
+          "step": 1,
+          "model_alias": "a",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 4000,
+            "requests": 4,
+            "model_calls": 2,
+            "latency_seconds": 20.0
+          },
+          "input_hash": "32fbfde4dd0ab68e2cdff1ddeb9507c996c31e0153182ed025e0bbf9642380bc",
+          "sealed_output_hash": "dbbb8701cb06d853d88a14590cdb1666cef71ecbb758bbb3374e65b850076d50",
+          "response": {
+            "finding_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "reproduced_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        },
+        {
+          "step": 2,
+          "model_alias": "a",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 4000,
+            "requests": 4,
+            "model_calls": 2,
+            "latency_seconds": 20.0
+          },
+          "input_hash": "32fbfde4dd0ab68e2cdff1ddeb9507c996c31e0153182ed025e0bbf9642380bc",
+          "sealed_output_hash": "dbbb8701cb06d853d88a14590cdb1666cef71ecbb758bbb3374e65b850076d50",
+          "response": {
+            "finding_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "reproduced_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        }
+      ],
+      "finding_ids": [
+        "ast:eval:app.py:2",
+        "test-notes:false-positive"
+      ],
+      "reproduced_ids": [
+        "ast:eval:app.py:2"
+      ],
+      "metrics": null,
+      "preview_metrics": {
+        "tp": 1,
+        "fp": 1,
+        "fn": 1,
+        "unadjudicated_ids": [],
+        "precision": 0.5,
+        "recall": 0.5,
+        "common_miss_rate": 0.5,
+        "common_missed_ids": [
+          "test-notes:object-authorization"
+        ],
+        "minority_retention": null,
+        "minority_positive_ids": [],
+        "reproduce_rate": 1.0,
+        "completion": 1
+      },
+      "gold_eligible": false,
+      "simulated": true,
+      "issues": [],
+      "limitation": "No efficacy claim: synthetic, unreviewed gold or unavailable real model execution"
+    },
+    {
+      "project_id": "test-notes",
+      "sample_id": "test-notes-sample",
+      "repetition": 0,
+      "arm": "single_b",
+      "pair_id": "test-notes/test-notes-sample/0",
+      "status": "completed",
+      "budget": {
+        "max_tokens": 12000,
+        "max_seconds": 60,
+        "max_requests": 12,
+        "max_model_calls": 6
+      },
+      "usage": {
+        "tokens": 600,
+        "requests": 1,
+        "model_calls": 1,
+        "latency_seconds": 0.4
+      },
+      "measured_wall_seconds": 0.013551000003644731,
+      "cost_usd": null,
+      "observations": [
+        {
+          "step": 0,
+          "model_alias": "b",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 12000,
+            "requests": 12,
+            "model_calls": 6,
+            "latency_seconds": 60.0
+          },
+          "input_hash": "32fbfde4dd0ab68e2cdff1ddeb9507c996c31e0153182ed025e0bbf9642380bc",
+          "sealed_output_hash": "c18cfc68465ff22c6bb56e54af541238cab33e6d3516ee5ae8835221f0093790",
+          "response": {
+            "finding_ids": [
+              "test-notes:object-authorization"
+            ],
+            "reproduced_ids": [
+              "test-notes:object-authorization"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        }
+      ],
+      "finding_ids": [
+        "test-notes:object-authorization"
+      ],
+      "reproduced_ids": [
+        "test-notes:object-authorization"
+      ],
+      "metrics": null,
+      "preview_metrics": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 1,
+        "unadjudicated_ids": [],
+        "precision": 1.0,
+        "recall": 0.5,
+        "common_miss_rate": null,
+        "common_missed_ids": null,
+        "minority_retention": null,
+        "minority_positive_ids": [],
+        "reproduce_rate": 1.0,
+        "completion": 1
+      },
+      "gold_eligible": false,
+      "simulated": true,
+      "issues": [],
+      "limitation": "No efficacy claim: synthetic, unreviewed gold or unavailable real model execution"
+    },
+    {
+      "project_id": "test-notes",
+      "sample_id": "test-notes-sample",
+      "repetition": 0,
+      "arm": "single_a",
+      "pair_id": "test-notes/test-notes-sample/0",
+      "status": "completed",
+      "budget": {
+        "max_tokens": 12000,
+        "max_seconds": 60,
+        "max_requests": 12,
+        "max_model_calls": 6
+      },
+      "usage": {
+        "tokens": 600,
+        "requests": 1,
+        "model_calls": 1,
+        "latency_seconds": 0.4
+      },
+      "measured_wall_seconds": 0.01464010000199778,
+      "cost_usd": null,
+      "observations": [
+        {
+          "step": 0,
+          "model_alias": "a",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 12000,
+            "requests": 12,
+            "model_calls": 6,
+            "latency_seconds": 60.0
+          },
+          "input_hash": "32fbfde4dd0ab68e2cdff1ddeb9507c996c31e0153182ed025e0bbf9642380bc",
+          "sealed_output_hash": "455df4aa0a084a584b8c8defb2c36302bc44cb6af3448acb6f406ab8c33268b7",
+          "response": {
+            "finding_ids": [
+              "ast:eval:app.py:2",
+              "test-notes:false-positive"
+            ],
+            "reproduced_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        }
+      ],
+      "finding_ids": [
+        "ast:eval:app.py:2",
+        "test-notes:false-positive"
+      ],
+      "reproduced_ids": [
+        "ast:eval:app.py:2"
+      ],
+      "metrics": null,
+      "preview_metrics": {
+        "tp": 1,
+        "fp": 1,
+        "fn": 1,
+        "unadjudicated_ids": [],
+        "precision": 0.5,
+        "recall": 0.5,
+        "common_miss_rate": null,
+        "common_missed_ids": null,
+        "minority_retention": null,
+        "minority_positive_ids": [],
+        "reproduce_rate": 1.0,
+        "completion": 1
+      },
+      "gold_eligible": false,
+      "simulated": true,
+      "issues": [],
+      "limitation": "No efficacy claim: synthetic, unreviewed gold or unavailable real model execution"
+    },
+    {
+      "project_id": "test-notes",
+      "sample_id": "test-notes-sample",
+      "repetition": 0,
+      "arm": "single_c",
+      "pair_id": "test-notes/test-notes-sample/0",
+      "status": "completed",
+      "budget": {
+        "max_tokens": 12000,
+        "max_seconds": 60,
+        "max_requests": 12,
+        "max_model_calls": 6
+      },
+      "usage": {
+        "tokens": 600,
+        "requests": 1,
+        "model_calls": 1,
+        "latency_seconds": 0.4
+      },
+      "measured_wall_seconds": 0.020808599998417776,
+      "cost_usd": null,
+      "observations": [
+        {
+          "step": 0,
+          "model_alias": "c",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 12000,
+            "requests": 12,
+            "model_calls": 6,
+            "latency_seconds": 60.0
+          },
+          "input_hash": "32fbfde4dd0ab68e2cdff1ddeb9507c996c31e0153182ed025e0bbf9642380bc",
+          "sealed_output_hash": "4884ec71367c806440925befc126593a085a1eb7d03abc30f594cd1a90011055",
+          "response": {
+            "finding_ids": [],
+            "reproduced_ids": [],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        }
+      ],
+      "finding_ids": [],
+      "reproduced_ids": [],
+      "metrics": null,
+      "preview_metrics": {
+        "tp": 0,
+        "fp": 0,
+        "fn": 2,
+        "unadjudicated_ids": [],
+        "precision": null,
+        "recall": 0.0,
+        "common_miss_rate": null,
+        "common_missed_ids": null,
+        "minority_retention": null,
+        "minority_positive_ids": [],
+        "reproduce_rate": null,
+        "completion": 1
+      },
+      "gold_eligible": false,
+      "simulated": true,
+      "issues": [],
+      "limitation": "No efficacy claim: synthetic, unreviewed gold or unavailable real model execution"
+    },
+    {
+      "project_id": "test-notes",
+      "sample_id": "test-notes-sample",
+      "repetition": 0,
+      "arm": "traditional",
+      "pair_id": "test-notes/test-notes-sample/0",
+      "status": "completed",
+      "budget": {
+        "max_tokens": 12000,
+        "max_seconds": 60,
+        "max_requests": 12,
+        "max_model_calls": 6
+      },
+      "usage": {
+        "tokens": 0,
+        "requests": 0,
+        "model_calls": 0,
+        "latency_seconds": 0.01
+      },
+      "measured_wall_seconds": 0.02478799999516923,
+      "cost_usd": null,
+      "observations": [
+        {
+          "step": 0,
+          "model_alias": "traditional",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 12000,
+            "requests": 12,
+            "model_calls": 6,
+            "latency_seconds": 60.0
+          },
+          "input_hash": "32fbfde4dd0ab68e2cdff1ddeb9507c996c31e0153182ed025e0bbf9642380bc",
+          "sealed_output_hash": "d34bb7e5ff862a8c20a112fd753adde9a3ee5f4b1497ba5b36d3ecb69b0a0f63",
+          "response": {
+            "finding_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "reproduced_ids": [],
+            "status": "completed",
+            "tokens": 0,
+            "requests": 0,
+            "model_calls": 0,
+            "latency_seconds": 0.01,
+            "cost_usd": null
+          },
+          "simulated": true
+        }
+      ],
+      "finding_ids": [
+        "ast:eval:app.py:2"
+      ],
+      "reproduced_ids": [],
+      "metrics": null,
+      "preview_metrics": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 1,
+        "unadjudicated_ids": [],
+        "precision": 1.0,
+        "recall": 0.5,
+        "common_miss_rate": null,
+        "common_missed_ids": null,
+        "minority_retention": null,
+        "minority_positive_ids": [],
+        "reproduce_rate": 0.0,
+        "completion": 1
+      },
+      "gold_eligible": false,
+      "simulated": true,
+      "issues": [],
+      "limitation": "No efficacy claim: synthetic, unreviewed gold or unavailable real model execution"
+    },
+    {
+      "project_id": "test-notes",
+      "sample_id": "test-notes-sample",
+      "repetition": 1,
+      "arm": "single_a",
+      "pair_id": "test-notes/test-notes-sample/1",
+      "status": "completed",
+      "budget": {
+        "max_tokens": 12000,
+        "max_seconds": 60,
+        "max_requests": 12,
+        "max_model_calls": 6
+      },
+      "usage": {
+        "tokens": 600,
+        "requests": 1,
+        "model_calls": 1,
+        "latency_seconds": 0.4
+      },
+      "measured_wall_seconds": 0.05230139999912353,
+      "cost_usd": null,
+      "observations": [
+        {
+          "step": 0,
+          "model_alias": "a",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 12000,
+            "requests": 12,
+            "model_calls": 6,
+            "latency_seconds": 60.0
+          },
+          "input_hash": "32fbfde4dd0ab68e2cdff1ddeb9507c996c31e0153182ed025e0bbf9642380bc",
+          "sealed_output_hash": "dbbb8701cb06d853d88a14590cdb1666cef71ecbb758bbb3374e65b850076d50",
+          "response": {
+            "finding_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "reproduced_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        }
+      ],
+      "finding_ids": [
+        "ast:eval:app.py:2"
+      ],
+      "reproduced_ids": [
+        "ast:eval:app.py:2"
+      ],
+      "metrics": null,
+      "preview_metrics": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 1,
+        "unadjudicated_ids": [],
+        "precision": 1.0,
+        "recall": 0.5,
+        "common_miss_rate": null,
+        "common_missed_ids": null,
+        "minority_retention": null,
+        "minority_positive_ids": [],
+        "reproduce_rate": 1.0,
+        "completion": 1
+      },
+      "gold_eligible": false,
+      "simulated": true,
+      "issues": [],
+      "limitation": "No efficacy claim: synthetic, unreviewed gold or unavailable real model execution"
+    },
+    {
+      "project_id": "test-notes",
+      "sample_id": "test-notes-sample",
+      "repetition": 1,
+      "arm": "traditional",
+      "pair_id": "test-notes/test-notes-sample/1",
+      "status": "completed",
+      "budget": {
+        "max_tokens": 12000,
+        "max_seconds": 60,
+        "max_requests": 12,
+        "max_model_calls": 6
+      },
+      "usage": {
+        "tokens": 0,
+        "requests": 0,
+        "model_calls": 0,
+        "latency_seconds": 0.01
+      },
+      "measured_wall_seconds": 0.02076900000247406,
+      "cost_usd": null,
+      "observations": [
+        {
+          "step": 0,
+          "model_alias": "traditional",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 12000,
+            "requests": 12,
+            "model_calls": 6,
+            "latency_seconds": 60.0
+          },
+          "input_hash": "32fbfde4dd0ab68e2cdff1ddeb9507c996c31e0153182ed025e0bbf9642380bc",
+          "sealed_output_hash": "d34bb7e5ff862a8c20a112fd753adde9a3ee5f4b1497ba5b36d3ecb69b0a0f63",
+          "response": {
+            "finding_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "reproduced_ids": [],
+            "status": "completed",
+            "tokens": 0,
+            "requests": 0,
+            "model_calls": 0,
+            "latency_seconds": 0.01,
+            "cost_usd": null
+          },
+          "simulated": true
+        }
+      ],
+      "finding_ids": [
+        "ast:eval:app.py:2"
+      ],
+      "reproduced_ids": [],
+      "metrics": null,
+      "preview_metrics": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 1,
+        "unadjudicated_ids": [],
+        "precision": 1.0,
+        "recall": 0.5,
+        "common_miss_rate": null,
+        "common_missed_ids": null,
+        "minority_retention": null,
+        "minority_positive_ids": [],
+        "reproduce_rate": 0.0,
+        "completion": 1
+      },
+      "gold_eligible": false,
+      "simulated": true,
+      "issues": [],
+      "limitation": "No efficacy claim: synthetic, unreviewed gold or unavailable real model execution"
+    },
+    {
+      "project_id": "test-notes",
+      "sample_id": "test-notes-sample",
+      "repetition": 1,
+      "arm": "same_model_repeat",
+      "pair_id": "test-notes/test-notes-sample/1",
+      "status": "completed",
+      "budget": {
+        "max_tokens": 12000,
+        "max_seconds": 60,
+        "max_requests": 12,
+        "max_model_calls": 6
+      },
+      "usage": {
+        "tokens": 1800,
+        "requests": 3,
+        "model_calls": 3,
+        "latency_seconds": 1.2000000000000002
+      },
+      "measured_wall_seconds": 0.0661448000028031,
+      "cost_usd": null,
+      "observations": [
+        {
+          "step": 0,
+          "model_alias": "a",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 4000,
+            "requests": 4,
+            "model_calls": 2,
+            "latency_seconds": 20.0
+          },
+          "input_hash": "32fbfde4dd0ab68e2cdff1ddeb9507c996c31e0153182ed025e0bbf9642380bc",
+          "sealed_output_hash": "dbbb8701cb06d853d88a14590cdb1666cef71ecbb758bbb3374e65b850076d50",
+          "response": {
+            "finding_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "reproduced_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        },
+        {
+          "step": 1,
+          "model_alias": "a",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 4000,
+            "requests": 4,
+            "model_calls": 2,
+            "latency_seconds": 20.0
+          },
+          "input_hash": "32fbfde4dd0ab68e2cdff1ddeb9507c996c31e0153182ed025e0bbf9642380bc",
+          "sealed_output_hash": "dbbb8701cb06d853d88a14590cdb1666cef71ecbb758bbb3374e65b850076d50",
+          "response": {
+            "finding_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "reproduced_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        },
+        {
+          "step": 2,
+          "model_alias": "a",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 4000,
+            "requests": 4,
+            "model_calls": 2,
+            "latency_seconds": 20.0
+          },
+          "input_hash": "32fbfde4dd0ab68e2cdff1ddeb9507c996c31e0153182ed025e0bbf9642380bc",
+          "sealed_output_hash": "455df4aa0a084a584b8c8defb2c36302bc44cb6af3448acb6f406ab8c33268b7",
+          "response": {
+            "finding_ids": [
+              "ast:eval:app.py:2",
+              "test-notes:false-positive"
+            ],
+            "reproduced_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        }
+      ],
+      "finding_ids": [
+        "ast:eval:app.py:2",
+        "test-notes:false-positive"
+      ],
+      "reproduced_ids": [
+        "ast:eval:app.py:2"
+      ],
+      "metrics": null,
+      "preview_metrics": {
+        "tp": 1,
+        "fp": 1,
+        "fn": 1,
+        "unadjudicated_ids": [],
+        "precision": 0.5,
+        "recall": 0.5,
+        "common_miss_rate": 0.5,
+        "common_missed_ids": [
+          "test-notes:object-authorization"
+        ],
+        "minority_retention": null,
+        "minority_positive_ids": [],
+        "reproduce_rate": 1.0,
+        "completion": 1
+      },
+      "gold_eligible": false,
+      "simulated": true,
+      "issues": [],
+      "limitation": "No efficacy claim: synthetic, unreviewed gold or unavailable real model execution"
+    },
+    {
+      "project_id": "test-notes",
+      "sample_id": "test-notes-sample",
+      "repetition": 1,
+      "arm": "single_b",
+      "pair_id": "test-notes/test-notes-sample/1",
+      "status": "completed",
+      "budget": {
+        "max_tokens": 12000,
+        "max_seconds": 60,
+        "max_requests": 12,
+        "max_model_calls": 6
+      },
+      "usage": {
+        "tokens": 600,
+        "requests": 1,
+        "model_calls": 1,
+        "latency_seconds": 0.4
+      },
+      "measured_wall_seconds": 0.022499799997603986,
+      "cost_usd": null,
+      "observations": [
+        {
+          "step": 0,
+          "model_alias": "b",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 12000,
+            "requests": 12,
+            "model_calls": 6,
+            "latency_seconds": 60.0
+          },
+          "input_hash": "32fbfde4dd0ab68e2cdff1ddeb9507c996c31e0153182ed025e0bbf9642380bc",
+          "sealed_output_hash": "c18cfc68465ff22c6bb56e54af541238cab33e6d3516ee5ae8835221f0093790",
+          "response": {
+            "finding_ids": [
+              "test-notes:object-authorization"
+            ],
+            "reproduced_ids": [
+              "test-notes:object-authorization"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        }
+      ],
+      "finding_ids": [
+        "test-notes:object-authorization"
+      ],
+      "reproduced_ids": [
+        "test-notes:object-authorization"
+      ],
+      "metrics": null,
+      "preview_metrics": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 1,
+        "unadjudicated_ids": [],
+        "precision": 1.0,
+        "recall": 0.5,
+        "common_miss_rate": null,
+        "common_missed_ids": null,
+        "minority_retention": null,
+        "minority_positive_ids": [],
+        "reproduce_rate": 1.0,
+        "completion": 1
+      },
+      "gold_eligible": false,
+      "simulated": true,
+      "issues": [],
+      "limitation": "No efficacy claim: synthetic, unreviewed gold or unavailable real model execution"
+    },
+    {
+      "project_id": "test-notes",
+      "sample_id": "test-notes-sample",
+      "repetition": 1,
+      "arm": "single_c",
+      "pair_id": "test-notes/test-notes-sample/1",
+      "status": "completed",
+      "budget": {
+        "max_tokens": 12000,
+        "max_seconds": 60,
+        "max_requests": 12,
+        "max_model_calls": 6
+      },
+      "usage": {
+        "tokens": 600,
+        "requests": 1,
+        "model_calls": 1,
+        "latency_seconds": 0.4
+      },
+      "measured_wall_seconds": 0.03072740000061458,
+      "cost_usd": null,
+      "observations": [
+        {
+          "step": 0,
+          "model_alias": "c",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 12000,
+            "requests": 12,
+            "model_calls": 6,
+            "latency_seconds": 60.0
+          },
+          "input_hash": "32fbfde4dd0ab68e2cdff1ddeb9507c996c31e0153182ed025e0bbf9642380bc",
+          "sealed_output_hash": "dbbb8701cb06d853d88a14590cdb1666cef71ecbb758bbb3374e65b850076d50",
+          "response": {
+            "finding_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "reproduced_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        }
+      ],
+      "finding_ids": [
+        "ast:eval:app.py:2"
+      ],
+      "reproduced_ids": [
+        "ast:eval:app.py:2"
+      ],
+      "metrics": null,
+      "preview_metrics": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 1,
+        "unadjudicated_ids": [],
+        "precision": 1.0,
+        "recall": 0.5,
+        "common_miss_rate": null,
+        "common_missed_ids": null,
+        "minority_retention": null,
+        "minority_positive_ids": [],
+        "reproduce_rate": 1.0,
+        "completion": 1
+      },
+      "gold_eligible": false,
+      "simulated": true,
+      "issues": [],
+      "limitation": "No efficacy claim: synthetic, unreviewed gold or unavailable real model execution"
+    },
+    {
+      "project_id": "test-notes",
+      "sample_id": "test-notes-sample",
+      "repetition": 1,
+      "arm": "heterogeneous_independent",
+      "pair_id": "test-notes/test-notes-sample/1",
+      "status": "completed",
+      "budget": {
+        "max_tokens": 12000,
+        "max_seconds": 60,
+        "max_requests": 12,
+        "max_model_calls": 6
+      },
+      "usage": {
+        "tokens": 1800,
+        "requests": 3,
+        "model_calls": 3,
+        "latency_seconds": 1.2000000000000002
+      },
+      "measured_wall_seconds": 0.12150859999383101,
+      "cost_usd": null,
+      "observations": [
+        {
+          "step": 0,
+          "model_alias": "a",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 4000,
+            "requests": 4,
+            "model_calls": 2,
+            "latency_seconds": 20.0
+          },
+          "input_hash": "32fbfde4dd0ab68e2cdff1ddeb9507c996c31e0153182ed025e0bbf9642380bc",
+          "sealed_output_hash": "dbbb8701cb06d853d88a14590cdb1666cef71ecbb758bbb3374e65b850076d50",
+          "response": {
+            "finding_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "reproduced_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        },
+        {
+          "step": 1,
+          "model_alias": "b",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 4000,
+            "requests": 4,
+            "model_calls": 2,
+            "latency_seconds": 20.0
+          },
+          "input_hash": "32fbfde4dd0ab68e2cdff1ddeb9507c996c31e0153182ed025e0bbf9642380bc",
+          "sealed_output_hash": "c18cfc68465ff22c6bb56e54af541238cab33e6d3516ee5ae8835221f0093790",
+          "response": {
+            "finding_ids": [
+              "test-notes:object-authorization"
+            ],
+            "reproduced_ids": [
+              "test-notes:object-authorization"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        },
+        {
+          "step": 2,
+          "model_alias": "c",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 4000,
+            "requests": 4,
+            "model_calls": 2,
+            "latency_seconds": 20.0
+          },
+          "input_hash": "32fbfde4dd0ab68e2cdff1ddeb9507c996c31e0153182ed025e0bbf9642380bc",
+          "sealed_output_hash": "dbbb8701cb06d853d88a14590cdb1666cef71ecbb758bbb3374e65b850076d50",
+          "response": {
+            "finding_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "reproduced_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        }
+      ],
+      "finding_ids": [
+        "ast:eval:app.py:2",
+        "test-notes:object-authorization"
+      ],
+      "reproduced_ids": [
+        "ast:eval:app.py:2",
+        "test-notes:object-authorization"
+      ],
+      "metrics": null,
+      "preview_metrics": {
+        "tp": 2,
+        "fp": 0,
+        "fn": 0,
+        "unadjudicated_ids": [],
+        "precision": 1.0,
+        "recall": 1.0,
+        "common_miss_rate": 0.0,
+        "common_missed_ids": [],
+        "minority_retention": 1.0,
+        "minority_positive_ids": [
+          "test-notes:object-authorization"
+        ],
+        "reproduce_rate": 1.0,
+        "completion": 1
+      },
+      "gold_eligible": false,
+      "simulated": true,
+      "issues": [],
+      "limitation": "No efficacy claim: synthetic, unreviewed gold or unavailable real model execution"
+    },
+    {
+      "project_id": "test-notes",
+      "sample_id": "test-notes-sample",
+      "repetition": 1,
+      "arm": "debate",
+      "pair_id": "test-notes/test-notes-sample/1",
+      "status": "completed",
+      "budget": {
+        "max_tokens": 12000,
+        "max_seconds": 60,
+        "max_requests": 12,
+        "max_model_calls": 6
+      },
+      "usage": {
+        "tokens": 2400,
+        "requests": 4,
+        "model_calls": 4,
+        "latency_seconds": 1.6
+      },
+      "measured_wall_seconds": 0.08635770000546472,
+      "cost_usd": null,
+      "observations": [
+        {
+          "step": 0,
+          "model_alias": "a",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 3000,
+            "requests": 3,
+            "model_calls": 1,
+            "latency_seconds": 15.0
+          },
+          "input_hash": "32fbfde4dd0ab68e2cdff1ddeb9507c996c31e0153182ed025e0bbf9642380bc",
+          "sealed_output_hash": "dbbb8701cb06d853d88a14590cdb1666cef71ecbb758bbb3374e65b850076d50",
+          "response": {
+            "finding_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "reproduced_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        },
+        {
+          "step": 1,
+          "model_alias": "b",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 3000,
+            "requests": 3,
+            "model_calls": 1,
+            "latency_seconds": 15.0
+          },
+          "input_hash": "32fbfde4dd0ab68e2cdff1ddeb9507c996c31e0153182ed025e0bbf9642380bc",
+          "sealed_output_hash": "c18cfc68465ff22c6bb56e54af541238cab33e6d3516ee5ae8835221f0093790",
+          "response": {
+            "finding_ids": [
+              "test-notes:object-authorization"
+            ],
+            "reproduced_ids": [
+              "test-notes:object-authorization"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        },
+        {
+          "step": 2,
+          "model_alias": "c",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 3000,
+            "requests": 3,
+            "model_calls": 1,
+            "latency_seconds": 15.0
+          },
+          "input_hash": "32fbfde4dd0ab68e2cdff1ddeb9507c996c31e0153182ed025e0bbf9642380bc",
+          "sealed_output_hash": "dbbb8701cb06d853d88a14590cdb1666cef71ecbb758bbb3374e65b850076d50",
+          "response": {
+            "finding_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "reproduced_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        },
+        {
+          "step": 3,
+          "model_alias": "debate",
+          "phase": "debate",
+          "allocation": {
+            "tokens": 3000,
+            "requests": 3,
+            "model_calls": 1,
+            "latency_seconds": 15.0
+          },
+          "input_hash": "a9dcdf5e168fbc438d0475851afd8825bd7f4fceb7f9693051407a5dc7dab438",
+          "sealed_output_hash": "993a02bd43bb8cf1e3e32b66a0f46401b5eb689d4de60d07a0dee8ae44500b70",
+          "response": {
+            "finding_ids": [
+              "ast:eval:app.py:2",
+              "test-notes:object-authorization"
+            ],
+            "reproduced_ids": [
+              "ast:eval:app.py:2",
+              "test-notes:object-authorization"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        }
+      ],
+      "finding_ids": [
+        "ast:eval:app.py:2",
+        "test-notes:object-authorization"
+      ],
+      "reproduced_ids": [
+        "ast:eval:app.py:2",
+        "test-notes:object-authorization"
+      ],
+      "metrics": null,
+      "preview_metrics": {
+        "tp": 2,
+        "fp": 0,
+        "fn": 0,
+        "unadjudicated_ids": [],
+        "precision": 1.0,
+        "recall": 1.0,
+        "common_miss_rate": 0.0,
+        "common_missed_ids": [],
+        "minority_retention": 1.0,
+        "minority_positive_ids": [
+          "test-notes:object-authorization"
+        ],
+        "reproduce_rate": 1.0,
+        "completion": 1
+      },
+      "gold_eligible": false,
+      "simulated": true,
+      "issues": [],
+      "limitation": "No efficacy claim: synthetic, unreviewed gold or unavailable real model execution"
+    },
+    {
+      "project_id": "test-notes",
+      "sample_id": "test-notes-sample",
+      "repetition": 2,
+      "arm": "same_model_repeat",
+      "pair_id": "test-notes/test-notes-sample/2",
+      "status": "completed",
+      "budget": {
+        "max_tokens": 12000,
+        "max_seconds": 60,
+        "max_requests": 12,
+        "max_model_calls": 6
+      },
+      "usage": {
+        "tokens": 1800,
+        "requests": 3,
+        "model_calls": 3,
+        "latency_seconds": 1.2000000000000002
+      },
+      "measured_wall_seconds": 0.07290060000377707,
+      "cost_usd": null,
+      "observations": [
+        {
+          "step": 0,
+          "model_alias": "a",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 4000,
+            "requests": 4,
+            "model_calls": 2,
+            "latency_seconds": 20.0
+          },
+          "input_hash": "32fbfde4dd0ab68e2cdff1ddeb9507c996c31e0153182ed025e0bbf9642380bc",
+          "sealed_output_hash": "dbbb8701cb06d853d88a14590cdb1666cef71ecbb758bbb3374e65b850076d50",
+          "response": {
+            "finding_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "reproduced_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        },
+        {
+          "step": 1,
+          "model_alias": "a",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 4000,
+            "requests": 4,
+            "model_calls": 2,
+            "latency_seconds": 20.0
+          },
+          "input_hash": "32fbfde4dd0ab68e2cdff1ddeb9507c996c31e0153182ed025e0bbf9642380bc",
+          "sealed_output_hash": "455df4aa0a084a584b8c8defb2c36302bc44cb6af3448acb6f406ab8c33268b7",
+          "response": {
+            "finding_ids": [
+              "ast:eval:app.py:2",
+              "test-notes:false-positive"
+            ],
+            "reproduced_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        },
+        {
+          "step": 2,
+          "model_alias": "a",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 4000,
+            "requests": 4,
+            "model_calls": 2,
+            "latency_seconds": 20.0
+          },
+          "input_hash": "32fbfde4dd0ab68e2cdff1ddeb9507c996c31e0153182ed025e0bbf9642380bc",
+          "sealed_output_hash": "dbbb8701cb06d853d88a14590cdb1666cef71ecbb758bbb3374e65b850076d50",
+          "response": {
+            "finding_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "reproduced_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        }
+      ],
+      "finding_ids": [
+        "ast:eval:app.py:2",
+        "test-notes:false-positive"
+      ],
+      "reproduced_ids": [
+        "ast:eval:app.py:2"
+      ],
+      "metrics": null,
+      "preview_metrics": {
+        "tp": 1,
+        "fp": 1,
+        "fn": 1,
+        "unadjudicated_ids": [],
+        "precision": 0.5,
+        "recall": 0.5,
+        "common_miss_rate": 0.5,
+        "common_missed_ids": [
+          "test-notes:object-authorization"
+        ],
+        "minority_retention": null,
+        "minority_positive_ids": [],
+        "reproduce_rate": 1.0,
+        "completion": 1
+      },
+      "gold_eligible": false,
+      "simulated": true,
+      "issues": [],
+      "limitation": "No efficacy claim: synthetic, unreviewed gold or unavailable real model execution"
+    },
+    {
+      "project_id": "test-notes",
+      "sample_id": "test-notes-sample",
+      "repetition": 2,
+      "arm": "traditional",
+      "pair_id": "test-notes/test-notes-sample/2",
+      "status": "completed",
+      "budget": {
+        "max_tokens": 12000,
+        "max_seconds": 60,
+        "max_requests": 12,
+        "max_model_calls": 6
+      },
+      "usage": {
+        "tokens": 0,
+        "requests": 0,
+        "model_calls": 0,
+        "latency_seconds": 0.01
+      },
+      "measured_wall_seconds": 0.02592210000148043,
+      "cost_usd": null,
+      "observations": [
+        {
+          "step": 0,
+          "model_alias": "traditional",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 12000,
+            "requests": 12,
+            "model_calls": 6,
+            "latency_seconds": 60.0
+          },
+          "input_hash": "32fbfde4dd0ab68e2cdff1ddeb9507c996c31e0153182ed025e0bbf9642380bc",
+          "sealed_output_hash": "d34bb7e5ff862a8c20a112fd753adde9a3ee5f4b1497ba5b36d3ecb69b0a0f63",
+          "response": {
+            "finding_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "reproduced_ids": [],
+            "status": "completed",
+            "tokens": 0,
+            "requests": 0,
+            "model_calls": 0,
+            "latency_seconds": 0.01,
+            "cost_usd": null
+          },
+          "simulated": true
+        }
+      ],
+      "finding_ids": [
+        "ast:eval:app.py:2"
+      ],
+      "reproduced_ids": [],
+      "metrics": null,
+      "preview_metrics": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 1,
+        "unadjudicated_ids": [],
+        "precision": 1.0,
+        "recall": 0.5,
+        "common_miss_rate": null,
+        "common_missed_ids": null,
+        "minority_retention": null,
+        "minority_positive_ids": [],
+        "reproduce_rate": 0.0,
+        "completion": 1
+      },
+      "gold_eligible": false,
+      "simulated": true,
+      "issues": [],
+      "limitation": "No efficacy claim: synthetic, unreviewed gold or unavailable real model execution"
+    },
+    {
+      "project_id": "test-notes",
+      "sample_id": "test-notes-sample",
+      "repetition": 2,
+      "arm": "single_a",
+      "pair_id": "test-notes/test-notes-sample/2",
+      "status": "completed",
+      "budget": {
+        "max_tokens": 12000,
+        "max_seconds": 60,
+        "max_requests": 12,
+        "max_model_calls": 6
+      },
+      "usage": {
+        "tokens": 600,
+        "requests": 1,
+        "model_calls": 1,
+        "latency_seconds": 0.4
+      },
+      "measured_wall_seconds": 0.021137700001418125,
+      "cost_usd": null,
+      "observations": [
+        {
+          "step": 0,
+          "model_alias": "a",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 12000,
+            "requests": 12,
+            "model_calls": 6,
+            "latency_seconds": 60.0
+          },
+          "input_hash": "32fbfde4dd0ab68e2cdff1ddeb9507c996c31e0153182ed025e0bbf9642380bc",
+          "sealed_output_hash": "dbbb8701cb06d853d88a14590cdb1666cef71ecbb758bbb3374e65b850076d50",
+          "response": {
+            "finding_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "reproduced_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        }
+      ],
+      "finding_ids": [
+        "ast:eval:app.py:2"
+      ],
+      "reproduced_ids": [
+        "ast:eval:app.py:2"
+      ],
+      "metrics": null,
+      "preview_metrics": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 1,
+        "unadjudicated_ids": [],
+        "precision": 1.0,
+        "recall": 0.5,
+        "common_miss_rate": null,
+        "common_missed_ids": null,
+        "minority_retention": null,
+        "minority_positive_ids": [],
+        "reproduce_rate": 1.0,
+        "completion": 1
+      },
+      "gold_eligible": false,
+      "simulated": true,
+      "issues": [],
+      "limitation": "No efficacy claim: synthetic, unreviewed gold or unavailable real model execution"
+    },
+    {
+      "project_id": "test-notes",
+      "sample_id": "test-notes-sample",
+      "repetition": 2,
+      "arm": "single_c",
+      "pair_id": "test-notes/test-notes-sample/2",
+      "status": "completed",
+      "budget": {
+        "max_tokens": 12000,
+        "max_seconds": 60,
+        "max_requests": 12,
+        "max_model_calls": 6
+      },
+      "usage": {
+        "tokens": 600,
+        "requests": 1,
+        "model_calls": 1,
+        "latency_seconds": 0.4
+      },
+      "measured_wall_seconds": 0.03279630000179168,
+      "cost_usd": null,
+      "observations": [
+        {
+          "step": 0,
+          "model_alias": "c",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 12000,
+            "requests": 12,
+            "model_calls": 6,
+            "latency_seconds": 60.0
+          },
+          "input_hash": "32fbfde4dd0ab68e2cdff1ddeb9507c996c31e0153182ed025e0bbf9642380bc",
+          "sealed_output_hash": "c18cfc68465ff22c6bb56e54af541238cab33e6d3516ee5ae8835221f0093790",
+          "response": {
+            "finding_ids": [
+              "test-notes:object-authorization"
+            ],
+            "reproduced_ids": [
+              "test-notes:object-authorization"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        }
+      ],
+      "finding_ids": [
+        "test-notes:object-authorization"
+      ],
+      "reproduced_ids": [
+        "test-notes:object-authorization"
+      ],
+      "metrics": null,
+      "preview_metrics": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 1,
+        "unadjudicated_ids": [],
+        "precision": 1.0,
+        "recall": 0.5,
+        "common_miss_rate": null,
+        "common_missed_ids": null,
+        "minority_retention": null,
+        "minority_positive_ids": [],
+        "reproduce_rate": 1.0,
+        "completion": 1
+      },
+      "gold_eligible": false,
+      "simulated": true,
+      "issues": [],
+      "limitation": "No efficacy claim: synthetic, unreviewed gold or unavailable real model execution"
+    },
+    {
+      "project_id": "test-notes",
+      "sample_id": "test-notes-sample",
+      "repetition": 2,
+      "arm": "heterogeneous_independent",
+      "pair_id": "test-notes/test-notes-sample/2",
+      "status": "completed",
+      "budget": {
+        "max_tokens": 12000,
+        "max_seconds": 60,
+        "max_requests": 12,
+        "max_model_calls": 6
+      },
+      "usage": {
+        "tokens": 1800,
+        "requests": 3,
+        "model_calls": 3,
+        "latency_seconds": 1.2000000000000002
+      },
+      "measured_wall_seconds": 0.05714370000350755,
+      "cost_usd": null,
+      "observations": [
+        {
+          "step": 0,
+          "model_alias": "a",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 4000,
+            "requests": 4,
+            "model_calls": 2,
+            "latency_seconds": 20.0
+          },
+          "input_hash": "32fbfde4dd0ab68e2cdff1ddeb9507c996c31e0153182ed025e0bbf9642380bc",
+          "sealed_output_hash": "dbbb8701cb06d853d88a14590cdb1666cef71ecbb758bbb3374e65b850076d50",
+          "response": {
+            "finding_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "reproduced_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        },
+        {
+          "step": 1,
+          "model_alias": "b",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 4000,
+            "requests": 4,
+            "model_calls": 2,
+            "latency_seconds": 20.0
+          },
+          "input_hash": "32fbfde4dd0ab68e2cdff1ddeb9507c996c31e0153182ed025e0bbf9642380bc",
+          "sealed_output_hash": "4884ec71367c806440925befc126593a085a1eb7d03abc30f594cd1a90011055",
+          "response": {
+            "finding_ids": [],
+            "reproduced_ids": [],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        },
+        {
+          "step": 2,
+          "model_alias": "c",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 4000,
+            "requests": 4,
+            "model_calls": 2,
+            "latency_seconds": 20.0
+          },
+          "input_hash": "32fbfde4dd0ab68e2cdff1ddeb9507c996c31e0153182ed025e0bbf9642380bc",
+          "sealed_output_hash": "c18cfc68465ff22c6bb56e54af541238cab33e6d3516ee5ae8835221f0093790",
+          "response": {
+            "finding_ids": [
+              "test-notes:object-authorization"
+            ],
+            "reproduced_ids": [
+              "test-notes:object-authorization"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        }
+      ],
+      "finding_ids": [
+        "ast:eval:app.py:2",
+        "test-notes:object-authorization"
+      ],
+      "reproduced_ids": [
+        "ast:eval:app.py:2",
+        "test-notes:object-authorization"
+      ],
+      "metrics": null,
+      "preview_metrics": {
+        "tp": 2,
+        "fp": 0,
+        "fn": 0,
+        "unadjudicated_ids": [],
+        "precision": 1.0,
+        "recall": 1.0,
+        "common_miss_rate": 0.0,
+        "common_missed_ids": [],
+        "minority_retention": 1.0,
+        "minority_positive_ids": [
+          "ast:eval:app.py:2",
+          "test-notes:object-authorization"
+        ],
+        "reproduce_rate": 1.0,
+        "completion": 1
+      },
+      "gold_eligible": false,
+      "simulated": true,
+      "issues": [],
+      "limitation": "No efficacy claim: synthetic, unreviewed gold or unavailable real model execution"
+    },
+    {
+      "project_id": "test-notes",
+      "sample_id": "test-notes-sample",
+      "repetition": 2,
+      "arm": "debate",
+      "pair_id": "test-notes/test-notes-sample/2",
+      "status": "completed",
+      "budget": {
+        "max_tokens": 12000,
+        "max_seconds": 60,
+        "max_requests": 12,
+        "max_model_calls": 6
+      },
+      "usage": {
+        "tokens": 2400,
+        "requests": 4,
+        "model_calls": 4,
+        "latency_seconds": 1.6
+      },
+      "measured_wall_seconds": 0.1124056999979075,
+      "cost_usd": null,
+      "observations": [
+        {
+          "step": 0,
+          "model_alias": "a",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 3000,
+            "requests": 3,
+            "model_calls": 1,
+            "latency_seconds": 15.0
+          },
+          "input_hash": "32fbfde4dd0ab68e2cdff1ddeb9507c996c31e0153182ed025e0bbf9642380bc",
+          "sealed_output_hash": "dbbb8701cb06d853d88a14590cdb1666cef71ecbb758bbb3374e65b850076d50",
+          "response": {
+            "finding_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "reproduced_ids": [
+              "ast:eval:app.py:2"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        },
+        {
+          "step": 1,
+          "model_alias": "b",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 3000,
+            "requests": 3,
+            "model_calls": 1,
+            "latency_seconds": 15.0
+          },
+          "input_hash": "32fbfde4dd0ab68e2cdff1ddeb9507c996c31e0153182ed025e0bbf9642380bc",
+          "sealed_output_hash": "4884ec71367c806440925befc126593a085a1eb7d03abc30f594cd1a90011055",
+          "response": {
+            "finding_ids": [],
+            "reproduced_ids": [],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        },
+        {
+          "step": 2,
+          "model_alias": "c",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 3000,
+            "requests": 3,
+            "model_calls": 1,
+            "latency_seconds": 15.0
+          },
+          "input_hash": "32fbfde4dd0ab68e2cdff1ddeb9507c996c31e0153182ed025e0bbf9642380bc",
+          "sealed_output_hash": "c18cfc68465ff22c6bb56e54af541238cab33e6d3516ee5ae8835221f0093790",
+          "response": {
+            "finding_ids": [
+              "test-notes:object-authorization"
+            ],
+            "reproduced_ids": [
+              "test-notes:object-authorization"
+            ],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        },
+        {
+          "step": 3,
+          "model_alias": "debate",
+          "phase": "debate",
+          "allocation": {
+            "tokens": 3000,
+            "requests": 3,
+            "model_calls": 1,
+            "latency_seconds": 15.0
+          },
+          "input_hash": "f25e537b25136177b7d683769981049b4f3aa95e8f5fc4b540ef2398c20c7666",
+          "sealed_output_hash": "48c4a9bc584f2b913311f5fb4075ac8a106052cea352ba913ec45d9574b44b3a",
+          "response": {
+            "finding_ids": [
+              "test-notes:false-positive"
+            ],
+            "reproduced_ids": [],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        }
+      ],
+      "finding_ids": [
+        "test-notes:false-positive"
+      ],
+      "reproduced_ids": [],
+      "metrics": null,
+      "preview_metrics": {
+        "tp": 0,
+        "fp": 1,
+        "fn": 2,
+        "unadjudicated_ids": [],
+        "precision": 0.0,
+        "recall": 0.0,
+        "common_miss_rate": 0.0,
+        "common_missed_ids": [],
+        "minority_retention": 0.0,
+        "minority_positive_ids": [
+          "ast:eval:app.py:2",
+          "test-notes:object-authorization"
+        ],
+        "reproduce_rate": null,
+        "completion": 1
+      },
+      "gold_eligible": false,
+      "simulated": true,
+      "issues": [],
+      "limitation": "No efficacy claim: synthetic, unreviewed gold or unavailable real model execution"
+    },
+    {
+      "project_id": "test-notes",
+      "sample_id": "test-notes-sample",
+      "repetition": 2,
+      "arm": "single_b",
+      "pair_id": "test-notes/test-notes-sample/2",
+      "status": "completed",
+      "budget": {
+        "max_tokens": 12000,
+        "max_seconds": 60,
+        "max_requests": 12,
+        "max_model_calls": 6
+      },
+      "usage": {
+        "tokens": 600,
+        "requests": 1,
+        "model_calls": 1,
+        "latency_seconds": 0.4
+      },
+      "measured_wall_seconds": 0.02249640000081854,
+      "cost_usd": null,
+      "observations": [
+        {
+          "step": 0,
+          "model_alias": "b",
+          "phase": "independent",
+          "allocation": {
+            "tokens": 12000,
+            "requests": 12,
+            "model_calls": 6,
+            "latency_seconds": 60.0
+          },
+          "input_hash": "32fbfde4dd0ab68e2cdff1ddeb9507c996c31e0153182ed025e0bbf9642380bc",
+          "sealed_output_hash": "4884ec71367c806440925befc126593a085a1eb7d03abc30f594cd1a90011055",
+          "response": {
+            "finding_ids": [],
+            "reproduced_ids": [],
+            "status": "completed",
+            "tokens": 600,
+            "requests": 1,
+            "model_calls": 1,
+            "latency_seconds": 0.4,
+            "cost_usd": null
+          },
+          "simulated": true
+        }
+      ],
+      "finding_ids": [],
+      "reproduced_ids": [],
+      "metrics": null,
+      "preview_metrics": {
+        "tp": 0,
+        "fp": 0,
+        "fn": 2,
+        "unadjudicated_ids": [],
+        "precision": null,
+        "recall": 0.0,
+        "common_miss_rate": null,
+        "common_missed_ids": null,
+        "minority_retention": null,
+        "minority_positive_ids": [],
+        "reproduce_rate": null,
+        "completion": 1
+      },
+      "gold_eligible": false,
+      "simulated": true,
+      "issues": [],
+      "limitation": "No efficacy claim: synthetic, unreviewed gold or unavailable real model execution"
+    }
+  ],
+  "summary": {
+    "arms": {
+      "traditional": {
+        "scheduled": 6,
+        "completed": 6,
+        "blocked": 0,
+        "metrics": null,
+        "preview_metrics": {
+          "precision": 1.0,
+          "recall": 0.5,
+          "common_miss_rate": null,
+          "minority_retention": null,
+          "reproduce_rate": 0.0,
+          "completion": 1
+        },
+        "tokens": 0,
+        "requests": 0,
+        "model_calls": 0,
+        "latency_seconds": 0.06,
+        "cost_usd": null
+      },
+      "single_a": {
+        "scheduled": 6,
+        "completed": 6,
+        "blocked": 0,
+        "metrics": null,
+        "preview_metrics": {
+          "precision": 0.8333333333333334,
+          "recall": 0.5,
+          "common_miss_rate": null,
+          "minority_retention": null,
+          "reproduce_rate": 1.0,
+          "completion": 1
+        },
+        "tokens": 3600,
+        "requests": 6,
+        "model_calls": 6,
+        "latency_seconds": 2.4000000000000004,
+        "cost_usd": null
+      },
+      "single_b": {
+        "scheduled": 6,
+        "completed": 6,
+        "blocked": 0,
+        "metrics": null,
+        "preview_metrics": {
+          "precision": 1.0,
+          "recall": 0.3333333333333333,
+          "common_miss_rate": null,
+          "minority_retention": null,
+          "reproduce_rate": 1.0,
+          "completion": 1
+        },
+        "tokens": 3600,
+        "requests": 6,
+        "model_calls": 6,
+        "latency_seconds": 2.4000000000000004,
+        "cost_usd": null
+      },
+      "single_c": {
+        "scheduled": 6,
+        "completed": 6,
+        "blocked": 0,
+        "metrics": null,
+        "preview_metrics": {
+          "precision": 1.0,
+          "recall": 0.3333333333333333,
+          "common_miss_rate": null,
+          "minority_retention": null,
+          "reproduce_rate": 1.0,
+          "completion": 1
+        },
+        "tokens": 3600,
+        "requests": 6,
+        "model_calls": 6,
+        "latency_seconds": 2.4000000000000004,
+        "cost_usd": null
+      },
+      "same_model_repeat": {
+        "scheduled": 6,
+        "completed": 6,
+        "blocked": 0,
+        "metrics": null,
+        "preview_metrics": {
+          "precision": 0.5,
+          "recall": 0.5,
+          "common_miss_rate": 0.5,
+          "minority_retention": null,
+          "reproduce_rate": 1.0,
+          "completion": 1
+        },
+        "tokens": 10800,
+        "requests": 18,
+        "model_calls": 18,
+        "latency_seconds": 7.200000000000001,
+        "cost_usd": null
+      },
+      "heterogeneous_independent": {
+        "scheduled": 6,
+        "completed": 6,
+        "blocked": 0,
+        "metrics": null,
+        "preview_metrics": {
+          "precision": 0.8888888888888888,
+          "recall": 1.0,
+          "common_miss_rate": 0.0,
+          "minority_retention": 1.0,
+          "reproduce_rate": 1.0,
+          "completion": 1
+        },
+        "tokens": 10800,
+        "requests": 18,
+        "model_calls": 18,
+        "latency_seconds": 7.200000000000001,
+        "cost_usd": null
+      },
+      "debate": {
+        "scheduled": 6,
+        "completed": 6,
+        "blocked": 0,
+        "metrics": null,
+        "preview_metrics": {
+          "precision": 0.6666666666666666,
+          "recall": 0.5,
+          "common_miss_rate": 0.0,
+          "minority_retention": 0.5,
+          "reproduce_rate": 1.0,
+          "completion": 1
+        },
+        "tokens": 14400,
+        "requests": 24,
+        "model_calls": 24,
+        "latency_seconds": 9.600000000000001,
+        "cost_usd": null
+      }
+    },
+    "paired_comparisons": [
+      {
+        "pair_id": "test-cart/test-cart-sample/0",
+        "arm": "single_b",
+        "reference": "single_a",
+        "efficacy_eligible": false,
+        "paired_differences": {
+          "precision": 0.5,
+          "recall": 0.0,
+          "reproduce_rate": 0.0,
+          "completion": 0
+        }
+      },
+      {
+        "pair_id": "test-cart/test-cart-sample/0",
+        "arm": "single_c",
+        "reference": "single_a",
+        "efficacy_eligible": false,
+        "paired_differences": {
+          "precision": null,
+          "recall": -0.5,
+          "reproduce_rate": null,
+          "completion": 0
+        }
+      },
+      {
+        "pair_id": "test-cart/test-cart-sample/0",
+        "arm": "debate",
+        "reference": "single_a",
+        "efficacy_eligible": false,
+        "paired_differences": {
+          "precision": 0.5,
+          "recall": 0.0,
+          "reproduce_rate": 0.0,
+          "completion": 0
+        }
+      },
+      {
+        "pair_id": "test-cart/test-cart-sample/0",
+        "arm": "same_model_repeat",
+        "reference": "single_a",
+        "efficacy_eligible": false,
+        "paired_differences": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "reproduce_rate": 0.0,
+          "completion": 0
+        }
+      },
+      {
+        "pair_id": "test-cart/test-cart-sample/0",
+        "arm": "traditional",
+        "reference": "single_a",
+        "efficacy_eligible": false,
+        "paired_differences": {
+          "precision": 0.5,
+          "recall": 0.0,
+          "reproduce_rate": -1.0,
+          "completion": 0
+        }
+      },
+      {
+        "pair_id": "test-cart/test-cart-sample/0",
+        "arm": "heterogeneous_independent",
+        "reference": "single_a",
+        "efficacy_eligible": false,
+        "paired_differences": {
+          "precision": 0.16666666666666663,
+          "recall": 0.5,
+          "reproduce_rate": 0.0,
+          "completion": 0
+        }
+      },
+      {
+        "pair_id": "test-cart/test-cart-sample/1",
+        "arm": "heterogeneous_independent",
+        "reference": "single_a",
+        "efficacy_eligible": false,
+        "paired_differences": {
+          "precision": 0.0,
+          "recall": 0.5,
+          "reproduce_rate": 0.0,
+          "completion": 0
+        }
+      },
+      {
+        "pair_id": "test-cart/test-cart-sample/1",
+        "arm": "single_b",
+        "reference": "single_a",
+        "efficacy_eligible": false,
+        "paired_differences": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "reproduce_rate": 0.0,
+          "completion": 0
+        }
+      },
+      {
+        "pair_id": "test-cart/test-cart-sample/1",
+        "arm": "debate",
+        "reference": "single_a",
+        "efficacy_eligible": false,
+        "paired_differences": {
+          "precision": 0.0,
+          "recall": 0.5,
+          "reproduce_rate": 0.0,
+          "completion": 0
+        }
+      },
+      {
+        "pair_id": "test-cart/test-cart-sample/1",
+        "arm": "same_model_repeat",
+        "reference": "single_a",
+        "efficacy_eligible": false,
+        "paired_differences": {
+          "precision": -0.5,
+          "recall": 0.0,
+          "reproduce_rate": 0.0,
+          "completion": 0
+        }
+      },
+      {
+        "pair_id": "test-cart/test-cart-sample/1",
+        "arm": "traditional",
+        "reference": "single_a",
+        "efficacy_eligible": false,
+        "paired_differences": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "reproduce_rate": -1.0,
+          "completion": 0
+        }
+      },
+      {
+        "pair_id": "test-cart/test-cart-sample/1",
+        "arm": "single_c",
+        "reference": "single_a",
+        "efficacy_eligible": false,
+        "paired_differences": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "reproduce_rate": 0.0,
+          "completion": 0
+        }
+      },
+      {
+        "pair_id": "test-cart/test-cart-sample/2",
+        "arm": "single_c",
+        "reference": "single_a",
+        "efficacy_eligible": false,
+        "paired_differences": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "reproduce_rate": 0.0,
+          "completion": 0
+        }
+      },
+      {
+        "pair_id": "test-cart/test-cart-sample/2",
+        "arm": "traditional",
+        "reference": "single_a",
+        "efficacy_eligible": false,
+        "paired_differences": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "reproduce_rate": -1.0,
+          "completion": 0
+        }
+      },
+      {
+        "pair_id": "test-cart/test-cart-sample/2",
+        "arm": "heterogeneous_independent",
+        "reference": "single_a",
+        "efficacy_eligible": false,
+        "paired_differences": {
+          "precision": 0.0,
+          "recall": 0.5,
+          "reproduce_rate": 0.0,
+          "completion": 0
+        }
+      },
+      {
+        "pair_id": "test-cart/test-cart-sample/2",
+        "arm": "single_b",
+        "reference": "single_a",
+        "efficacy_eligible": false,
+        "paired_differences": {
+          "precision": null,
+          "recall": -0.5,
+          "reproduce_rate": null,
+          "completion": 0
+        }
+      },
+      {
+        "pair_id": "test-cart/test-cart-sample/2",
+        "arm": "debate",
+        "reference": "single_a",
+        "efficacy_eligible": false,
+        "paired_differences": {
+          "precision": -1.0,
+          "recall": -0.5,
+          "reproduce_rate": null,
+          "completion": 0
+        }
+      },
+      {
+        "pair_id": "test-cart/test-cart-sample/2",
+        "arm": "same_model_repeat",
+        "reference": "single_a",
+        "efficacy_eligible": false,
+        "paired_differences": {
+          "precision": -0.5,
+          "recall": 0.0,
+          "reproduce_rate": 0.0,
+          "completion": 0
+        }
+      },
+      {
+        "pair_id": "test-notes/test-notes-sample/0",
+        "arm": "debate",
+        "reference": "single_a",
+        "efficacy_eligible": false,
+        "paired_differences": {
+          "precision": 0.5,
+          "recall": 0.0,
+          "reproduce_rate": 0.0,
+          "completion": 0
+        }
+      },
+      {
+        "pair_id": "test-notes/test-notes-sample/0",
+        "arm": "heterogeneous_independent",
+        "reference": "single_a",
+        "efficacy_eligible": false,
+        "paired_differences": {
+          "precision": 0.16666666666666663,
+          "recall": 0.5,
+          "reproduce_rate": 0.0,
+          "completion": 0
+        }
+      },
+      {
+        "pair_id": "test-notes/test-notes-sample/0",
+        "arm": "same_model_repeat",
+        "reference": "single_a",
+        "efficacy_eligible": false,
+        "paired_differences": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "reproduce_rate": 0.0,
+          "completion": 0
+        }
+      },
+      {
+        "pair_id": "test-notes/test-notes-sample/0",
+        "arm": "single_b",
+        "reference": "single_a",
+        "efficacy_eligible": false,
+        "paired_differences": {
+          "precision": 0.5,
+          "recall": 0.0,
+          "reproduce_rate": 0.0,
+          "completion": 0
+        }
+      },
+      {
+        "pair_id": "test-notes/test-notes-sample/0",
+        "arm": "single_c",
+        "reference": "single_a",
+        "efficacy_eligible": false,
+        "paired_differences": {
+          "precision": null,
+          "recall": -0.5,
+          "reproduce_rate": null,
+          "completion": 0
+        }
+      },
+      {
+        "pair_id": "test-notes/test-notes-sample/0",
+        "arm": "traditional",
+        "reference": "single_a",
+        "efficacy_eligible": false,
+        "paired_differences": {
+          "precision": 0.5,
+          "recall": 0.0,
+          "reproduce_rate": -1.0,
+          "completion": 0
+        }
+      },
+      {
+        "pair_id": "test-notes/test-notes-sample/1",
+        "arm": "traditional",
+        "reference": "single_a",
+        "efficacy_eligible": false,
+        "paired_differences": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "reproduce_rate": -1.0,
+          "completion": 0
+        }
+      },
+      {
+        "pair_id": "test-notes/test-notes-sample/1",
+        "arm": "same_model_repeat",
+        "reference": "single_a",
+        "efficacy_eligible": false,
+        "paired_differences": {
+          "precision": -0.5,
+          "recall": 0.0,
+          "reproduce_rate": 0.0,
+          "completion": 0
+        }
+      },
+      {
+        "pair_id": "test-notes/test-notes-sample/1",
+        "arm": "single_b",
+        "reference": "single_a",
+        "efficacy_eligible": false,
+        "paired_differences": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "reproduce_rate": 0.0,
+          "completion": 0
+        }
+      },
+      {
+        "pair_id": "test-notes/test-notes-sample/1",
+        "arm": "single_c",
+        "reference": "single_a",
+        "efficacy_eligible": false,
+        "paired_differences": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "reproduce_rate": 0.0,
+          "completion": 0
+        }
+      },
+      {
+        "pair_id": "test-notes/test-notes-sample/1",
+        "arm": "heterogeneous_independent",
+        "reference": "single_a",
+        "efficacy_eligible": false,
+        "paired_differences": {
+          "precision": 0.0,
+          "recall": 0.5,
+          "reproduce_rate": 0.0,
+          "completion": 0
+        }
+      },
+      {
+        "pair_id": "test-notes/test-notes-sample/1",
+        "arm": "debate",
+        "reference": "single_a",
+        "efficacy_eligible": false,
+        "paired_differences": {
+          "precision": 0.0,
+          "recall": 0.5,
+          "reproduce_rate": 0.0,
+          "completion": 0
+        }
+      },
+      {
+        "pair_id": "test-notes/test-notes-sample/2",
+        "arm": "same_model_repeat",
+        "reference": "single_a",
+        "efficacy_eligible": false,
+        "paired_differences": {
+          "precision": -0.5,
+          "recall": 0.0,
+          "reproduce_rate": 0.0,
+          "completion": 0
+        }
+      },
+      {
+        "pair_id": "test-notes/test-notes-sample/2",
+        "arm": "traditional",
+        "reference": "single_a",
+        "efficacy_eligible": false,
+        "paired_differences": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "reproduce_rate": -1.0,
+          "completion": 0
+        }
+      },
+      {
+        "pair_id": "test-notes/test-notes-sample/2",
+        "arm": "single_c",
+        "reference": "single_a",
+        "efficacy_eligible": false,
+        "paired_differences": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "reproduce_rate": 0.0,
+          "completion": 0
+        }
+      },
+      {
+        "pair_id": "test-notes/test-notes-sample/2",
+        "arm": "heterogeneous_independent",
+        "reference": "single_a",
+        "efficacy_eligible": false,
+        "paired_differences": {
+          "precision": 0.0,
+          "recall": 0.5,
+          "reproduce_rate": 0.0,
+          "completion": 0
+        }
+      },
+      {
+        "pair_id": "test-notes/test-notes-sample/2",
+        "arm": "debate",
+        "reference": "single_a",
+        "efficacy_eligible": false,
+        "paired_differences": {
+          "precision": -1.0,
+          "recall": -0.5,
+          "reproduce_rate": null,
+          "completion": 0
+        }
+      },
+      {
+        "pair_id": "test-notes/test-notes-sample/2",
+        "arm": "single_b",
+        "reference": "single_a",
+        "efficacy_eligible": false,
+        "paired_differences": {
+          "precision": null,
+          "recall": -0.5,
+          "reproduce_rate": null,
+          "completion": 0
+        }
+      }
+    ],
+    "inference": "No superiority or bias-reduction inference. Paired differences are descriptive; repeated samples are not independent projects."
+  },
+  "limitations": [
+    "Bundled gold and model responses are synthetic and await independent human review.",
+    "Real provider effects are blocked until authorized execution adapters, provider manifests and reviewed oracle labels are supplied.",
+    "Builtin AST baseline is a narrow real traditional heuristic, not Semgrep/CodeQL or comprehensive SAST.",
+    "Cost null means unavailable; synthetic fixture costs are not actual billing.",
+    "Project-family split blocks related forks across splits, but cannot rule out unknown model training contamination."
+  ]
+}

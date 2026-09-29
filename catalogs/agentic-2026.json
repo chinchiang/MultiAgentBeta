@@ -1,0 +1,112 @@
+[
+  {
+    "id": "ASI01:2026",
+    "official_id": "ASI01",
+    "standard": "AGENTIC",
+    "version": "2026",
+    "title": "Agent Goal Hijack",
+    "source": "https://raw.githubusercontent.com/GenAI-Security-Project/GenAI-LLM-Top10/9253e38ade58e959b531c0c5c9a4842272c9cd0e/2026/final/mappings/asi-2026.json",
+    "description": "",
+    "level": null,
+    "license": "CC-BY-SA-4.0"
+  },
+  {
+    "id": "ASI02:2026",
+    "official_id": "ASI02",
+    "standard": "AGENTIC",
+    "version": "2026",
+    "title": "Tool Misuse & Exploitation",
+    "source": "https://raw.githubusercontent.com/GenAI-Security-Project/GenAI-LLM-Top10/9253e38ade58e959b531c0c5c9a4842272c9cd0e/2026/final/mappings/asi-2026.json",
+    "description": "",
+    "level": null,
+    "license": "CC-BY-SA-4.0"
+  },
+  {
+    "id": "ASI03:2026",
+    "official_id": "ASI03",
+    "standard": "AGENTIC",
+    "version": "2026",
+    "title": "Identity & Privilege Abuse",
+    "source": "https://raw.githubusercontent.com/GenAI-Security-Project/GenAI-LLM-Top10/9253e38ade58e959b531c0c5c9a4842272c9cd0e/2026/final/mappings/asi-2026.json",
+    "description": "",
+    "level": null,
+    "license": "CC-BY-SA-4.0"
+  },
+  {
+    "id": "ASI04:2026",
+    "official_id": "ASI04",
+    "standard": "AGENTIC",
+    "version": "2026",
+    "title": "Agentic Supply Chain Vulnerabilities",
+    "source": "https://raw.githubusercontent.com/GenAI-Security-Project/GenAI-LLM-Top10/9253e38ade58e959b531c0c5c9a4842272c9cd0e/2026/final/mappings/asi-2026.json",
+    "description": "",
+    "level": null,
+    "license": "CC-BY-SA-4.0"
+  },
+  {
+    "id": "ASI05:2026",
+    "official_id": "ASI05",
+    "standard": "AGENTIC",
+    "version": "2026",
+    "title": "Unexpected Code Execution (RCE)",
+    "source": "https://raw.githubusercontent.com/GenAI-Security-Project/GenAI-LLM-Top10/9253e38ade58e959b531c0c5c9a4842272c9cd0e/2026/final/mappings/asi-2026.json",
+    "description": "",
+    "level": null,
+    "license": "CC-BY-SA-4.0"
+  },
+  {
+    "id": "ASI06:2026",
+    "official_id": "ASI06",
+    "standard": "AGENTIC",
+    "version": "2026",
+    "title": "Memory & Context Poisoning",
+    "source": "https://raw.githubusercontent.com/GenAI-Security-Project/GenAI-LLM-Top10/9253e38ade58e959b531c0c5c9a4842272c9cd0e/2026/final/mappings/asi-2026.json",
+    "description": "",
+    "level": null,
+    "license": "CC-BY-SA-4.0"
+  },
+  {
+    "id": "ASI07:2026",
+    "official_id": "ASI07",
+    "standard": "AGENTIC",
+    "version": "2026",
+    "title": "Insecure Inter-Agent Communication",
+    "source": "https://raw.githubusercontent.com/GenAI-Security-Project/GenAI-LLM-Top10/9253e38ade58e959b531c0c5c9a4842272c9cd0e/2026/final/mappings/asi-2026.json",
+    "description": "",
+    "level": null,
+    "license": "CC-BY-SA-4.0"
+  },
+  {
+    "id": "ASI08:2026",
+    "official_id": "ASI08",
+    "standard": "AGENTIC",
+    "version": "2026",
+    "title": "Cascading Failures",
+    "source": "https://raw.githubusercontent.com/GenAI-Security-Project/GenAI-LLM-Top10/9253e38ade58e959b531c0c5c9a4842272c9cd0e/2026/final/mappings/asi-2026.json",
+    "description": "",
+    "level": null,
+    "license": "CC-BY-SA-4.0"
+  },
+  {
+    "id": "ASI09:2026",
+    "official_id": "ASI09",
+    "standard": "AGENTIC",
+    "version": "2026",
+    "title": "Human-Agent Trust Exploitation",
+    "source": "https://raw.githubusercontent.com/GenAI-Security-Project/GenAI-LLM-Top10/9253e38ade58e959b531c0c5c9a4842272c9cd0e/2026/final/mappings/asi-2026.json",
+    "description": "",
+    "level": null,
+    "license": "CC-BY-SA-4.0"
+  },
+  {
+    "id": "ASI10:2026",
+    "official_id": "ASI10",
+    "standard": "AGENTIC",
+    "version": "2026",
+    "title": "Rogue Agents",
+    "source": "https://raw.githubusercontent.com/GenAI-Security-Project/GenAI-LLM-Top10/9253e38ade58e959b531c0c5c9a4842272c9cd0e/2026/final/mappings/asi-2026.json",
+    "description": "",
+    "level": null,
+    "license": "CC-BY-SA-4.0"
+  }
+]

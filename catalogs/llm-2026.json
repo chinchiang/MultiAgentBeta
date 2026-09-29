@@ -1,0 +1,112 @@
+[
+  {
+    "id": "LLM01:2026",
+    "official_id": "LLM01:2026",
+    "standard": "LLM",
+    "version": "2026",
+    "title": "Prompt Injection",
+    "source": "https://raw.githubusercontent.com/GenAI-Security-Project/GenAI-LLM-Top10/9253e38ade58e959b531c0c5c9a4842272c9cd0e/2026/final/LLM01_PromptInjection.md",
+    "description": "",
+    "level": null,
+    "license": "CC-BY-SA-4.0"
+  },
+  {
+    "id": "LLM02:2026",
+    "official_id": "LLM02:2026",
+    "standard": "LLM",
+    "version": "2026",
+    "title": "Sensitive Information Disclosure",
+    "source": "https://raw.githubusercontent.com/GenAI-Security-Project/GenAI-LLM-Top10/9253e38ade58e959b531c0c5c9a4842272c9cd0e/2026/final/LLM02_SensitiveInformationDisclosure.md",
+    "description": "",
+    "level": null,
+    "license": "CC-BY-SA-4.0"
+  },
+  {
+    "id": "LLM03:2026",
+    "official_id": "LLM03:2026",
+    "standard": "LLM",
+    "version": "2026",
+    "title": "Excessive Agency",
+    "source": "https://raw.githubusercontent.com/GenAI-Security-Project/GenAI-LLM-Top10/9253e38ade58e959b531c0c5c9a4842272c9cd0e/2026/final/LLM03_ExcessiveAgency.md",
+    "description": "",
+    "level": null,
+    "license": "CC-BY-SA-4.0"
+  },
+  {
+    "id": "LLM04:2026",
+    "official_id": "LLM04:2026",
+    "standard": "LLM",
+    "version": "2026",
+    "title": "Supply Chain",
+    "source": "https://raw.githubusercontent.com/GenAI-Security-Project/GenAI-LLM-Top10/9253e38ade58e959b531c0c5c9a4842272c9cd0e/2026/final/LLM04_SupplyChain.md",
+    "description": "",
+    "level": null,
+    "license": "CC-BY-SA-4.0"
+  },
+  {
+    "id": "LLM05:2026",
+    "official_id": "LLM05:2026",
+    "standard": "LLM",
+    "version": "2026",
+    "title": "Data and Model Poisoning",
+    "source": "https://raw.githubusercontent.com/GenAI-Security-Project/GenAI-LLM-Top10/9253e38ade58e959b531c0c5c9a4842272c9cd0e/2026/final/LLM05_DataModelPoisoning.md",
+    "description": "",
+    "level": null,
+    "license": "CC-BY-SA-4.0"
+  },
+  {
+    "id": "LLM06:2026",
+    "official_id": "LLM06:2026",
+    "standard": "LLM",
+    "version": "2026",
+    "title": "Unbounded Consumption",
+    "source": "https://raw.githubusercontent.com/GenAI-Security-Project/GenAI-LLM-Top10/9253e38ade58e959b531c0c5c9a4842272c9cd0e/2026/final/LLM06_UnboundedConsumption.md",
+    "description": "",
+    "level": null,
+    "license": "CC-BY-SA-4.0"
+  },
+  {
+    "id": "LLM07:2026",
+    "official_id": "LLM07:2026",
+    "standard": "LLM",
+    "version": "2026",
+    "title": "Misinformation",
+    "source": "https://raw.githubusercontent.com/GenAI-Security-Project/GenAI-LLM-Top10/9253e38ade58e959b531c0c5c9a4842272c9cd0e/2026/final/LLM07_Misinformation.md",
+    "description": "",
+    "level": null,
+    "license": "CC-BY-SA-4.0"
+  },
+  {
+    "id": "LLM08:2026",
+    "official_id": "LLM08:2026",
+    "standard": "LLM",
+    "version": "2026",
+    "title": "Hidden Context Exposure",
+    "source": "https://raw.githubusercontent.com/GenAI-Security-Project/GenAI-LLM-Top10/9253e38ade58e959b531c0c5c9a4842272c9cd0e/2026/final/LLM08_HiddenContextExposure.md",
+    "description": "",
+    "level": null,
+    "license": "CC-BY-SA-4.0"
+  },
+  {
+    "id": "LLM09:2026",
+    "official_id": "LLM09:2026",
+    "standard": "LLM",
+    "version": "2026",
+    "title": "Vector and Embedding Weaknesses",
+    "source": "https://raw.githubusercontent.com/GenAI-Security-Project/GenAI-LLM-Top10/9253e38ade58e959b531c0c5c9a4842272c9cd0e/2026/final/LLM09_VectorAndEmbeddingWeaknesses.md",
+    "description": "",
+    "level": null,
+    "license": "CC-BY-SA-4.0"
+  },
+  {
+    "id": "LLM10:2026",
+    "official_id": "LLM10:2026",
+    "standard": "LLM",
+    "version": "2026",
+    "title": "Improper Output Handling",
+    "source": "https://raw.githubusercontent.com/GenAI-Security-Project/GenAI-LLM-Top10/9253e38ade58e959b531c0c5c9a4842272c9cd0e/2026/final/LLM10_ImproperOutputHandling.md",
+    "description": "",
+    "level": null,
+    "license": "CC-BY-SA-4.0"
+  }
+]

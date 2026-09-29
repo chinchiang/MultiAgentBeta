@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "downloaded_at": "2026-09-24T02:50:24.305960+00:00",
+  "scanner_version": "2.3.5",
+  "ecosystems": [
+    {
+      "ecosystem": "PyPI",
+      "url": "https://osv-vulnerabilities.storage.googleapis.com/PyPI/all.zip",
+      "etag": "\"577ff22ad928f39ca7f2a8a0ace552b8\"",
+      "sha256": "a8088cedd755e715c596cddf5861335df9bf282ce514732e327ff33869aaa72a",
+      "bytes": 34615918,
+      "entries": 25708,
+      "coverage": "complete upstream ecosystem archive"
+    },
+    {
+      "ecosystem": "npm",
+      "url": "https://osv-vulnerabilities.storage.googleapis.com/npm/all.zip",
+      "etag": "\"9f462c7bda6080a7b8518ec0edfcc74a\"",
+      "sha256": "6461d79fad1e61a07993554ede9a24afa4470ed77d8d9d844574d13f9b63722e",
+      "bytes": 216494291,
+      "entries": 229318,
+      "coverage": "complete upstream ecosystem archive"
+    }
+  ]
+}

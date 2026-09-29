@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vibe-audit"
+version = "0.2.0"
+description = "Evidence-gated multi-model security testing workbench"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+dependencies = ["fastapi==0.141.1", "uvicorn==0.53.0", "httpx==0.28.1", "pydantic==2.13.5", "langgraph==1.2.12", "langgraph-checkpoint-postgres==3.1.2", "psycopg[binary,pool]==3.3.6", "litellm==1.102.1", "jsonschema==4.26.0"]
+
+[project.optional-dependencies]
+test = ["pytest==9.1.1", "pytest-asyncio==1.4.0"]
+
+[project.scripts]
+vibe-audit = "vibe_audit.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["backend"]
+
+[tool.setuptools.package-data]
+vibe_audit = ["tokenizers/*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["backend"]
+asyncio_mode = "auto"
+testpaths = ["tests"]

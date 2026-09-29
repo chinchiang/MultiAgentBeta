@@ -1,0 +1,25 @@
+Vibe Audit 0.2.0
+Core source is provided under Apache License 2.0.
+
+This distribution integrates third-party dependencies listed in requirements.lock.txt
+and frontend/package-lock.json. Their respective licenses continue to apply.
+Licenses for frontend runtime/build code included in the compiled browser bundle
+are provided in frontend/THIRD-PARTY-NOTICES.txt.
+No Semgrep-maintained restricted rule pack, CodeQL binary, model weights or
+AGPL-licensed Shannon source is bundled. Sample rules are original project fixtures.
+
+The cl100k_base tokenizer data is redistributed with attribution to OpenAI/tiktoken.
+Source: https://github.com/openai/tiktoken (MIT).
+Asset: https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken
+The tiktoken license is provided at backend/vibe_audit/tokenizers/LICENSE.tiktoken.
+
+OWASP names and reference IDs identify external standards. They do not imply
+endorsement, certification or complete standard coverage. Bundled canonical catalogs and source snapshots retain their own licenses
+(including CC BY-SA where applicable); see catalogs/manifest.json and the license
+files in catalogs/sources. Converted JSON preserves attribution, source hashes
+and provenance. These materials are not relicensed under the core Apache license.
+
+External tool images are provisioned separately and are not bundled in the source
+archive. Captured dependency locks are in deploy/worker/locks; each dependency
+retains its own license. Semgrep/Gitleaks/OSV/ZAP/Schemathesis/Playwright/promptfoo/
+PyRIT versions and image IDs are recorded in docs/runtime-images.json.

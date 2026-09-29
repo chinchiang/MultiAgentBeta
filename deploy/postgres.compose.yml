@@ -1,0 +1,20 @@
+# Operator must supply a reviewed immutable image; never use an invented digest.
+services:
+  postgres:
+    image: ${VIBEAUDIT_POSTGRES_IMAGE:?Set a reviewed postgres image with sha256 digest}
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: vibeaudit
+      POSTGRES_DB: vibeaudit
+      POSTGRES_PASSWORD: ${VIBEAUDIT_POSTGRES_PASSWORD:?Set a local database password}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - audit-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vibeaudit -d vibeaudit"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+volumes:
+  audit-db:

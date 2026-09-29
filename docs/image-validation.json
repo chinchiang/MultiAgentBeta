@@ -1,0 +1,51 @@
+{
+  "date": "2026-09-24",
+  "model_endpoints_tested": false,
+  "tool_versions": {
+    "semgrep": "1.153.0",
+    "gitleaks": "8.30.1",
+    "osv": "2.3.5",
+    "zap": "2.17.0",
+    "schemathesis": "4.28.0",
+    "playwright": "1.63.0",
+    "promptfoo": "0.123.1",
+    "pyrit": "1.1.0"
+  },
+  "images": [
+    {
+      "id": "sha256:cb0765a2a74204035925942df59fe19044efc4a46b5ac2edbcf274746ef8f956",
+      "recipe": "deploy/worker/Dockerfile.tools",
+      "dependency_locks_captured_to": "deploy/worker/locks",
+      "reports": [
+        "docs/tool-integration.xml"
+      ],
+      "superseded_by_locked_rebuild": true
+    },
+    {
+      "id": "sha256:f4f438037d33ae77aa0f845b9b6989dd3396c7ac103fd9b8b27d6c94eb8b3b72",
+      "recipe": "deploy/worker/Dockerfile.tools.locked",
+      "reports": [
+        "docs/tool-integration-release.xml",
+        "docs/schemathesis-header-regression.xml"
+      ],
+      "build_completed": true,
+      "validation_status": "passed",
+      "tests": 27,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "id": "sha256:781a2bdaea47324e7bab583e2263f21d257b0aee61ed51521a5be45f5f5081ef",
+      "reference": "ghcr.io/zaproxy/zaproxy:2.17.0",
+      "reports": [
+        "docs/tool-integration.xml",
+        "docs/tool-integration-release.xml"
+      ]
+    }
+  ],
+  "notes": [
+    "Reports include shared ZAP image; the combined image is used by the other four dynamic tools.",
+    "Worker source is supplied read-only at execution, separately from the tool dependency image.",
+    "OS package repositories are not timestamp-snapshotted; rebuilt image IDs need revalidation."
+  ]
+}

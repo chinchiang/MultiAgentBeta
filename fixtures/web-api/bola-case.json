@@ -1,0 +1,33 @@
+{
+  "id": "C-BOLA",
+  "threat_ids": ["T-BOLA"],
+  "requirement_id": "R-TENANT-ISOLATION",
+  "title": "Tenant A must not read tenant B synthetic order",
+  "adapter": "http",
+  "method": "GET",
+  "path": "/orders/order-b",
+  "headers": {},
+  "body": null,
+  "identity": "tenant-a",
+  "preconditions": [
+    {
+      "name": "fixture_exists",
+      "method": "GET",
+      "path": "/orders/order-b",
+      "identity": "tenant-b",
+      "expected_status": 200,
+      "required_text": ["TENANT_B_ORDER_CANARY"]
+    }
+  ],
+  "oracle": {
+    "kind": "deny_sensitive",
+    "forbidden_text": ["TENANT_B_ORDER_CANARY"],
+    "allowed_statuses": [403, 404],
+    "required_observations": ["http_response"],
+    "expected_role": null
+  },
+  "cleanup": null,
+  "side_effects": false,
+  "repetitions": 1,
+  "observation_mode": "external_observation"
+}

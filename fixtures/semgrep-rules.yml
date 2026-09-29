@@ -1,0 +1,30 @@
+# Harness-owned rules, authored for this toolkit. Candidate findings only.
+# They deliberately do not claim whole-program authorization analysis.
+rules:
+  - id: vibe-python-dynamic-eval
+    languages: [python]
+    severity: WARNING
+    message: Dynamic evaluation requires manual input and trust-boundary review.
+    pattern-either:
+      - pattern: eval(...)
+      - pattern: exec(...)
+    metadata:
+      cwe: CWE-95
+      confidence: LOW
+  - id: vibe-python-shell-true
+    languages: [python]
+    severity: WARNING
+    message: Shell execution requires manual input and trust-boundary review.
+    patterns:
+      - pattern: subprocess.$METHOD(..., shell=True, ...)
+    metadata:
+      cwe: CWE-78
+      confidence: LOW
+  - id: vibe-web-raw-html
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: Raw HTML assignment requires review of sanitization and provenance.
+    pattern: $ELEMENT.innerHTML = $VALUE
+    metadata:
+      cwe: CWE-79
+      confidence: LOW

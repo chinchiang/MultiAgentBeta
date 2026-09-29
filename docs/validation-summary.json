@@ -1,0 +1,164 @@
+{
+  "generated_at": "2026-09-24T05:15:11.534405+00:00",
+  "model_endpoints_tested": false,
+  "efficacy_established": false,
+  "note": "Suites overlap; do not add counts as distinct tests. JUnit successful records include subtests where emitted. Docker, database and synthetic model contracts are separate evidence.",
+  "reports": [
+    {
+      "file": "docs/final-guards.xml",
+      "tests": 59,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 14,
+      "passed": 45,
+      "seconds": 39.678,
+      "timestamp": [
+        "2026-09-24T12:44:13.504361+08:00"
+      ],
+      "skip_reasons": [
+        "Explicit pinned Docker tool image required",
+        "Pinned Docker tool image required"
+      ],
+      "failures_detail": []
+    },
+    {
+      "file": "docs/local-pipeline.xml",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "passed": 1,
+      "seconds": 89.609,
+      "timestamp": [
+        "2026-09-24T12:04:20.277904+08:00"
+      ],
+      "skip_reasons": [],
+      "failures_detail": []
+    },
+    {
+      "file": "docs/postgres-pipeline-integration.xml",
+      "tests": 27,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "passed": 27,
+      "seconds": 514.727,
+      "timestamp": [
+        "2026-09-24T12:29:25.461965+08:00"
+      ],
+      "skip_reasons": [],
+      "failures_detail": []
+    },
+    {
+      "file": "docs/release-guards.xml",
+      "tests": 8,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "passed": 8,
+      "seconds": 27.578,
+      "timestamp": [
+        "2026-09-24T12:28:32.834198+08:00"
+      ],
+      "skip_reasons": [],
+      "failures_detail": []
+    },
+    {
+      "file": "docs/runtime-fixture-integration.xml",
+      "tests": 31,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 3,
+      "passed": 28,
+      "seconds": 382.428,
+      "timestamp": [
+        "2026-09-24T12:17:41.443531+08:00"
+      ],
+      "skip_reasons": [
+        "Real Linux Docker image/PostgreSQL not provisioned",
+        "Real PostgreSQL test service not configured",
+        "Windows redirector process-tree fallback"
+      ],
+      "failures_detail": []
+    },
+    {
+      "file": "docs/scanner-integration-release.xml",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "passed": 3,
+      "seconds": 63.346,
+      "timestamp": [
+        "2026-09-24T13:04:22.445487+08:00"
+      ],
+      "skip_reasons": [],
+      "failures_detail": []
+    },
+    {
+      "file": "docs/schemathesis-header-regression.xml",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "passed": 2,
+      "seconds": 53.481,
+      "timestamp": [
+        "2026-09-24T13:02:31.564976+08:00"
+      ],
+      "skip_reasons": [],
+      "failures_detail": []
+    },
+    {
+      "file": "docs/tool-integration-release.xml",
+      "tests": 27,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "passed": 27,
+      "seconds": 825.213,
+      "timestamp": [
+        "2026-09-24T12:59:47.480764+08:00"
+      ],
+      "skip_reasons": [],
+      "failures_detail": []
+    },
+    {
+      "file": "docs/tool-integration.xml",
+      "tests": 23,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "passed": 23,
+      "seconds": 491.5,
+      "timestamp": [
+        "2026-09-24T12:04:20.244056+08:00"
+      ],
+      "skip_reasons": [],
+      "failures_detail": []
+    },
+    {
+      "file": "docs/windows-regression.xml",
+      "tests": 216,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 21,
+      "passed": 195,
+      "seconds": 400.26,
+      "timestamp": [
+        "2026-09-24T12:33:09.803496+08:00"
+      ],
+      "skip_reasons": [
+        "Explicit pinned Docker tool image required",
+        "Hard-crash integration uses POSIX process semantics",
+        "OS does not permit creating symlinks for this account",
+        "Provide dedicated PostgreSQL integration database",
+        "Provisioned Linux scanner images and PostgreSQL required",
+        "Real Docker/PostgreSQL runtime required",
+        "Real Linux Docker image/PostgreSQL not provisioned",
+        "Real PostgreSQL test service not configured"
+      ],
+      "failures_detail": []
+    }
+  ]
+}

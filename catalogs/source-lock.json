@@ -1,0 +1,186 @@
+{
+  "asvs-5.0.0.json": {
+    "url": "https://raw.githubusercontent.com/OWASP/ASVS/5cf9b032440be53ce345ab3c130fda46ba1ce7a2/5.0/docs_en/OWASP_Application_Security_Verification_Standard_5.0.0_en.json",
+    "commit": "5cf9b032440be53ce345ab3c130fda46ba1ce7a2",
+    "file": "sources/asvs-5.0.0.json",
+    "sha256": "bcdbec214d70abcfad9284a31d4f9e5134305831d628aad3aa85d7e26626cb35",
+    "final_url": "https://raw.githubusercontent.com/OWASP/ASVS/5cf9b032440be53ce345ab3c130fda46ba1ce7a2/5.0/docs_en/OWASP_Application_Security_Verification_Standard_5.0.0_en.json",
+    "retrieved_at": "2026-09-24T02:34:35.192753+00:00"
+  },
+  "asvs-5.0.0.csv": {
+    "url": "https://raw.githubusercontent.com/OWASP/ASVS/5cf9b032440be53ce345ab3c130fda46ba1ce7a2/5.0/docs_en/OWASP_Application_Security_Verification_Standard_5.0.0_en.csv",
+    "commit": "5cf9b032440be53ce345ab3c130fda46ba1ce7a2",
+    "file": "sources/asvs-5.0.0.csv",
+    "sha256": "98c8fe911b9edb403af8ee05d3ce8201ecac2659e313b053890a62847cdcf680",
+    "final_url": "https://raw.githubusercontent.com/OWASP/ASVS/5cf9b032440be53ce345ab3c130fda46ba1ce7a2/5.0/docs_en/OWASP_Application_Security_Verification_Standard_5.0.0_en.csv",
+    "retrieved_at": "2026-09-24T02:34:34.870275+00:00"
+  },
+  "asvs-LICENSE.md": {
+    "url": "https://raw.githubusercontent.com/OWASP/ASVS/5cf9b032440be53ce345ab3c130fda46ba1ce7a2/LICENSE.md",
+    "commit": "5cf9b032440be53ce345ab3c130fda46ba1ce7a2",
+    "file": "sources/asvs-LICENSE.md",
+    "sha256": "28a9529c7d0bb4dc51f4bf5c116a3d16ef247a052f7591466768ddf563fd1cf5",
+    "final_url": "https://raw.githubusercontent.com/OWASP/ASVS/5cf9b032440be53ce345ab3c130fda46ba1ce7a2/LICENSE.md",
+    "retrieved_at": "2026-09-24T02:34:35.048511+00:00"
+  },
+  "asvs-project.html": {
+    "url": "https://owasp.org/projects/asvs",
+    "commit": null,
+    "file": "sources/asvs-project.html",
+    "sha256": "f90714a917f023ad8df1b9da37f421ba41a0f5f80cf78de764e74d2868c9fe8a",
+    "final_url": "https://owasp.org/projects/asvs",
+    "retrieved_at": "2026-09-24T02:34:35.566881+00:00"
+  },
+  "wstg-4.2.json": {
+    "url": "https://raw.githubusercontent.com/OWASP/wstg/dd33419e10edb22b78d89325a6c2aad9f184e3a2/checklist/checklist.json",
+    "commit": "dd33419e10edb22b78d89325a6c2aad9f184e3a2",
+    "file": "sources/wstg-4.2.json",
+    "sha256": "12e11356b02fc9d6ea1b65554145e14dfdffceb9829ff9d93edf14d3654bdf3c",
+    "final_url": "https://raw.githubusercontent.com/OWASP/wstg/dd33419e10edb22b78d89325a6c2aad9f184e3a2/checklist/checklist.json",
+    "retrieved_at": "2026-09-24T02:34:34.832711+00:00"
+  },
+  "wstg-4.2.md": {
+    "url": "https://raw.githubusercontent.com/OWASP/wstg/dd33419e10edb22b78d89325a6c2aad9f184e3a2/checklist/Testing_Checklist.md",
+    "commit": "dd33419e10edb22b78d89325a6c2aad9f184e3a2",
+    "file": "sources/wstg-4.2.md",
+    "sha256": "a0b9c0a794422850c497e2b31ff283c05895bcf9e8eaf595dde8ad8a0dbb54d8",
+    "final_url": "https://raw.githubusercontent.com/OWASP/wstg/dd33419e10edb22b78d89325a6c2aad9f184e3a2/checklist/Testing_Checklist.md",
+    "retrieved_at": "2026-09-24T02:34:35.595586+00:00"
+  },
+  "wstg-LICENSE.txt": {
+    "url": "https://raw.githubusercontent.com/OWASP/wstg/dd33419e10edb22b78d89325a6c2aad9f184e3a2/LICENSE",
+    "commit": "dd33419e10edb22b78d89325a6c2aad9f184e3a2",
+    "file": "sources/wstg-LICENSE.txt",
+    "sha256": "9312b09a6848f26c6046652238ddd6b32ea2124847faed48854c375c5194238d",
+    "final_url": "https://raw.githubusercontent.com/OWASP/wstg/dd33419e10edb22b78d89325a6c2aad9f184e3a2/LICENSE",
+    "retrieved_at": "2026-09-24T02:34:35.871539+00:00"
+  },
+  "wstg-project.html": {
+    "url": "https://owasp.org/www-project-web-security-testing-guide/",
+    "commit": null,
+    "file": "sources/wstg-project.html",
+    "sha256": "7e63658da29b85b4870f15938f6b1aa00cd80f7c1d3f82cfd30d6d8b53d67df9",
+    "final_url": "https://owasp.org/projects/web-security-testing-guide",
+    "retrieved_at": "2026-09-24T02:34:37.773312+00:00"
+  },
+  "LLM01_PromptInjection.md": {
+    "url": "https://raw.githubusercontent.com/GenAI-Security-Project/GenAI-LLM-Top10/9253e38ade58e959b531c0c5c9a4842272c9cd0e/2026/final/LLM01_PromptInjection.md",
+    "commit": "9253e38ade58e959b531c0c5c9a4842272c9cd0e",
+    "file": "sources/LLM01_PromptInjection.md",
+    "sha256": "ff036047755c505e6d7837a0114f6056f8f751a3628061b6711b6eac19e1f8b0",
+    "final_url": "https://raw.githubusercontent.com/GenAI-Security-Project/GenAI-LLM-Top10/9253e38ade58e959b531c0c5c9a4842272c9cd0e/2026/final/LLM01_PromptInjection.md",
+    "retrieved_at": "2026-09-24T02:34:36.000731+00:00"
+  },
+  "LLM02_SensitiveInformationDisclosure.md": {
+    "url": "https://raw.githubusercontent.com/GenAI-Security-Project/GenAI-LLM-Top10/9253e38ade58e959b531c0c5c9a4842272c9cd0e/2026/final/LLM02_SensitiveInformationDisclosure.md",
+    "commit": "9253e38ade58e959b531c0c5c9a4842272c9cd0e",
+    "file": "sources/LLM02_SensitiveInformationDisclosure.md",
+    "sha256": "009153f4880fdabd79585cf1b74e60e2dfe79668c5581853890aa2bec36ab05e",
+    "final_url": "https://raw.githubusercontent.com/GenAI-Security-Project/GenAI-LLM-Top10/9253e38ade58e959b531c0c5c9a4842272c9cd0e/2026/final/LLM02_SensitiveInformationDisclosure.md",
+    "retrieved_at": "2026-09-24T02:34:36.664925+00:00"
+  },
+  "LLM03_ExcessiveAgency.md": {
+    "url": "https://raw.githubusercontent.com/GenAI-Security-Project/GenAI-LLM-Top10/9253e38ade58e959b531c0c5c9a4842272c9cd0e/2026/final/LLM03_ExcessiveAgency.md",
+    "commit": "9253e38ade58e959b531c0c5c9a4842272c9cd0e",
+    "file": "sources/LLM03_ExcessiveAgency.md",
+    "sha256": "e961d0d9fe8382be4086aaddd65c1fad0d5d53220174493fe8c287f864c0529e",
+    "final_url": "https://raw.githubusercontent.com/GenAI-Security-Project/GenAI-LLM-Top10/9253e38ade58e959b531c0c5c9a4842272c9cd0e/2026/final/LLM03_ExcessiveAgency.md",
+    "retrieved_at": "2026-09-24T02:34:36.444729+00:00"
+  },
+  "LLM04_SupplyChain.md": {
+    "url": "https://raw.githubusercontent.com/GenAI-Security-Project/GenAI-LLM-Top10/9253e38ade58e959b531c0c5c9a4842272c9cd0e/2026/final/LLM04_SupplyChain.md",
+    "commit": "9253e38ade58e959b531c0c5c9a4842272c9cd0e",
+    "file": "sources/LLM04_SupplyChain.md",
+    "sha256": "b5cb83fe937ecf38b8017918ac90b378da6d9c8ec9e2b485f422c08e4d66ac9e",
+    "final_url": "https://raw.githubusercontent.com/GenAI-Security-Project/GenAI-LLM-Top10/9253e38ade58e959b531c0c5c9a4842272c9cd0e/2026/final/LLM04_SupplyChain.md",
+    "retrieved_at": "2026-09-24T02:34:36.818856+00:00"
+  },
+  "LLM05_DataModelPoisoning.md": {
+    "url": "https://raw.githubusercontent.com/GenAI-Security-Project/GenAI-LLM-Top10/9253e38ade58e959b531c0c5c9a4842272c9cd0e/2026/final/LLM05_DataModelPoisoning.md",
+    "commit": "9253e38ade58e959b531c0c5c9a4842272c9cd0e",
+    "file": "sources/LLM05_DataModelPoisoning.md",
+    "sha256": "28ba5d86c102c82916066aae4bde2c10605cdb98cca51f572093ba002d2a198d",
+    "final_url": "https://raw.githubusercontent.com/GenAI-Security-Project/GenAI-LLM-Top10/9253e38ade58e959b531c0c5c9a4842272c9cd0e/2026/final/LLM05_DataModelPoisoning.md",
+    "retrieved_at": "2026-09-24T02:34:37.207311+00:00"
+  },
+  "LLM06_UnboundedConsumption.md": {
+    "url": "https://raw.githubusercontent.com/GenAI-Security-Project/GenAI-LLM-Top10/9253e38ade58e959b531c0c5c9a4842272c9cd0e/2026/final/LLM06_UnboundedConsumption.md",
+    "commit": "9253e38ade58e959b531c0c5c9a4842272c9cd0e",
+    "file": "sources/LLM06_UnboundedConsumption.md",
+    "sha256": "e121147737d4750f89466fe191b5581fe71a822d8e1cfb621ea91d0d6a1dc6d5",
+    "final_url": "https://raw.githubusercontent.com/GenAI-Security-Project/GenAI-LLM-Top10/9253e38ade58e959b531c0c5c9a4842272c9cd0e/2026/final/LLM06_UnboundedConsumption.md",
+    "retrieved_at": "2026-09-24T02:34:37.180584+00:00"
+  },
+  "LLM07_Misinformation.md": {
+    "url": "https://raw.githubusercontent.com/GenAI-Security-Project/GenAI-LLM-Top10/9253e38ade58e959b531c0c5c9a4842272c9cd0e/2026/final/LLM07_Misinformation.md",
+    "commit": "9253e38ade58e959b531c0c5c9a4842272c9cd0e",
+    "file": "sources/LLM07_Misinformation.md",
+    "sha256": "5686479c061cd2057b9905775ce70fc92b1b26e9daf296928521d56837ad4732",
+    "final_url": "https://raw.githubusercontent.com/GenAI-Security-Project/GenAI-LLM-Top10/9253e38ade58e959b531c0c5c9a4842272c9cd0e/2026/final/LLM07_Misinformation.md",
+    "retrieved_at": "2026-09-24T02:34:37.647570+00:00"
+  },
+  "LLM08_HiddenContextExposure.md": {
+    "url": "https://raw.githubusercontent.com/GenAI-Security-Project/GenAI-LLM-Top10/9253e38ade58e959b531c0c5c9a4842272c9cd0e/2026/final/LLM08_HiddenContextExposure.md",
+    "commit": "9253e38ade58e959b531c0c5c9a4842272c9cd0e",
+    "file": "sources/LLM08_HiddenContextExposure.md",
+    "sha256": "e00d214f81757f626510df57e92116bec026b6c31ef7c3fb2bb52b71318c5ffe",
+    "final_url": "https://raw.githubusercontent.com/GenAI-Security-Project/GenAI-LLM-Top10/9253e38ade58e959b531c0c5c9a4842272c9cd0e/2026/final/LLM08_HiddenContextExposure.md",
+    "retrieved_at": "2026-09-24T02:34:37.841900+00:00"
+  },
+  "LLM09_VectorAndEmbeddingWeaknesses.md": {
+    "url": "https://raw.githubusercontent.com/GenAI-Security-Project/GenAI-LLM-Top10/9253e38ade58e959b531c0c5c9a4842272c9cd0e/2026/final/LLM09_VectorAndEmbeddingWeaknesses.md",
+    "commit": "9253e38ade58e959b531c0c5c9a4842272c9cd0e",
+    "file": "sources/LLM09_VectorAndEmbeddingWeaknesses.md",
+    "sha256": "e1a3aff504a708d46c5dbf1c4bbc9ae05f3206cc6ea8e6e9d544b3f0d0ff7c23",
+    "final_url": "https://raw.githubusercontent.com/GenAI-Security-Project/GenAI-LLM-Top10/9253e38ade58e959b531c0c5c9a4842272c9cd0e/2026/final/LLM09_VectorAndEmbeddingWeaknesses.md",
+    "retrieved_at": "2026-09-24T02:34:38.061499+00:00"
+  },
+  "LLM10_ImproperOutputHandling.md": {
+    "url": "https://raw.githubusercontent.com/GenAI-Security-Project/GenAI-LLM-Top10/9253e38ade58e959b531c0c5c9a4842272c9cd0e/2026/final/LLM10_ImproperOutputHandling.md",
+    "commit": "9253e38ade58e959b531c0c5c9a4842272c9cd0e",
+    "file": "sources/LLM10_ImproperOutputHandling.md",
+    "sha256": "d61a5ca0eddb38cdd0f485d642ed263c259638e2f1cf82eb1563c064491d67f0",
+    "final_url": "https://raw.githubusercontent.com/GenAI-Security-Project/GenAI-LLM-Top10/9253e38ade58e959b531c0c5c9a4842272c9cd0e/2026/final/LLM10_ImproperOutputHandling.md",
+    "retrieved_at": "2026-09-24T02:34:38.277337+00:00"
+  },
+  "llm-2026-README.md": {
+    "url": "https://raw.githubusercontent.com/GenAI-Security-Project/GenAI-LLM-Top10/9253e38ade58e959b531c0c5c9a4842272c9cd0e/README.md",
+    "commit": "9253e38ade58e959b531c0c5c9a4842272c9cd0e",
+    "file": "sources/llm-2026-README.md",
+    "sha256": "cb48dd93c37a2ba54e323edaa7eb030167464af532a664e1ad01b76f78bcba92",
+    "final_url": "https://raw.githubusercontent.com/GenAI-Security-Project/GenAI-LLM-Top10/9253e38ade58e959b531c0c5c9a4842272c9cd0e/README.md",
+    "retrieved_at": "2026-09-24T02:34:38.478041+00:00"
+  },
+  "llm-2026-release.html": {
+    "url": "https://genai.owasp.org/resource/owasp-genai-llm-top-10-2026/",
+    "commit": null,
+    "file": "sources/llm-2026-release.html",
+    "sha256": "6d844898d74d4aac5f08fc240c0728e412828ed318a180e16d9da10fde49c305",
+    "final_url": "https://genai.owasp.org/resource/owasp-genai-llm-top-10-2026/",
+    "retrieved_at": "2026-09-24T02:34:41.027973+00:00"
+  },
+  "asi-2026.json": {
+    "url": "https://raw.githubusercontent.com/GenAI-Security-Project/GenAI-LLM-Top10/9253e38ade58e959b531c0c5c9a4842272c9cd0e/2026/final/mappings/asi-2026.json",
+    "commit": "9253e38ade58e959b531c0c5c9a4842272c9cd0e",
+    "file": "sources/asi-2026.json",
+    "sha256": "35babf213f84976a2e66ccc65fd3900c84c7106aed818309822e37914475b83e",
+    "final_url": "https://raw.githubusercontent.com/GenAI-Security-Project/GenAI-LLM-Top10/9253e38ade58e959b531c0c5c9a4842272c9cd0e/2026/final/mappings/asi-2026.json",
+    "retrieved_at": "2026-09-24T02:34:38.948209+00:00"
+  },
+  "agentic-2026-announcement.html": {
+    "url": "https://genai.owasp.org/2025/12/09/owasp-top-10-for-agentic-applications-the-benchmark-for-agentic-security-in-the-age-of-autonomous-ai/",
+    "commit": null,
+    "file": "sources/agentic-2026-announcement.html",
+    "sha256": "0bac7bbde34048199f467910dc5ab0fe99d30890cd93e9bb438d6bb2ea98852c",
+    "final_url": "https://genai.owasp.org/2025/12/09/owasp-top-10-for-agentic-applications-the-benchmark-for-agentic-security-in-the-age-of-autonomous-ai/",
+    "retrieved_at": "2026-09-24T02:34:40.997700+00:00"
+  },
+  "agentic-2026-release.html": {
+    "url": "https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/",
+    "commit": null,
+    "file": "sources/agentic-2026-release.html",
+    "sha256": "dfadee343c66758f360d2598aeadda4140f07ef125a8eace1dca62580763a90b",
+    "final_url": "https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/",
+    "retrieved_at": "2026-09-24T02:34:41.076791+00:00"
+  }
+}

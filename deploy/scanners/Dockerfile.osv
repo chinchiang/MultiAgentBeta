@@ -1,0 +1,5 @@
+FROM ghcr.io/google/osv-scanner@sha256:4d3d1a42ba435ac706286fec518c044f049c9753d21260b5bae60bab8740ed97 AS upstream
+FROM python@sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b94cd8ebbe06a9
+COPY --from=upstream /osv-scanner /usr/local/bin/osv-scanner
+USER 65532:65532
+ENTRYPOINT []

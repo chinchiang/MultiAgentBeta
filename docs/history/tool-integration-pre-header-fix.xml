@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="2" skipped="0" tests="27" time="809.719" timestamp="2026-09-24T12:47:48.354125+08:00" hostname="IEC1-150194-2"><testcase classname="tests.test_tool_runners" name="test_selected_ai_tool_is_used_inside_reset_effect_cleanup_lifecycle[vulnerable-fail-promptfoo]" time="97.872" /><testcase classname="tests.test_tool_runners" name="test_selected_ai_tool_is_used_inside_reset_effect_cleanup_lifecycle[vulnerable-fail-pyrit]" time="112.653" /><testcase classname="tests.test_tool_runners" name="test_selected_ai_tool_is_used_inside_reset_effect_cleanup_lifecycle[fixed-pass-promptfoo]" time="92.633" /><testcase classname="tests.test_tool_runners" name="test_selected_ai_tool_is_used_inside_reset_effect_cleanup_lifecycle[fixed-pass-pyrit]" time="106.124" /><testcase classname="tests.test_tool_runners" name="test_fixed_source_free_specs[schemathesis]" time="0.001" /><testcase classname="tests.test_tool_runners" name="test_fixed_source_free_specs[playwright]" time="0.001" /><testcase classname="tests.test_tool_runners" name="test_fixed_source_free_specs[promptfoo]" time="0.001" /><testcase classname="tests.test_tool_runners" name="test_fixed_source_free_specs[pyrit]" time="0.001" /><testcase classname="tests.test_tool_runners" name="test_fixed_source_free_specs[zap]" time="0.001" /><testcase classname="tests.test_tool_runners" name="test_refuse_unbounded_or_credential_inputs[change0]" time="0.001" /><testcase classname="tests.test_tool_runners" name="test_refuse_unbounded_or_credential_inputs[change1]" time="0.001" /><testcase classname="tests.test_tool_runners" name="test_refuse_unbounded_or_credential_inputs[change2]" time="0.001" /><testcase classname="tests.test_tool_runners" name="test_refuse_unbounded_or_credential_inputs[change3]" time="0.001" /><testcase classname="tests.test_tool_runners" name="test_refuse_unbounded_or_credential_inputs[change4]" time="0.001" /><testcase classname="tests.test_tool_runners" name="test_exit_zero_without_evidence_is_never_pass" time="0.001" /><testcase classname="tests.test_tool_runners" name="test_tool_body_trust_claim_never_becomes_effect_evidence" time="0.001" /><testcase classname="tests.test_tool_runners" name="test_no_schemathesis_cases_or_external_xml_entities_rejected" time="0.001" /><testcase classname="tests.test_tool_runners" name="test_real_tools_network_none_through_broker[False-schemathesis]" time="21.648"><failure message="AssertionError: {'tool': 'schemathesis', 'version': '4.28.0', 'status': 'completed', 'security_status': 'inconclusive', ...}&#10;assert 'inconclusive' == 'pass'&#10;  &#10;  - pass&#10;  + inconclusive">tmp_path = PosixPath('/tmp/pytest-of-root/pytest-2/test_real_tools_network_none_t0')
+tool = 'schemathesis', vulnerable = False
+
+    @pytest.mark.asyncio
+    @pytest.mark.skipif(not os.environ.get("VIBEAUDIT_INTEGRATION_IMAGE"), reason="Explicit pinned Docker tool image required")
+    @pytest.mark.parametrize("tool", VERSIONS)
+    @pytest.mark.parametrize("vulnerable", [False, True])
+    async def test_real_tools_network_none_through_broker(tmp_path, tool, vulnerable):
+        from vibe_audit.lease import canonical_hash
+        from vibe_audit.tool_runners import run_tool
+        from vibe_audit.worker_runtime import WorkerRuntime
+        seen = []
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *_args): pass
+            def do_GET(self):
+                seen.append(self.path)
+                positive = self.path == "/fixture"
+                value = {"canary": "TOOL_CANARY"} if positive or vulnerable else {"error": "denied"}
+                raw = json.dumps(value).encode()
+                self.send_response(200 if positive or vulnerable else 403)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers(); self.wfile.write(raw)
+        target = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=target.serve_forever, daemon=True); thread.start()
+        c = {"id":"case-one","method":"GET","path":"/private","identity":None,"adapter":tool,"headers":{},"body":None,
+             "side_effects":False,"threat_model_hash":"verified-threat","preconditions":[{"name":"fixture","method":"GET","path":"/fixture",
+             "identity":None,"expected_status":200,"required_text":["TOOL_CANARY"]}],
+             "oracle":{"kind":"deny_sensitive","forbidden_text":["TOOL_CANARY"],"allowed_statuses":[403],"required_observations":["http_response"]}}
+        c["hash"] = canonical_hash(c)
+        scope = {"run_id":uuid.uuid4().hex,"mode":"live","target_url":f"http://127.0.0.1:{target.server_port}",
+                 "allowed_target_ips":["127.0.0.1"],"allowed_requests":[{"method":"GET","path":p} for p in ["/fixture","/private"]],
+                 "budget":{"max_requests":30,"max_seconds":600},"auth_profiles":[]}
+        pin = os.environ["VIBEAUDIT_INTEGRATION_IMAGE"]
+        runtime = WorkerRuntime(tmp_path, database_url=os.environ["VIBEAUDIT_TEST_POSTGRES"],
+            image_pins={"worker":pin,"zap":os.environ.get("VIBEAUDIT_ZAP_IMAGE",pin)}, ttl_seconds=10)
+        hooks=[]
+        async def hook(**ctx): hooks.append(ctx)
+        try:
+            result = await run_tool(runtime,tool,scope,c,cancel_event=asyncio.Event(),request_hook=hook)
+            assert result["status"] == "completed", result
+&gt;           assert result["security_status"] == ("fail" if vulnerable else "pass"), result
+E           AssertionError: {'tool': 'schemathesis', 'version': '4.28.0', 'status': 'completed', 'security_status': 'inconclusive', ...}
+E           assert 'inconclusive' == 'pass'
+E             
+E             - pass
+E             + inconclusive
+
+tests/test_tool_runners.py:127: AssertionError</failure></testcase><testcase classname="tests.test_tool_runners" name="test_real_tools_network_none_through_broker[False-playwright]" time="17.690" /><testcase classname="tests.test_tool_runners" name="test_real_tools_network_none_through_broker[False-promptfoo]" time="27.714" /><testcase classname="tests.test_tool_runners" name="test_real_tools_network_none_through_broker[False-pyrit]" time="33.591" /><testcase classname="tests.test_tool_runners" name="test_real_tools_network_none_through_broker[False-zap]" time="97.480" /><testcase classname="tests.test_tool_runners" name="test_real_tools_network_none_through_broker[True-schemathesis]" time="17.118"><failure message="AssertionError: {'tool': 'schemathesis', 'version': '4.28.0', 'status': 'completed', 'security_status': 'inconclusive', ...}&#10;assert 'inconclusive' == 'fail'&#10;  &#10;  - fail&#10;  + inconclusive">tmp_path = PosixPath('/tmp/pytest-of-root/pytest-2/test_real_tools_network_none_t5')
+tool = 'schemathesis', vulnerable = True
+
+                "artifacts":{"schemathesis.xml":raw}},case_id="case-one")
+            assert result["status"] == "execution_error"
+    
+    
+    @pytest.mark.asyncio
+    @pytest.mark.skipif(not os.environ.get("VIBEAUDIT_INTEGRATION_IMAGE"), reason="Explicit pinned Docker tool image required")
+    @pytest.mark.parametrize("tool", VERSIONS)
+    @pytest.mark.parametrize("vulnerable", [False, True])
+    async def test_real_tools_network_none_through_broker(tmp_path, tool, vulnerable):
+        from vibe_audit.lease import canonical_hash
+        from vibe_audit.tool_runners import run_tool
+        from vibe_audit.worker_runtime import WorkerRuntime
+        seen = []
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *_args): pass
+            def do_GET(self):
+                seen.append(self.path)
+                positive = self.path == "/fixture"
+                value = {"canary": "TOOL_CANARY"} if positive or vulnerable else {"error": "denied"}
+                raw = json.dumps(value).encode()
+                self.send_response(200 if positive or vulnerable else 403)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers(); self.wfile.write(raw)
+        target = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=target.serve_forever, daemon=True); thread.start()
+        c = {"id":"case-one","method":"GET","path":"/private","identity":None,"adapter":tool,"headers":{},"body":None,
+             "side_effects":False,"threat_model_hash":"verified-threat","preconditions":[{"name":"fixture","method":"GET","path":"/fixture",
+             "identity":None,"expected_status":200,"required_text":["TOOL_CANARY"]}],
+             "oracle":{"kind":"deny_sensitive","forbidden_text":["TOOL_CANARY"],"allowed_statuses":[403],"required_observations":["http_response"]}}
+        c["hash"] = canonical_hash(c)
+        scope = {"run_id":uuid.uuid4().hex,"mode":"live","target_url":f"http://127.0.0.1:{target.server_port}",
+                 "allowed_target_ips":["127.0.0.1"],"allowed_requests":[{"method":"GET","path":p} for p in ["/fixture","/private"]],
+                 "budget":{"max_requests":30,"max_seconds":600},"auth_profiles":[]}
+        pin = os.environ["VIBEAUDIT_INTEGRATION_IMAGE"]
+        runtime = WorkerRuntime(tmp_path, database_url=os.environ["VIBEAUDIT_TEST_POSTGRES"],
+            image_pins={"worker":pin,"zap":os.environ.get("VIBEAUDIT_ZAP_IMAGE",pin)}, ttl_seconds=10)
+        hooks=[]
+&gt;       async def hook(**ctx): hooks.append(ctx)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AssertionError: {'tool': 'schemathesis', 'version': '4.28.0', 'status': 'completed', 'security_status': 'inconclusive', ...}
+E       assert 'inconclusive' == 'fail'
+E         
+E         - fail
+E         + inconclusive
+
+tests/test_tool_runners.py:127: AssertionError</failure></testcase><testcase classname="tests.test_tool_runners" name="test_real_tools_network_none_through_broker[True-playwright]" time="14.232" /><testcase classname="tests.test_tool_runners" name="test_real_tools_network_none_through_broker[True-promptfoo]" time="26.412" /><testcase classname="tests.test_tool_runners" name="test_real_tools_network_none_through_broker[True-pyrit]" time="30.010" /><testcase classname="tests.test_tool_runners" name="test_real_tools_network_none_through_broker[True-zap]" time="105.687" /></testsuite></testsuites>

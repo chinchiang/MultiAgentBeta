@@ -1,0 +1,108 @@
+"""Create bounded private scanner inputs without running repository code."""
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+from pathlib import Path
+import stat
+import uuid
+
+from .snapshot import _safe_ancestors, _linklike
+
+_SKIP = {".git", "node_modules", ".venv", "venv", "__pycache__", ".npm-cache", ".pytest_cache", "dist", "build"}
+
+
+def _open_regular(path: Path):
+    """Anchor each POSIX path component with O_NOFOLLOW, including directories."""
+    if os.name!="posix":
+        return os.open(path,os.O_RDONLY|getattr(os,"O_BINARY",0)|getattr(os,"O_NOFOLLOW",0))
+    parts=path.absolute().parts
+    directory=os.open(parts[0],os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
+    try:
+        for component in parts[1:-1]:
+            child=os.open(component,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW,dir_fd=directory)
+            os.close(directory)
+            directory=child
+        return os.open(parts[-1],os.O_RDONLY|os.O_NOFOLLOW,dir_fd=directory)
+    finally:
+        os.close(directory)
+
+
+def stage_source(source_path: str, private_root: str | Path, *, expected_snapshot: dict | None = None,
+                 max_files: int = 20000, max_bytes: int = 128 * 1024 * 1024) -> dict:
+    source = Path(source_path).absolute()
+    private = Path(private_root).absolute()
+    if not source.is_dir() or not _safe_ancestors(source):
+        raise ValueError("Scanner source must be a real directory without link ancestors")
+    private.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if not _safe_ancestors(private) or private == source or private.is_relative_to(source):
+        raise ValueError("Private scanner staging must be outside the source tree")
+    target = private / uuid.uuid4().hex
+    target.mkdir(mode=0o755)
+    entries, total = [], 0
+    omitted = []
+    for base, dirs, files in os.walk(source, followlinks=False):
+        dirs[:] = sorted(d for d in dirs if d not in _SKIP and not _linklike(Path(base) / d))
+        for name in sorted(files):
+            item = Path(base) / name
+            relative = item.relative_to(source).as_posix()
+            if name in {".semgrepignore", ".gitleaksignore", ".gitleaks.toml", "osv-scanner.toml"}:
+                omitted.append(relative)
+                continue
+            if _linklike(item) or not _safe_ancestors(item):
+                omitted.append(relative)
+                continue
+            info = item.lstat()
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink > 1:
+                omitted.append(relative)
+                continue
+            if len(entries) >= max_files or total + info.st_size > max_bytes:
+                raise ValueError("Scanner source exceeds bounded snapshot limits")
+            fd = _open_regular(item)
+            with os.fdopen(fd, "rb") as handle:
+                before = os.fstat(handle.fileno())
+                if (info.st_dev, info.st_ino, info.st_mtime_ns, info.st_size) != (before.st_dev, before.st_ino, before.st_mtime_ns, before.st_size) or before.st_nlink > 1:
+                    raise ValueError("Scanner input changed before read")
+                content = handle.read(max_bytes - total + 1)
+                after = os.fstat(handle.fileno())
+            if len(content) + total > max_bytes or (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+                raise ValueError("Scanner input changed during read")
+            destination = target / relative
+            destination.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
+            with destination.open("xb") as output:
+                output.write(content)
+            destination.chmod(0o444)
+            total += len(content)
+            entries.append({"path": relative, "sha256": hashlib.sha256(content).hexdigest(), "bytes": len(content)})
+    if not entries:
+        raise ValueError("Empty scanner staging snapshot")
+    entries.sort(key=lambda value: value["path"])
+    by_path = {entry["path"]: entry["sha256"] for entry in entries}
+    if expected_snapshot:
+        for item in expected_snapshot["files"]:
+            if by_path.get(item["path"]) != item["sha256"]:
+                raise ValueError("Source changed between model intake and scanner snapshot")
+    checksum = hashlib.sha256(json.dumps(entries, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    return {"path": str(target), "digest": checksum, "files": entries, "omitted": omitted, "bytes": total}
+
+
+def verify_staging(record: dict) -> bool:
+    root = Path(record["path"])
+    if not _safe_ancestors(root):
+        return False
+    expected={item["path"] for item in record["files"]}
+    actual=set()
+    for base, dirs, files in os.walk(root,followlinks=False):
+        if any(_linklike(Path(base)/d) for d in dirs):
+            return False
+        actual.update((Path(base)/name).relative_to(root).as_posix() for name in files)
+    if expected!=actual:
+        return False
+    for item in record["files"]:
+        p = root / item["path"]
+        if not p.resolve().is_relative_to(root.resolve()) or not _safe_ancestors(p) or not p.is_file() or p.stat().st_nlink>1:
+            return False
+        if hashlib.sha256(p.read_bytes()).hexdigest() != item["sha256"]:
+            return False
+    return True

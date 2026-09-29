@@ -1,0 +1,26 @@
+{
+  "check": "loopback API + React SSR; separate browser receipt",
+  "run_id": "9a332c1d-5e29-49f3-ad62-7c707fee767f",
+  "status": "incomplete",
+  "reviews": 3,
+  "outcomes": [
+    "fail",
+    "pass",
+    "inconclusive"
+  ],
+  "evidence_verified": 7,
+  "tabs_rendered": [
+    "overview",
+    "trace",
+    "findings",
+    "evidence",
+    "activity"
+  ],
+  "report_formats": [
+    "markdown",
+    "json",
+    "sarif"
+  ],
+  "safe_text_escaped": true,
+  "live_models_tested": false
+}

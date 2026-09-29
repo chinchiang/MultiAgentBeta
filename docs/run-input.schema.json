@@ -1,0 +1,402 @@
+{
+  "$defs": {
+    "AuthProfile": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "credential_env": {
+          "title": "Credential Env",
+          "type": "string"
+        },
+        "header": {
+          "default": "Authorization",
+          "title": "Header",
+          "type": "string"
+        },
+        "scheme": {
+          "default": "Bearer",
+          "title": "Scheme",
+          "type": "string"
+        },
+        "role": {
+          "default": "",
+          "title": "Role",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "credential_env"
+      ],
+      "title": "AuthProfile",
+      "type": "object"
+    },
+    "Budget": {
+      "additionalProperties": false,
+      "properties": {
+        "max_seconds": {
+          "default": 600,
+          "maximum": 14400,
+          "minimum": 10,
+          "title": "Max Seconds",
+          "type": "integer"
+        },
+        "max_requests": {
+          "default": 30,
+          "maximum": 10000,
+          "minimum": 1,
+          "title": "Max Requests",
+          "type": "integer"
+        },
+        "max_model_calls": {
+          "default": 20,
+          "maximum": 500,
+          "minimum": 1,
+          "title": "Max Model Calls",
+          "type": "integer"
+        },
+        "max_tokens": {
+          "default": 50000,
+          "maximum": 2000000,
+          "minimum": 1000,
+          "title": "Max Tokens",
+          "type": "integer"
+        }
+      },
+      "title": "Budget",
+      "type": "object"
+    },
+    "ModelProfile": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "maxLength": 80,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_-]+$",
+          "title": "Id",
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "commander",
+            "reviewer",
+            "architecture_mapper",
+            "challenger",
+            "threat_modeler",
+            "test_designer",
+            "reporter"
+          ],
+          "title": "Role",
+          "type": "string"
+        },
+        "provider": {
+          "enum": [
+            "demo",
+            "openai",
+            "anthropic",
+            "nvidia_nim",
+            "openai_compatible"
+          ],
+          "title": "Provider",
+          "type": "string"
+        },
+        "model_id": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Model Id",
+          "type": "string"
+        },
+        "family": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Family",
+          "type": "string"
+        },
+        "endpoint": {
+          "default": "",
+          "title": "Endpoint",
+          "type": "string"
+        },
+        "credential_env": {
+          "default": "",
+          "title": "Credential Env",
+          "type": "string"
+        },
+        "temperature": {
+          "default": 0,
+          "maximum": 2,
+          "minimum": 0,
+          "title": "Temperature",
+          "type": "number"
+        },
+        "max_output_tokens": {
+          "default": 3000,
+          "maximum": 16000,
+          "minimum": 256,
+          "title": "Max Output Tokens",
+          "type": "integer"
+        },
+        "timeout_seconds": {
+          "default": 60,
+          "maximum": 300,
+          "minimum": 5,
+          "title": "Timeout Seconds",
+          "type": "integer"
+        },
+        "prompt_version": {
+          "default": "v2",
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Prompt Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "role",
+        "provider",
+        "model_id",
+        "family"
+      ],
+      "title": "ModelProfile",
+      "type": "object"
+    },
+    "SecurityRequirement": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "statement": {
+          "maxLength": 3000,
+          "minLength": 1,
+          "title": "Statement",
+          "type": "string"
+        },
+        "threat_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 100,
+          "title": "Threat Ids",
+          "type": "array"
+        },
+        "source_kind": {
+          "default": "derived",
+          "enum": [
+            "operator",
+            "specification",
+            "derived"
+          ],
+          "title": "Source Kind",
+          "type": "string"
+        },
+        "source": {
+          "maxLength": 3000,
+          "minLength": 1,
+          "title": "Source",
+          "type": "string"
+        },
+        "standard_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 50,
+          "title": "Standard Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "statement",
+        "source"
+      ],
+      "title": "SecurityRequirement",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 2,
+      "default": 2,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "name": {
+      "default": "Security review",
+      "maxLength": 160,
+      "minLength": 1,
+      "title": "Name",
+      "type": "string"
+    },
+    "mode": {
+      "default": "demo",
+      "enum": [
+        "demo",
+        "live"
+      ],
+      "title": "Mode",
+      "type": "string"
+    },
+    "source_path": {
+      "default": "",
+      "title": "Source Path",
+      "type": "string"
+    },
+    "deployment_id": {
+      "default": "",
+      "title": "Deployment Id",
+      "type": "string"
+    },
+    "target_url": {
+      "default": "",
+      "title": "Target Url",
+      "type": "string"
+    },
+    "data_policy": {
+      "default": "local_only",
+      "enum": [
+        "local_only",
+        "cloud_allowed"
+      ],
+      "title": "Data Policy",
+      "type": "string"
+    },
+    "allowed_model_origins": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Allowed Model Origins",
+      "type": "array"
+    },
+    "allowed_target_ips": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Allowed Target Ips",
+      "type": "array"
+    },
+    "allowed_requests": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "maxItems": 100,
+      "title": "Allowed Requests",
+      "type": "array"
+    },
+    "budget": {
+      "$ref": "#/$defs/Budget"
+    },
+    "models": {
+      "items": {
+        "$ref": "#/$defs/ModelProfile"
+      },
+      "title": "Models",
+      "type": "array"
+    },
+    "auth_profiles": {
+      "items": {
+        "$ref": "#/$defs/AuthProfile"
+      },
+      "title": "Auth Profiles",
+      "type": "array"
+    },
+    "notes": {
+      "default": "",
+      "maxLength": 10000,
+      "title": "Notes",
+      "type": "string"
+    },
+    "parent_run_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Parent Run Id"
+    },
+    "parent_finding_ids": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 100,
+      "title": "Parent Finding Ids",
+      "type": "array"
+    },
+    "requirements": {
+      "items": {
+        "$ref": "#/$defs/SecurityRequirement"
+      },
+      "maxItems": 500,
+      "title": "Requirements",
+      "type": "array"
+    },
+    "static_tools": {
+      "items": {
+        "enum": [
+          "semgrep",
+          "osv",
+          "gitleaks"
+        ],
+        "type": "string"
+      },
+      "title": "Static Tools",
+      "type": "array"
+    },
+    "runtime_profile": {
+      "default": "default",
+      "pattern": "^[a-zA-Z0-9_-]{1,80}$",
+      "title": "Runtime Profile",
+      "type": "string"
+    },
+    "fixture_profile": {
+      "anyOf": [
+        {
+          "pattern": "^[a-zA-Z0-9_-]{1,80}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Fixture Profile"
+    },
+    "deployment_header": {
+      "anyOf": [
+        {
+          "pattern": "^[A-Za-z0-9-]{1,100}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Deployment Header"
+    },
+    "cases": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "maxItems": 100,
+      "title": "Cases",
+      "type": "array"
+    }
+  },
+  "title": "RunInput",
+  "type": "object"
+}

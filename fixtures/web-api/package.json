@@ -1,0 +1,9 @@
+{
+  "name": "vibe-audit-synthetic-web-fixture",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "fixed": "node server.ts --mode fixed --port 8911",
+    "vulnerable": "node server.ts --mode vulnerable --port 8911"
+  }
+}
