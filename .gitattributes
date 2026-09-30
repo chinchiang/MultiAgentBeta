@@ -1,0 +1,4 @@
+# Keep committed bytes exactly: catalogs, the tiktoken blob and source-manifest.sha256 are hash-verified.
+* -text
+# Shell scripts run on Linux and must stay LF even when edited on Windows.
+*.sh text eol=lf

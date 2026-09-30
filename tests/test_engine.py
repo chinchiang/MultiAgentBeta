@@ -1,12 +1,14 @@
 import asyncio
 import copy
 import json
+import shutil
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
 from vibe_audit.api import create_app
+from vibe_audit.catalog import default_catalog_root
 from vibe_audit.domain import RunInput, digest
 from vibe_audit.policy import PolicyError, sealed
 from vibe_audit.service import Engine, report_sarif
@@ -43,6 +45,16 @@ async def test_end_to_end_demo_is_honest_and_preserves_minority(engine):
     assert stages.index("threat_model")<stages.index("blackbox")
     assert "SYNTHETIC" in run["report_note"]
     assert report_sarif(run)["runs"][0]["results"][0]["properties"]["synthetic"] is True
+
+
+async def test_catalog_failure_names_the_file(engine,tmp_path,monkeypatch):
+    root=tmp_path/"catalog-copy"
+    shutil.copytree(default_catalog_root(),root)
+    (root/"sources"/"asvs-5.0.0.json").write_bytes(b"{}")
+    monkeypatch.setenv("VIBEAUDIT_CATALOG_ROOT",str(root))
+    run=await finished_demo(engine)
+    assert (run["stage"],run["status"])==("preflight","failed")
+    assert run["error"]=="Catalog integrity mismatch: sources/asvs-5.0.0.json"
 
 
 async def test_missing_model_never_issues_blackbox_capability(engine):

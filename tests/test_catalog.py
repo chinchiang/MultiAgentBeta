@@ -36,6 +36,17 @@ def test_local_source_tampering_is_detected(tmp_path):
         load_catalogs(destination)
 
 
+def test_converted_line_endings_are_named(tmp_path):
+    destination = tmp_path / "catalogs"
+    shutil.copytree(default_catalog_root(), destination)
+    manifest = json.loads((destination / "manifest.json").read_text(encoding="utf-8"))
+    relative = manifest["collections"][0]["sources"][0]["file"]
+    source = destination / relative
+    source.write_bytes(source.read_bytes().replace(b"\n", b"\r\n"))
+    with pytest.raises(CatalogError, match=f"{relative} has converted line endings"):
+        load_catalogs(destination)
+
+
 def test_registry_does_not_expose_mutable_internal_entries():
     registry = load_catalogs()
     result = registry.resolve("LLM01:2026")
