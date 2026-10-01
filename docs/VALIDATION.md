@@ -1,6 +1,6 @@
 # 0.2.0 本地驗證紀錄
 
-驗證日期：2026-09-24。依使用者指定，本次完成工程及不需要模型憑證的本地整合。**未呼叫真實 Claude、OpenAI 或 Nemotron；未證明多模型減偏、漏洞檢出率或成本改善。**
+驗證日期：2026-09-24；審查後續修正後於 2026-10-02 重跑 Windows 全套回歸與前端建置。依使用者指定，本次完成工程及不需要模型憑證的本地整合。**未呼叫真實 Claude、OpenAI 或 Nemotron；未證明多模型減偏、漏洞檢出率或成本改善。**
 
 本次已實際使用 Windows 控制台、WSL2/Linux、Docker 29.1.3、PostgreSQL 18.6 及固定版本的八種安全工具。Windows 為 Python 3.12.14，Linux 測試 venv 為 Python 3.14.4，Node 為 24.19.0。完整 Python/npm 依賴與工具映像鎖定檔隨原始碼交付。映像與離線 OSV 資料本身不放進 ZIP。
 
@@ -10,7 +10,7 @@
 
 | 驗收 | 實際結果 | 證據 |
 |---|---|---|
-| Windows 全套回歸 | 191 passed、21 skipped、4 subtests passed | windows-regression.xml |
+| Windows 全套回歸（2026-10-02） | 279 passed、25 skipped、4 subtests passed | windows-regression.xml |
 | PostgreSQL、隔離 worker、完整工作流 | 27 passed、4 deselected | postgres-pipeline-integration.xml |
 | Fixture、重置、停止與故障路徑 | 24 passed、3 skipped、4 subtests passed | runtime-fixture-integration.xml |
 | 最終流程與政策檢查 | 45 passed、14 skipped | final-guards.xml |
@@ -22,7 +22,7 @@
 | 真 FastAPI + React SSR/API | 三份合成審查、fail/pass/inconclusive、七份證據、五分頁、三種匯出及 HTML 跳脫 | api-ssr-validation.json |
 | Python 相依一致性 | pip check 通過 | requirements.lock.txt |
 
-Windows 的 skips 包含需要 Linux/Docker/PostgreSQL 或平台 symlink 能力的案例；已另在 Linux 執行的部分以上述 Linux 報告為準。Fixture 那組的三個 skips 包含未設定的 PostgreSQL 測試條件及 Windows 專屬路徑；PostgreSQL 情境由另一組補驗。最終政策檢查中的十四項 Docker 整合另行執行，沒有把 skip 當成 pass。
+除 Windows 全套回歸與前端建置外，各列是 2026-09-24 的結果；之後的修正沒有在 Linux、Docker 或 PostgreSQL 上重跑，這些列不代表目前的程式碼。Windows 的 skips 包含需要 Linux/Docker/PostgreSQL、POSIX 程序或平台 symlink 能力的案例；已另在 Linux 執行的部分以上述 Linux 報告為準。Fixture 那組的三個 skips 包含未設定的 PostgreSQL 測試條件及 Windows 專屬路徑；PostgreSQL 情境由另一組補驗。最終政策檢查中的十四項 Docker 整合另行執行，沒有把 skip 當成 pass。
 
 原始逐項名稱、耗時與 skip 原因見 XML；validation-summary.json 由 scripts/summarize-validation.py 自動讀取，沒有用 LLM 補造結果。release-guards.xml、local-pipeline.xml、tool-integration.xml 為較早通過的重疊檢查，不另加計。
 
