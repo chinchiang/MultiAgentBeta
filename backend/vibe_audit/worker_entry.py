@@ -336,7 +336,13 @@ class Supervisor:
                     secrets.append(value)
                     result["capture_success"]=True
                 secrets.extend(self.sessions.values())
-                for secret in secrets:
+                # A target may reflect another identity's credential; the sandboxed tool must not see that either.
+                from adapters import _CREDENTIAL_ENV
+                for profile in self.manifest.get("auth_profiles",[]):
+                    key=profile.get("credential_env","")
+                    if isinstance(key,str) and _CREDENTIAL_ENV.fullmatch(key) and os.environ.get(key):
+                        secrets.append(os.environ[key])
+                for secret in sorted(set(secrets),key=len,reverse=True):
                     result["body"]=result["body"].replace(secret,"[REDACTED_CREDENTIAL]")
                 self.lease.finish_dispatch(self.cap,self.worker_id,rid,result)
                 self.broker_observations.append({"case_id":case_id,"method":method,"path":path,"identity":request.get("identity"),"purpose":step.get("purpose","test"),"status_code":result["status_code"],"body":result["body"],"peer_ip":result["peer_ip"],"complete":True,"body_sha256":hashlib.sha256(result["body"].encode()).hexdigest()})

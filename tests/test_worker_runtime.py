@@ -1,4 +1,6 @@
 import asyncio
+import copy
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -59,14 +61,18 @@ async def test_real_independent_process_and_broker_preserve_oracle(runtime,targe
     result=await runtime.run_case(scope,case(),cancel_event=asyncio.Event(),request_hook=hook)
     assert result["status"]=="pass",result
     assert result["isolation"]=="process_unisolated_test_only"
+    assert result["worker_status"]=="pass" and {o["recorded_by"] for o in result["observations"]}=={"supervisor"}
     assert result["cleanup_confirmed"] is True
     assert seen==["/fixture","/private"]
     assert [r["path"] for r in requests]==seen
     assert result["lifecycle"].index("network_revoked")<result["lifecycle"].index("worker_termination_started")
     assert runtime.leases.task(result["task_id"])["state"]=="finished"
+    assert result["work_dir_removed"] is True
+    assert not list(runtime.root.glob("w-*"))
     again=await runtime.run_case(scope,case(),cancel_event=asyncio.Event(),request_hook=hook)
     assert again["status"]=="blocked"
     assert seen==["/fixture","/private"]
+    assert not list(runtime.root.glob("w-*"))
 
 
 async def test_broker_rejects_unscoped_positive_control_without_target_io(runtime,target):
@@ -92,6 +98,86 @@ async def test_deployment_change_revokes_before_later_requests(runtime,target):
     result=await runtime.execute_tool({"operation":"request_sequence","cases":[case()],"requests":steps,"timeout_seconds":30},manifest=scope,cancel_event=asyncio.Event(),request_hook=allow)
     assert result["status"]=="blocked",result
     assert seen==["/fixture","/private"]
+
+
+async def test_broker_and_controller_redact_every_configured_credential(runtime,monkeypatch):
+    alice,bob,model="alice-"+"a"*20,"bob-"+"b"*20,'model-"quoted"-'+"m"*12
+    for key,value in [("VIBEAUDIT_TEST_ALICE",alice),("VIBEAUDIT_TEST_BOB",bob),("VIBEAUDIT_TEST_MODEL",model)]:
+        monkeypatch.setenv(key,value)
+    reflected=json.dumps({"bob":bob,"model":model}).encode()
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self,*args):pass
+        def do_GET(self):
+            body=b"TEST-CANARY" if self.path=="/fixture" else reflected
+            self.send_response(200 if self.path=="/fixture" else 403)
+            self.send_header("Content-Length",str(len(body)));self.end_headers();self.wfile.write(body)
+    server=ThreadingHTTPServer(("127.0.0.1",0),Handler)
+    thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+    try:
+        scope=manifest(f"http://127.0.0.1:{server.server_port}")
+        scope["auth_profiles"]=[{"id":"alice","credential_env":"VIBEAUDIT_TEST_ALICE"},{"id":"bob","credential_env":"VIBEAUDIT_TEST_BOB"}]
+        scope["models"]=[{"id":"reviewer-a","credential_env":"VIBEAUDIT_TEST_MODEL"}]
+        value=case();value.pop("hash");value["identity"]="alice";value["hash"]=canonical_hash(value)
+        result=await runtime.run_case(scope,value,cancel_event=asyncio.Event(),request_hook=allow)
+    finally:
+        server.shutdown();server.server_close();thread.join(timeout=2)
+    assert result["status"]=="pass",result
+    dump=json.dumps(result)
+    assert not [s for s in (alice,bob,model,json.dumps(model)[1:-1]) if s in dump]
+    # The broker hashed what it handed to the sandboxed tool: Bob's token was already gone, the model key
+    # (which the supervisor never holds) is removed by the controller.
+    row=next(r for r in result["broker_observations"] if r["path"]=="/private")
+    brokered=reflected.decode().replace(bob,"[REDACTED_CREDENTIAL]")
+    assert row["body_sha256"]==hashlib.sha256(brokered.encode()).hexdigest()
+
+
+def recorded(path,status,body,identity=None):
+    return {"case_id":"case-1","method":"GET","path":path,"identity":identity,"status_code":status,"body":body,"complete":True}
+
+
+@pytest.mark.parametrize("claim,main,expected",[
+    ("pass",recorded("/private",200,"TEST-CANARY"),"fail"),         # a leak the supervisor saw cannot be hidden
+    ("fail",recorded("/private",403,"Forbidden"),"inconclusive"),   # nor can a finding be invented
+    ("pass",recorded("/private",403,"Forbidden"),"pass"),
+    ("pass",recorded("/private",403,"Forbidden",identity="tenant-b"),"inconclusive"),
+])
+def test_controller_verdict_comes_from_supervisor_records(claim,main,expected):
+    from vibe_audit.worker_runtime import supervised_verdict
+    result=supervised_verdict(case(),{"status":claim,"reason":"worker says so","observations":[{"kind":"http_response","provenance":"adapter.http","case_id":"case-1"}],
+                                      "broker_observations":[recorded("/fixture",200,"TEST-CANARY"),main]})
+    assert (result["status"],result["worker_status"])==(expected,claim)
+    assert all(o["recorded_by"]=="supervisor" for o in result["observations"])
+
+
+def test_controller_keeps_worker_failure_states():
+    from vibe_audit.worker_runtime import supervised_verdict
+    result={"status":"outcome_unknown","reason":"lost","broker_observations":[recorded("/private",200,"TEST-CANARY")]}
+    assert supervised_verdict(case(),result)==result
+
+
+def test_sequence_rows_must_match_supervisor_records():
+    from vibe_audit.worker_runtime import supervised_sequence
+    spec={"requests":[{"id":"control"},{"id":"main"}]}
+    records=[recorded("/fixture",200,"TEST-CANARY"),recorded("/private",403,"Forbidden")]
+    honest={"status":"completed","observations":[{"id":"control","status_code":200,"body":"TEST-CANARY"},{"id":"main","status_code":403,"body":"Forbidden"}],"broker_observations":records}
+    assert supervised_sequence(spec,honest)==honest
+    forged=copy.deepcopy(honest);forged["observations"][1]["body"]="Forbidden, honestly"
+    assert supervised_sequence(spec,forged)["status"]=="execution_error"
+    invented=copy.deepcopy(honest);invented["broker_observations"]=records[:1]
+    assert supervised_sequence(spec,invented)["status"]=="execution_error"
+    # The relay's 502 for a request the supervisor refused ends the sequence; it is not a forgery.
+    refused={"status":"inconclusive","observations":[honest["observations"][0],{"id":"main","status_code":502,"body":"Broker denied request"}],"broker_observations":records[:1]}
+    assert supervised_sequence(spec,refused)==refused
+
+
+def test_controller_redacts_decoded_artifacts_and_escaped_credentials(monkeypatch):
+    from vibe_audit.worker_runtime import redact_credentials
+    monkeypatch.setenv("VIBEAUDIT_TEST_KEY",'key-"q"-0123456789')
+    scope={"auth_profiles":[],"models":[{"id":"m","credential_env":"VIBEAUDIT_TEST_KEY"}]}
+    result=redact_credentials({"artifacts":{"zap.json":json.dumps({"evidence":'key-"q"-0123456789'}).encode()},
+                               "observations":[{"body":'raw key-"q"-0123456789'}]},scope)
+    assert result["artifacts"]["zap.json"]==b'{"evidence": "[REDACTED_CREDENTIAL]"}'
+    assert result["observations"][0]["body"]=="raw [REDACTED_CREDENTIAL]"
 
 
 @pytest.mark.skipif(os.name!="posix",reason="Hard-crash integration uses POSIX process semantics")
@@ -147,7 +233,7 @@ def test_docker_namespace_identity_mounts_are_fixed(tmp_path):
     dirs=[]
     for name in ("inputs","out","broker"):
         path=tmp_path/name;path.mkdir();dirs.append(path)
-    kwargs=dict(prefix=["docker","--host","unix:///var/run/docker.sock"],image="sha256:"+"a"*64,name="vibeaudit-worker-"+"b"*32,inputs=dirs[0],out=dirs[1],broker=dirs[2])
+    kwargs=dict(prefix=["docker","--host","unix:///var/run/docker.sock"],image="sha256:"+"a"*64,name="vibeaudit-worker-"+"b"*32,inputs=dirs[0],broker=dirs[2])
     black=docker_command(**kwargs,phase="blackbox")
     white=docker_command(**kwargs,phase="whitebox")
     assert black[black.index("--network")+1]=="none"
@@ -155,6 +241,9 @@ def test_docker_namespace_identity_mounts_are_fixed(tmp_path):
     assert white[white.index("--user")+1]=="65532:65532"
     assert not any("target=/src" in arg for arg in black)
     assert not any("docker.sock,target" in arg for arg in black)
+    # Tool output lives in a bounded in-container tmpfs, never a world-writable host directory.
+    assert not any("target=/out" in arg for arg in black)
+    assert black[black.index("/out:rw,nosuid,nodev,noexec,size=64m,mode=1777")-1]=="--tmpfs"
     with pytest.raises(WorkerBlocked):docker_command(**kwargs,phase="blackbox",source_dir=tmp_path)
 
 

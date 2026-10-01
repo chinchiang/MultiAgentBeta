@@ -345,6 +345,46 @@ async def test_retry_policy_denial_retains_previous_billed_usage(profile, policy
     assert error.value.usage["model_calls"] == len(calls) == 1
 
 
+@pytest.mark.parametrize("content", [
+    "DATABASE_URL = postgres://app:synthetic-secret@db:5432/app",
+    'uri = "mongodb+srv://app:synthetic-secret@cluster0.example.net/db"',
+    "redis://:synthetic-secret@cache:6379/0",
+    "export PASSWORD=synthetic-secret",
+    "ENV SECRET_KEY=synthetic-secret",
+    "export GITLAB_TOKEN=synthetic-secret",
+    "define('DB_PASSWORD', 'synthetic-secret');",
+    '"Server=db;User Id=sa;Password=synthetic-secret;"',
+    'token = "synthetic-secret"',
+    "SECRET_KEY = 'synthetic-secret'",
+    "secret_key_base: synthetic-secret",
+    '{"auths": {"registry.example": {"auth": "synthetic-secret"}}}',
+    "-----BEGIN PGP PRIVATE KEY BLOCK-----\nsynthetic-secret\n-----END PGP PRIVATE KEY BLOCK-----",
+    "stripe = sk_live_" + "s" * 24, "slack = xoxb-" + "1" * 12, "maps = AIza" + "s" * 35,
+    "jwt = eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJzeW50aGV0aWMifQ.c3ludGhldGljLXNpZ25hdHVyZQ",
+])
+def test_redaction_covers_common_secret_formats(content):
+    redacted = redact_text(content)
+    assert "synthetic-secret" not in redacted
+    assert "REDACTED" in redacted
+
+
+@pytest.mark.parametrize("content", ["password_hash = bcrypt.hashpw(password, salt)", "login(user, password=password)",
+                                     'tokenizer = load("cl100k")', '<input type="password" name="password">'])
+def test_redaction_keeps_security_relevant_code_readable(content):
+    # Reviewers must still see how credentials are handled, not only that they exist.
+    assert redact_text(content) == content
+
+
+def test_snapshot_skips_container_and_cluster_credential_dirs(tmp_path):
+    for name in [".docker", ".kube"]:
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "config.json").write_text('{"note": "NEVER_READ"}', encoding="utf-8")
+    (tmp_path / "app.py").write_text("print('ok')", encoding="utf-8")
+    result = snapshot_source(str(tmp_path))
+    assert [f["path"] for f in result["files"]] == ["app.py"]
+    assert {"Excluded directory: .docker", "Excluded directory: .kube"} <= set(result["gaps"])
+
+
 def test_next_root_route_is_slash():
     from vibe_audit.snapshot import _routes
     assert _routes("app/route.ts", "export async function GET() {};")[0]["path"] == "/"

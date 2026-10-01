@@ -183,6 +183,21 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["requests"], 1)
         self.assertEqual([e[0] for e in self.events], ["hook", "request"])
 
+    async def test_redirect_after_state_changing_request_is_outcome_unknown(self):
+        # The target already processed the POST; reporting it as blocked would invite a replay.
+        self.case.update({"method": "POST", "path": "/redirect", "body": {"message": "fixture"}})
+        result = await self.run_case()
+        self.assertEqual(result["status"], "outcome_unknown")
+        self.assertEqual(result["requests"], 1)
+
+    async def test_unsafe_methods_count_as_state_changing_despite_case_claim(self):
+        for method in ["PUT", "PATCH", "DELETE"]:
+            self.case = {**case_template(), "method": method, "body": {}, "side_effects": False}
+            result = await self.run_case()
+            self.assertEqual(result["status"], "blocked", method)
+            self.assertEqual(result["requests"], 0)
+        self.assertEqual(self.events, [])
+
     async def test_hook_precedes_each_request(self):
         self.case["repetitions"] = 3
         result = await self.run_case()
@@ -227,6 +242,13 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
             result = await self.run_case()
         self.assertIn(result["status"], {"execution_error", "inconclusive"})
         self.assertLess(time.monotonic() - started, 0.5)
+
+    async def test_lost_state_changing_response_is_outcome_unknown(self):
+        self.case.update({"method": "POST", "path": "/slow", "body": {}})
+        with patch.object(adapters, "REQUEST_TIMEOUT_SECONDS", 0.05):
+            result = await self.run_case()
+        self.assertEqual(result["status"], "outcome_unknown")
+        self.assertEqual(result["requests"], 1)
 
     async def test_auth_uses_prefixed_environment_and_redacts_echo(self):
         self.case.update({"path": "/echo", "identity": "reader"})
@@ -312,6 +334,17 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result["status"], "blocked", change)
             self.assertEqual(result["requests"], 0)
         self.assertEqual(self.events, [])
+
+
+class StateChangeTests(unittest.TestCase):
+    def test_side_effects_claim_cannot_make_unsafe_method_read_only(self):
+        for method in ["PUT", "PATCH", "DELETE"]:
+            self.assertTrue(adapters.state_changing({"method": method, "side_effects": False}))
+        # POST also serves search and chat: only an operator-written case may declare it read-only.
+        self.assertFalse(adapters.state_changing({"method": "POST", "side_effects": False}))
+        self.assertTrue(adapters.state_changing({"method": "POST", "side_effects": False}, operator_case=False))
+        self.assertFalse(adapters.state_changing({"method": "GET", "side_effects": False}, operator_case=False))
+        self.assertTrue(adapters.state_changing({"method": "GET", "side_effects": True}))
 
 
 class ScannerPlanTests(unittest.TestCase):

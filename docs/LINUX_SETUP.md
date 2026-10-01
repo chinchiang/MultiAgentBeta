@@ -62,7 +62,7 @@ OSV provisioning 下載官方完整 PyPI/npm 生態系 archive，不外送本機
 sh scripts/start-local.sh 8000
 ```
 
-開啟 http://127.0.0.1:8000。先確認工具清單，再配置 Commander 和三個 reviewer 的確切端點/model ID/family。金鑰填環境變數名稱，例如 VIBEAUDIT_CLAUDE_KEY，不填值。cloud_allowed 仍需逐一列出 origin；local_only 只接受明確 loopback 模型端點。
+開啟終端機印出的 `http://127.0.0.1:8000/#token=…` 網址；沒有權杖無法建立 session。需要固定權杖時先設定 `VIBEAUDIT_SESSION_TOKEN`（32–256 個 URL-safe 字元）。先確認工具清單，再配置 Commander 和三個 reviewer 的確切端點/model ID/family。金鑰填環境變數名稱，例如 VIBEAUDIT_CLAUDE_KEY，不填值。cloud_allowed 仍需逐一列出 origin；local_only 只接受明確 loopback 模型端點。
 
 填入使用者提供的來源、staging、允許 IP、每個 METHOD/path、業務需求、帳號 reference、fixtures、部署識別/header，以及時間/請求/模型上限。正控制、reset、cleanup 也必須列在 scope 中；空 scope 禁止所有黑箱請求。預檢不進行漏洞探測。
 

@@ -125,12 +125,26 @@ async def test_cancel_prevents_further_requests(engine):
     assert result["usage"]["requests"]==0
 
 
+def open_session(client):
+    return client.get("/api/session",headers={"X-VibeAudit-Token":client.app.state.session_token})
+
+
 def test_local_api_session_csrf_origin_host_and_source_boundary(tmp_path):
     with TestClient(create_app(tmp_path,testing=True)) as client:
         assert client.get("/api/runs").status_code==401
-        response=client.get("/api/session")
+        # Any local process reaches loopback: without the startup token it gets no session to probe models with.
+        for headers in [{},{"X-VibeAudit-Token":"x"*43},{"X-VibeAudit-Token":client.app.state.session_token+"x"}]:
+            response=client.get("/api/session",headers=headers)
+            assert response.status_code==401
+            assert "set-cookie" not in response.headers
+        probe={"profile":{"id":"reviewer-a","role":"reviewer","provider":"openai_compatible","model_id":"m","family":"f","endpoint":"http://127.0.0.1:9/v1","credential_env":"VIBEAUDIT_TEST_KEY"},
+               "budget":{"max_model_calls":1,"max_tokens":1000,"max_seconds":10},"data_policy":"local_only"}
+        assert client.post("/api/models/probe",json=probe).status_code==401
+        response=open_session(client)
         csrf=response.json()["csrf_token"]
         assert "HttpOnly" in response.headers["set-cookie"]
+        # The cookie alone resumes the existing session, so reloading the workbench needs no token.
+        assert client.get("/api/session").json()["csrf_token"]==csrf
         assert client.post("/api/runs",json={"mode":"demo"}).status_code==403
         headers={"X-CSRF-Token":csrf}
         assert client.post("/api/runs",json={"mode":"demo"},headers={**headers,"Origin":"https://evil.example"}).status_code==403
@@ -140,6 +154,19 @@ def test_local_api_session_csrf_origin_host_and_source_boundary(tmp_path):
         assert response.status_code==201
         assert response.json()["mode"]=="demo"
         assert client.get("/api/runs").json()["runs"]
+
+
+@pytest.mark.parametrize("token",["x"*31,"x"*32+" ","x"*32+"#"])
+def test_weak_startup_token_is_refused(tmp_path,monkeypatch,token):
+    monkeypatch.setenv("VIBEAUDIT_SESSION_TOKEN",token)
+    with pytest.raises(ValueError,match="VIBEAUDIT_SESSION_TOKEN"):
+        create_app(tmp_path,testing=True)
+
+
+def test_configured_startup_token_opens_session(tmp_path,monkeypatch):
+    monkeypatch.setenv("VIBEAUDIT_SESSION_TOKEN","s"*40)
+    with TestClient(create_app(tmp_path,testing=True)) as client:
+        assert client.get("/api/session",headers={"X-VibeAudit-Token":"s"*40}).status_code==200
 
 
 def test_live_requires_diversity_and_no_demo():
@@ -155,7 +182,7 @@ def test_artifact_cannot_be_reassigned_to_other_run(tmp_path):
 
 def test_chunked_api_body_limit_does_not_trust_content_length(tmp_path):
     with TestClient(create_app(tmp_path,testing=True)) as client:
-        csrf=client.get("/api/session").json()["csrf_token"]
+        csrf=open_session(client).json()["csrf_token"]
         def chunks():
             yield b'{"mode":"demo","notes":"'
             for _ in range(9):
@@ -171,7 +198,7 @@ def test_chunked_api_body_limit_does_not_trust_content_length(tmp_path):
 @pytest.mark.parametrize("length",["not-a-number","-1"])
 def test_invalid_content_length_is_rejected_without_creating_run(tmp_path,length):
     with TestClient(create_app(tmp_path,testing=True)) as client:
-        csrf=client.get("/api/session").json()["csrf_token"]
+        csrf=open_session(client).json()["csrf_token"]
         response=client.post("/api/runs",content=b'{"mode":"demo"}',headers={
             "X-CSRF-Token":csrf,"Content-Type":"application/json","Content-Length":length})
         assert response.status_code==400
@@ -311,3 +338,49 @@ async def test_positive_control_needs_exact_scope_and_sealed_case_authorization(
     with pytest.raises(PolicyError,match="sealed test case"):
         engine.policy.authorize(run,case,engine.cancel_flags[run["id"]],method="GET",path="/allowed-but-not-a-case-step")
     assert run["usage"]["requests"]==used
+
+
+@pytest.mark.parametrize("provenance",["model","retest","operator"])
+async def test_model_designed_post_cannot_declare_itself_read_only(engine,monkeypatch,provenance):
+    from vibe_audit import adapters
+    run=await finished_demo(engine)
+    run.update(mode="live",status="running",stage="blackbox",executions=[])
+    manifest=run["manifest"]
+    manifest.update(mode="live",target_url="http://127.0.0.1:11435",allowed_target_ips=["127.0.0.1"],
+                    allowed_requests=[{"method":"POST","path":"/orders/private"}])
+    for profile in manifest["models"]:
+        profile.update(provider="openai_compatible",endpoint="http://127.0.0.1:11434/v1")
+    for review in run["reviews"]:
+        review.update(provider="openai_compatible",simulated=False)
+    run["threat_model"]["threats"]=run["threat_model"]["threats"][:1]
+    run["threat_model"]["requirements"]=run["threat_model"]["requirements"][:1]
+    run["threat_model"]["hash"]=sealed(run["threat_model"])
+    case=copy.deepcopy(run["cases"][0])
+    case.update(adapter="http",method="POST",body={},preconditions=[],side_effects=False,threat_model_hash=run["threat_model"]["hash"])
+    if provenance!="operator":
+        case["designed_by"]="model"
+    # A retest copies the parent's sealed cases, model-designed ones included, into its manifest.
+    manifest["cases"]=[] if provenance=="model" else [{k:v for k,v in case.items() if k!="hash"}]
+    run["manifest_hash"]=digest(manifest)
+    case["hash"]=sealed(case)
+    run["cases"]=[case]
+    run["usage"]["requests"]=0
+    dispatched=[]
+    def synthetic_request(scheme,host,port,pinned,method,path,*rest):
+        dispatched.append((method,path))
+        return {"complete":True,"status_code":403,"body":"Forbidden"}
+    monkeypatch.setattr(adapters,"_request",synthetic_request)
+    monkeypatch.setattr(adapters,"_pinned_address",lambda *args:"127.0.0.1")
+    class ContractRuntime:
+        async def run_case(self,manifest,case,**kwargs):
+            kwargs.pop("repetition",None)
+            kwargs.pop("lease_hook",None)
+            return await adapters.execute_case(manifest,case,**kwargs)
+    monkeypatch.setattr(engine,"runtime",lambda _:ContractRuntime())
+    await engine._blackbox(run)
+    if provenance=="operator":
+        assert dispatched==[("POST","/orders/private")]
+    else:
+        assert dispatched==[]
+        assert run["executions"][0]["status"]=="blocked"
+        assert run["usage"]["requests"]==0

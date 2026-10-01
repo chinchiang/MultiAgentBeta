@@ -26,6 +26,7 @@ MAX_RESPONSE_BYTES = 256 * 1024
 MAX_REQUEST_BYTES = 64 * 1024
 REQUEST_TIMEOUT_SECONDS = 10.0
 MAX_REPETITIONS = 20
+SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 _TRUSTED = {"adapter.http", "fixture.local", "collector.local"}
 _CREDENTIAL_ENV = re.compile(r"^VIBEAUDIT_[A-Z0-9_]+$")
 _HEADER_NAME = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
@@ -43,6 +44,21 @@ class AdapterBlocked(ValueError):
 
 class ResponseLimitError(ValueError):
     pass
+
+
+class OutcomeUnknown(ValueError):
+    """A state-changing request reached the target but its effect cannot be confirmed."""
+
+
+def state_changing(case: dict, *, operator_case: bool = True) -> bool:
+    """A case's own side_effects claim cannot make an unsafe HTTP method read-only.
+
+    PUT/PATCH/DELETE always change state. POST also serves search and chat, so
+    only an operator-written case may declare it free of side effects.
+    """
+    method = str(case.get("method", "GET")).upper()
+    return (bool(case.get("side_effects")) or method in {"PUT", "PATCH", "DELETE"}
+            or (method not in SAFE_METHODS and not operator_case))
 
 
 def _result(status, reason, observations=None, requests=0):
@@ -328,7 +344,7 @@ async def execute_case(manifest: dict, case: dict, *, cancel_event, request_hook
         return _result("blocked", "This adapter executes live HTTP only; synthetic demo execution belongs to the service.")
     if manifest.get("mode") != "live":
         return _result("blocked", "HTTP target requests require an explicitly live run.")
-    if case.get("side_effects"):
+    if state_changing(case):
         return _result("blocked", "Side-effecting cases require a sandbox effect collector and cleanup runner, which are not connected.")
     if request_hook is None:
         return _result("blocked", "The request budget/cancellation hook is required for live transport.")
@@ -388,6 +404,9 @@ async def execute_case(manifest: dict, case: dict, *, cancel_event, request_hook
             if _cancelled(cancel_event):
                 raise asyncio.CancelledError
             if response.get("redirect_blocked"):
+                if method not in SAFE_METHODS:
+                    # The target processed the request before answering; do not report it as unsent.
+                    raise OutcomeUnknown("Target answered a state-changing request with a redirect; its effect is unverified and redirects are never followed.")
                 raise AdapterBlocked("Target returned a redirect; redirects are never followed.")
             response["peer_ip"] = pinned
             return response, secrets
@@ -428,16 +447,18 @@ async def execute_case(manifest: dict, case: dict, *, cancel_event, request_hook
         return result
     except AdapterBlocked as exc:
         return _result("blocked", str(exc), observations, requests)
+    except OutcomeUnknown as exc:
+        return _result("outcome_unknown", str(exc), observations, requests)
     except ResponseLimitError as exc:
         return _result("inconclusive", str(exc), observations, requests)
     except asyncio.CancelledError:
         return _result("outcome_unknown" if requests else "blocked", "Execution was cancelled; dispatched requests are not automatically replayed.", observations, requests)
     except (TimeoutError, socket.timeout):
-        return _result("outcome_unknown" if requests and current_method == "POST" else "execution_error", "Target transport timed out; no success was inferred.", observations, requests)
+        return _result("outcome_unknown" if requests and current_method not in SAFE_METHODS else "execution_error", "Target transport timed out; no success was inferred.", observations, requests)
     except Exception:
         # Provider/HTTP exception strings may include request material. Never
         # return their text or traceback through an API or report.
-        return _result("outcome_unknown" if requests and current_method == "POST" else "execution_error", "Target transport failed; no success was inferred.", observations, requests)
+        return _result("outcome_unknown" if requests and current_method not in SAFE_METHODS else "execution_error", "Target transport failed; no success was inferred.", observations, requests)
 
 
 def scanner_plans(source_dir: str) -> list[dict]:

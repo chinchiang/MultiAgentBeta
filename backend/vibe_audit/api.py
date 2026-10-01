@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import secrets
 import time
 from contextlib import asynccontextmanager
@@ -27,7 +28,11 @@ LIMITATIONS=[
 ]
 
 
-def create_app(data_dir=None, database_url=None, testing=False):
+def create_app(data_dir=None, database_url=None, testing=False, session_token=None):
+    # Every local process can reach loopback, so only the operator's startup token opens a new session.
+    session_token=session_token or os.getenv("VIBEAUDIT_SESSION_TOKEN") or secrets.token_urlsafe(32)
+    if not re.fullmatch(r"[A-Za-z0-9_-]{32,256}",session_token):
+        raise ValueError("VIBEAUDIT_SESSION_TOKEN must be 32-256 URL-safe characters (A-Z a-z 0-9 _ -)")
     data_dir=data_dir or os.getenv("VIBEAUDIT_DATA_DIR",str(ROOT/".data"))
     database_url=database_url or os.getenv("VIBEAUDIT_DATABASE_URL")
     store=Store(data_dir,database_url)
@@ -54,6 +59,7 @@ def create_app(data_dir=None, database_url=None, testing=False):
     app=FastAPI(title="Vibe Audit",version="0.2.0",lifespan=lifespan,docs_url="/api/docs",openapi_url="/api/openapi.json")
     app.state.store=store
     app.state.engine=engine
+    app.state.session_token=session_token
     from .workspace_api import workspace_router
     app.include_router(workspace_router(store,engine,source_roots))
 
@@ -105,6 +111,8 @@ def create_app(data_dir=None, database_url=None, testing=False):
     async def session(request:Request):
         sid=request.cookies.get("vibeaudit_session")
         if sid not in sessions or sessions[sid]["expires"]<time.monotonic():
+            if not secrets.compare_digest(request.headers.get("x-vibeaudit-token","").encode(),session_token.encode()):
+                return JSONResponse({"detail":"Startup token required: open the URL printed when the local service started"},status_code=401)
             sid=secrets.token_urlsafe(32)
             sessions[sid]={"csrf":secrets.token_urlsafe(32),"expires":time.monotonic()+28800}
         response=JSONResponse({"csrf_token":sessions[sid]["csrf"],"mode":"local","limitations":LIMITATIONS})

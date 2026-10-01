@@ -101,8 +101,15 @@ def workspace_router(store, engine, source_roots):
         records = {a["id"]: a for a in run["artifacts"]}
         if not set(data.evidence_ids) <= records.keys():
             raise PolicyError("Counterevidence must belong to this run")
-        for key in data.evidence_ids:
-            store.evidence(records[key], run_id)
+        if set(data.evidence_ids) & set(finding["evidence_ids"]):
+            raise PolicyError("A finding's own evidence cannot be cited against it")
+        # Model reviews, scanner output and the source snapshot restate what produced the finding;
+        # only an observed black-box execution is independent of it.
+        if any(records[key]["producer"] != "blackbox-worker" for key in data.evidence_ids):
+            raise PolicyError("Counterevidence must be a black-box execution record")
+        statuses = [store.evidence(records[key], run_id)["content"]["result"]["status"] for key in data.evidence_ids]
+        if data.decision == "refuted" and "pass" not in statuses:
+            raise PolicyError("Refuting a finding needs an execution in which the security property held")
         entry = {**data.model_dump(), "at": now(), "actor": "local_operator", "previous_state": finding["state"]}
         finding.setdefault("decisions", []).append(entry)
         finding["state"] = data.decision

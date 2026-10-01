@@ -119,6 +119,13 @@ class Engine:
                     self.check_active(run)
                     run.setdefault("completed_stages",[]).append(stage)
                     self.store.save(run)
+                    if stage=="whitebox" and run.get("staging") and "discarded" not in run["staging"]:
+                        # Resume skips completed stages, so nothing reads the staged copy (and its secret files) again.
+                        from .staging import discard_staging
+                        run["staging"]["discarded"]=await asyncio.to_thread(discard_staging,run["staging"],self.store.root/"scanner-inputs")
+                        if not run["staging"]["discarded"]:
+                            self.event(run,"Scanner staging copy could not be removed: "+run["staging"]["path"],"warning")
+                        self.store.save(run)
                     return state
                 graph.add_node(stage,node)
                 graph.add_edge(previous,stage)
@@ -417,6 +424,9 @@ class Engine:
             commander=self.profile(run,"test_designer")
             data=await self.model(run,commander,'Return {"cases":[{id,threat_ids,requirement_id,title,adapter:"http"|"ai_http",method:"GET"|"POST",path,headers:{},body:null,identity:null,preconditions:[],oracle:{kind:"deny_sensitive"|"canary_absent"|"no_unauthorized_commit",forbidden_text:[],allowed_statuses:[],required_observations:["http_response"],expected_role:null},cleanup:null,side_effects:false,repetitions:1,observation_mode:"external_observation"}],"gaps":[]}. Use only provided fixtures and business requirements, do not invent canary values or authentication. No generic shell or arbitrary scripts. Mark untestable requirements in gaps.',{"threat_model":run["threat_model"],"target":run["manifest"]["target_url"],"requirements":run["manifest"]["notes"]})
             cases=data.get("cases",[])
+            # Overwrite any provenance the model claims; retests carry it into their copied manifest cases.
+            for case in cases:
+                case["designed_by"]="model"
             run["gaps"].extend(data.get("gaps",[]))
             run["reserved_tokens"]=0
         for case in cases:
@@ -441,7 +451,7 @@ class Engine:
         self.event(run,f"Validated {len(cases)} cases with threat links and executable oracles")
 
     async def _blackbox(self,run):
-        from .adapters import evaluate_oracle
+        from .adapters import evaluate_oracle,state_changing
         # Reissue bounded capabilities only after revalidating every artifact on resume.
         self.policy.case_gate(run)
         for case in run["cases"]:
@@ -451,9 +461,12 @@ class Engine:
                     continue
                 self.check_active(run)
                 job_id=self.store.job(run["id"],case)
+                # Model-designed cases cannot declare an unsafe request free of side effects.
+                operator_case=case.get("designed_by")!="model" and any(c.get("id")==case["id"] for c in run["manifest"]["cases"])
+                side_effects=state_changing(case,operator_case=operator_case)
                 async def request_hook(*args,**kwargs):
                     self.policy.authorize(run,case,self.cancel_flags[run["id"]],method=kwargs.get("method"),path=kwargs.get("path"),identity=kwargs.get("identity"))
-                    self.store.update_job(job_id,"sent",{"case_hash":case["hash"],"side_effects":case.get("side_effects",False),"sent_at":now()})
+                    self.store.update_job(job_id,"sent",{"case_hash":case["hash"],"side_effects":side_effects,"sent_at":now()})
                     self.store.save(run)
                 if run["mode"]=="demo":
                     await request_hook()
@@ -474,7 +487,7 @@ class Engine:
                     elif case["adapter"] in {"zap","schemathesis","playwright","promptfoo","pyrit"}:
                         from .tool_runners import run_tool
                         result=await run_tool(runtime,case["adapter"],manifest,case,cancel_event=self.cancel_flags[run["id"]],request_hook=request_hook,lease_hook=lease_hook,repetition=repetition)
-                    elif case.get("side_effects"):
+                    elif side_effects:
                         result={"status":"blocked","reason":"A state-changing case needs a registered reset/cleanup fixture protocol","observations":[],"evidence":[],"requests":0}
                     else:
                         result=await runtime.run_case(manifest,case,cancel_event=self.cancel_flags[run["id"]],request_hook=request_hook,lease_hook=lease_hook,repetition=repetition)

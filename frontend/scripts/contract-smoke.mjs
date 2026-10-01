@@ -14,10 +14,13 @@ const args = process.argv.slice(2);
 assert(args.length === 0 || (args.length === 2 && args[0] === '--base-url'), 'Usage: npm run smoke -- --base-url http://127.0.0.1:8000');
 const base = new URL(args[1] || 'http://127.0.0.1:8000');
 assert(['127.0.0.1', '[::1]'].includes(base.hostname) && base.protocol === 'http:' && !base.username && !base.password && base.pathname === '/' && !base.search && !base.hash, 'Smoke accepts only an explicit numeric loopback HTTP origin.');
+// Start the backend with the same VIBEAUDIT_SESSION_TOKEN, or copy the token from its printed URL.
+const token = process.env.VIBEAUDIT_SESSION_TOKEN || '';
+assert(token, 'Set VIBEAUDIT_SESSION_TOKEN to the startup token printed by the local service.');
 let cookie = '';
 let csrf = '';
 async function request(path, body) {
-  const headers = { Accept: 'application/json', ...(cookie ? { Cookie: cookie } : {}) };
+  const headers = { Accept: 'application/json', ...(cookie ? { Cookie: cookie } : {}), ...(path === '/session' ? { 'X-VibeAudit-Token': token } : {}) };
   if (body !== undefined) Object.assign(headers, { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf, Origin: base.origin });
   const response = await fetch(new URL(`/api${path}`, base), {
     method: body === undefined ? 'GET' : 'POST', headers,

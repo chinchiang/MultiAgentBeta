@@ -1,13 +1,16 @@
 /* Optional browser E2E. Provide an installed Playwright module with
  * VIBEAUDIT_PLAYWRIGHT_MODULE (default: playwright) and optionally an Edge/
  * Chromium executable via VIBEAUDIT_BROWSER_EXECUTABLE. No downloads occur.
- * VIBEAUDIT_TEST_BASE_URL defaults to http://127.0.0.1:8000.
+ * VIBEAUDIT_TEST_BASE_URL defaults to http://127.0.0.1:8000. VIBEAUDIT_SESSION_TOKEN
+ * must hold the startup token printed by the backend.
  * Run after starting the backend. This creates a labeled synthetic demo run.
  */
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { chromium } = require(process.env.VIBEAUDIT_PLAYWRIGHT_MODULE || 'playwright');
 const base = new URL(process.env.VIBEAUDIT_TEST_BASE_URL || 'http://127.0.0.1:8000');
+const token = process.env.VIBEAUDIT_SESSION_TOKEN || '';
+assert(token, 'Set VIBEAUDIT_SESSION_TOKEN to the startup token printed by the local service.');
 assert(base.protocol === 'http:' && ['127.0.0.1', '[::1]'].includes(base.hostname) && !base.username && !base.password && base.pathname === '/' && !base.search && !base.hash, 'Only an explicit numeric loopback origin is accepted');
 async function main() {
   const options = {headless: true};
@@ -18,7 +21,7 @@ async function main() {
     page.setDefaultTimeout(45000);
     const errors = [];
     page.on('pageerror', e => errors.push(e.message));
-    await page.goto(base.origin);
+    await page.goto(`${base.origin}/#token=${encodeURIComponent(token)}`);
     await page.getByRole('button', {name: '新建評估', exact: true}).first().click();
     await page.getByLabel('評估名稱', {exact: true}).fill('瀏覽器完整流程驗收');
     await page.getByLabel('專案識別', {exact: true}).fill('browser-contract-project');
