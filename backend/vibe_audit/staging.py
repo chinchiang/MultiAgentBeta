@@ -5,6 +5,8 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
+import shutil
 import stat
 import uuid
 
@@ -38,6 +40,8 @@ def stage_source(source_path: str, private_root: str | Path, *, expected_snapsho
     private.mkdir(parents=True, exist_ok=True, mode=0o700)
     if not _safe_ancestors(private) or private == source or private.is_relative_to(source):
         raise ValueError("Private scanner staging must be outside the source tree")
+    # mkdir's mode is ignored for an existing directory, and it holds every staged secret file.
+    os.chmod(private, 0o700)
     target = private / uuid.uuid4().hex
     target.mkdir(mode=0o755)
     entries, total = [], 0
@@ -85,6 +89,26 @@ def stage_source(source_path: str, private_root: str | Path, *, expected_snapsho
                 raise ValueError("Source changed between model intake and scanner snapshot")
     checksum = hashlib.sha256(json.dumps(entries, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     return {"path": str(target), "digest": checksum, "files": entries, "omitted": omitted, "bytes": total}
+
+
+def remove_private_tree(path: str | Path) -> bool:
+    """Delete a private working copy, including its read-only files; report rather than raise on failure."""
+    def writable(function, target, _):
+        os.chmod(target, stat.S_IWRITE)
+        function(target)
+    try:
+        shutil.rmtree(path, onexc=writable)
+    except OSError:
+        return False
+    return True
+
+
+def discard_staging(record: dict, private_root: str | Path) -> bool:
+    """A staged copy holds the repository's secret files for the scanners, so it must not outlive them."""
+    root = Path(record["path"])
+    if root.parent != Path(private_root).absolute() or not re.fullmatch(r"[0-9a-f]{32}", root.name) or _linklike(root):
+        raise ValueError("Refusing to delete a path outside private scanner staging")
+    return remove_private_tree(root)
 
 
 def verify_staging(record: dict) -> bool:

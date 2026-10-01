@@ -13,15 +13,15 @@ npm run typecheck
 npm run build
 ```
 
-建置檔案在 `dist/`。正常使用時由 FastAPI 在同一個本地 origin 提供前端；啟動後端後開啟 `http://127.0.0.1:8000`。
+建置檔案在 `dist/`。正常使用時由 FastAPI 在同一個本地 origin 提供前端；啟動後端後開啟它印出的 `http://127.0.0.1:8000/#token=…`。
 
-開發模式使用 `npm run dev`，預設 `http://127.0.0.1:5173`，`/api` 代理到 `127.0.0.1:8000`。後端需先設定 `VIBEAUDIT_UI_ORIGINS=http://127.0.0.1:5173`。代理保留原 Host 與 Origin，不繞過後端的來源檢查。不要公開綁定 `0.0.0.0`。
+開發模式使用 `npm run dev`，預設 `http://127.0.0.1:5173`，`/api` 代理到 `127.0.0.1:8000`。後端需先設定 `VIBEAUDIT_UI_ORIGINS=http://127.0.0.1:5173`，並開啟 `http://127.0.0.1:5173/#token=…`（使用後端印出的權杖）。代理保留原 Host 與 Origin，不繞過後端的來源檢查。不要公開綁定 `0.0.0.0`。
 
 `npm run preview` 只用於檢查靜態建置，不提供後端 API 代理；完整使用請由 FastAPI 提供 `dist/`。
 
 ## 實際連線行為
 
-- 啟動取得 `/api/session` 和 HttpOnly session cookie；所有 POST 加上回傳的 `X-CSRF-Token`。
+- 啟動時從網址 fragment 取出啟動權杖（只存在記憶體並自網址移除），以 `X-VibeAudit-Token` 呼叫 `/api/session` 取得 HttpOnly session cookie；所有 POST 加上回傳的 `X-CSRF-Token`。
 - 建立評估依序呼叫 `POST /api/runs`、`POST /api/runs/{id}/start`。
 - SSE `progress` / `done` 更新進度，執行中每 2.5 秒再同步一次狀態。執行結束後停止更新。
 - 可啟動、取消及嘗試恢復。是否允許恢復由後端重新驗證閘門決定。
@@ -52,6 +52,6 @@ npm run build
 
 ## 自動契約驗證
 
-後端啟動後執行 `npm run smoke`，或 `npm run smoke -- --base-url http://127.0.0.1:8000`。只接受數字 loopback HTTP origin，會留下明確標示的合成評估紀錄。
+後端啟動後，設定 `VIBEAUDIT_SESSION_TOKEN` 為後端的啟動權杖再執行 `npm run smoke`，或 `npm run smoke -- --base-url http://127.0.0.1:8000`。只接受數字 loopback HTTP origin，會留下明確標示的合成評估紀錄。
 
 此檢查實際建立與啟動 demo，驗證三份合成 review、`pass/fail/inconclusive` 結果、所有證據讀取、三種報告，再使用真實 Run 資料渲染 React 的五個報告分頁，並驗證不可信 HTML 以文字跳脫。這是 API 與 React SSR 整合測試；不包含瀏覽器點擊、視覺截圖、SSE 重連或真實 LLM／目標驗證。表單互動與窄螢幕仍需依上述功能驗收步驟檢查。

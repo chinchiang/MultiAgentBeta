@@ -13,7 +13,7 @@ from vibe_audit.contracts import complete_requirements, verify_source_references
 from vibe_audit.domain import RunInput
 from vibe_audit.policy import PolicyError, sealed
 from vibe_audit.service import Engine
-from vibe_audit.staging import stage_source, verify_staging
+from vibe_audit.staging import discard_staging, stage_source, verify_staging
 from vibe_audit.store import Store
 
 
@@ -59,6 +59,44 @@ def test_scanner_snapshot_raw_secret_stays_private_and_detects_added_files(tmp_p
     assert verify_staging(record)
     (Path(record["path"])/"injected.py").write_text("print('unreviewed')")
     assert not verify_staging(record)
+
+
+def test_scanner_staging_root_is_private_and_copy_is_discarded(tmp_path):
+    source=tmp_path/"source"
+    (source/"pkg").mkdir(parents=True)
+    (source/"pkg"/"app.py").write_text("value = input()\n")
+    (source/".env").write_text("SYNTHETIC_SECRET=sentinel-local-fixture\n")
+    private=tmp_path/"private"
+    private.mkdir(mode=0o755)
+    record=stage_source(str(source),private)
+    if os.name=="posix":
+        assert private.stat().st_mode & 0o777==0o700
+    with pytest.raises(ValueError,match="outside private scanner staging"):
+        discard_staging({"path":str(source)},private)
+    assert (source/".env").exists()
+    # Staged files are read-only; removal still succeeds.
+    assert discard_staging(record,private)
+    assert not Path(record["path"]).exists() and private.exists()
+
+
+async def test_staged_copy_is_discarded_once_whitebox_stage_completes(tmp_path):
+    store=Store(tmp_path)
+    try:
+        engine=Engine(store)
+        run=engine.create(RunInput(name="Staging lifetime"))
+        source=tmp_path/"source"
+        source.mkdir()
+        (source/".env").write_text("SYNTHETIC_SECRET=sentinel-local-fixture\n")
+        run["staging"]=stage_source(str(source),store.root/"scanner-inputs")
+        store.save(run)
+        engine.start(run["id"])
+        await engine.tasks[run["id"]]
+        result=store.get(run["id"])
+        assert result["stage"]=="complete",result.get("error")
+        assert result["staging"]["discarded"] is True
+        assert not Path(run["staging"]["path"]).exists()
+    finally:
+        store.close()
 
 
 async def test_trace_graph_and_requirement_gate(tmp_path):
@@ -107,7 +145,7 @@ async def test_graph_and_job_commit_rollback_is_atomic(tmp_path,monkeypatch,back
 def test_workspace_settings_catalog_and_linked_retest(tmp_path):
     app=create_app(tmp_path,testing=True)
     with TestClient(app) as client:
-        csrf=client.get("/api/session").json()["csrf_token"]
+        csrf=client.get("/api/session",headers={"X-VibeAudit-Token":app.state.session_token}).json()["csrf_token"]
         headers={"x-csrf-token":csrf}
         profile={"id":"commander","role":"commander","provider":"openai","model_id":"operator-selects-model","family":"openai","endpoint":"https://api.openai.com/v1","credential_env":"VIBEAUDIT_OPENAI_KEY"}
         assert client.put("/api/models/commander",json=profile,headers=headers).status_code==200
@@ -128,6 +166,39 @@ def test_workspace_settings_catalog_and_linked_retest(tmp_path):
         assert child["manifest"]["parent_run_id"]==run["id"]
         assert child["status"]=="created" and child["executions"]==[]
         assert len(child["manifest"]["cases"])==3
+
+
+def test_finding_decision_needs_independent_execution_evidence(tmp_path):
+    app=create_app(tmp_path,testing=True)
+    with TestClient(app) as client:
+        csrf=client.get("/api/session",headers={"X-VibeAudit-Token":app.state.session_token}).json()["csrf_token"]
+        headers={"x-csrf-token":csrf}
+        _,run=client.portal.call(demo,app.state.store)
+        finding=next(f for f in run["findings"] if f["agent_ids"]==["blackbox-worker"])
+        execution={x["status"]:x["evidence_id"] for x in run["executions"]}
+        producers={a["id"]:a["producer"] for a in run["artifacts"]}
+        snapshot=next(key for key,producer in producers.items() if producer=="source-snapshot")
+        review=next(key for key,producer in producers.items() if producer=="reviewer-a")
+        url=f"/api/runs/{run['id']}/findings/{finding['id']}/decision"
+        def decide(decision,*evidence):
+            return client.post(url,json={"decision":decision,"rationale":"Operator retest","evidence_ids":list(evidence)},headers=headers)
+        for decision,evidence,reason in [
+                ("refuted",finding["evidence_ids"],"own evidence"),
+                ("refuted",[snapshot],"black-box execution"),
+                ("inconclusive",[review],"black-box execution"),
+                ("refuted",[execution["pass"],snapshot],"black-box execution"),
+                ("refuted",[execution["inconclusive"]],"security property held"),
+                ("refuted",[str(uuid.uuid4())],"belong to this run")]:
+            response=decide(decision,*evidence)
+            assert response.status_code==409 and reason in response.json()["detail"],response.text
+        assert app.state.store.get(run["id"])["findings"]==run["findings"]
+        response=decide("inconclusive",execution["inconclusive"])
+        assert response.status_code==200,response.text
+        response=decide("refuted",execution["pass"],execution["inconclusive"])
+        assert response.status_code==200,response.text
+        decided=next(f for f in response.json()["findings"] if f["id"]==finding["id"])
+        assert decided["state"]=="refuted"
+        assert [d["previous_state"] for d in decided["decisions"]]==["validated_dynamic","inconclusive"]
 
 
 async def test_postgres_checkpoints_and_resume_do_not_duplicate_executions(tmp_path):

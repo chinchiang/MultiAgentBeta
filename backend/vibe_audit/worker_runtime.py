@@ -20,6 +20,7 @@ import tempfile
 import uuid
 
 from .lease import LeaseStore,LeaseError,canonical_hash
+from .staging import remove_private_tree
 
 HERE=Path(__file__).resolve().parent
 IMAGE=re.compile(r"(?:[A-Za-z0-9._:/-]+@)?sha256:[a-f0-9]{64}\Z")
@@ -64,7 +65,73 @@ def _client_env(manifest):
     return result
 
 
-def docker_command(*,prefix,image,name,phase,inputs,out,broker,runtime=HERE,source_dir=None,offline_db_dir=None):
+def redact_credentials(value,manifest):
+    """Remove every configured target and model credential, raw or JSON-escaped, from a worker result."""
+    found=set()
+    for profile in [*manifest.get("auth_profiles",[]),*manifest.get("models",[])]:
+        key=profile.get("credential_env","")
+        if isinstance(key,str) and re.fullmatch(r"VIBEAUDIT_[A-Z0-9_]+",key) and os.environ.get(key):
+            found.update({os.environ[key],json.dumps(os.environ[key])[1:-1]})
+    # Longest first, so a credential that contains another is not left half visible.
+    values=sorted(found,key=len,reverse=True)
+    def redact(item):
+        if isinstance(item,str):
+            for secret in values: item=item.replace(secret,"[REDACTED_CREDENTIAL]")
+        elif isinstance(item,bytes):
+            for secret in values: item=item.replace(secret.encode(),b"[REDACTED_CREDENTIAL]")
+        elif isinstance(item,list): return [redact(v) for v in item]
+        elif isinstance(item,dict): return {k:redact(v) for k,v in item.items()}
+        return item
+    return redact(value) if values else value
+
+
+def supervised_verdict(case,result):
+    """Re-evaluate an HTTP case from the supervisor's records; the worker's own verdict is only a claim."""
+    from .adapters import evaluate_oracle
+    if result.get("status") not in {"pass","fail","inconclusive"}:
+        return result
+    def same(step,row):
+        return (step.get("method","GET"),step.get("path"),step.get("identity"))==(row.get("method"),row.get("path"),row.get("identity"))
+    controls=[p for p in case.get("preconditions",[]) if isinstance(p,dict)]
+    observations=[]
+    for row in result.get("broker_observations",[]):
+        common={"provenance":"adapter.http","case_id":case["id"],"status_code":row.get("status_code"),"recorded_by":"supervisor"}
+        if row.get("case_id")!=case["id"]:
+            continue
+        # The supervisor binds a request to the case before its preconditions, so this order matches its own.
+        if same(case,row):
+            observations.append({**common,"kind":"http_response","body":row.get("body",""),"complete":row.get("complete") is True,"peer_ip":row.get("peer_ip")})
+        elif control:=next((p for p in controls if same(p,row)),None):
+            matched=(row.get("complete") is True and row.get("status_code")==control.get("expected_status")
+                     and isinstance(row.get("body"),str) and all(text in row["body"] for text in control.get("required_text",[])))
+            observations.append({**common,"kind":"precondition","name":control.get("name"),"value":matched,
+                                 "matched_text_sha256":[hashlib.sha256(text.encode()).hexdigest() for text in control.get("required_text",[])] if matched else []})
+    verdict=evaluate_oracle(case,observations)
+    worker=result["status"]
+    # A leak the supervisor recorded stands on its own; a pass needs both sides to agree.
+    status=verdict["status"] if verdict["status"] in {worker,"fail"} else "inconclusive"
+    reason=verdict["reason"] if status==verdict["status"] else "The worker's verdict and the supervisor's records disagree; no pass is reported."
+    return {**result,"status":status,"reason":reason,"worker_status":worker,"worker_reason":result.get("reason"),
+            "worker_observations":result.get("observations",[]),"observations":observations}
+
+
+def supervised_sequence(spec,result):
+    """Each response a sequence worker reports must be the one the supervisor recorded for that step."""
+    rows,records=result.get("observations",[]),result.get("broker_observations",[])
+    mismatch={**result,"status":"execution_error","reason":"Worker-reported responses differ from the supervisor's records"}
+    for index,row in enumerate(rows):
+        if index<len(records) and (row.get("status_code"),row.get("body"))==(records[index].get("status_code"),records[index].get("body")):
+            continue
+        # The relay answers a request the supervisor refused with 502, which ends the sequence unfinished.
+        if index==len(rows)-1 and row.get("status_code")==502 and result.get("status")!="completed":
+            continue
+        return mismatch
+    if result.get("status")=="completed" and not len(rows)==len(records)==len(spec.get("requests",[])):
+        return mismatch
+    return result
+
+
+def docker_command(*,prefix,image,name,phase,inputs,broker,runtime=HERE,source_dir=None,offline_db_dir=None):
     if not IMAGE.fullmatch(image) or not re.fullmatch(r"vibeaudit-worker-[a-f0-9]{32}",name):
         raise WorkerBlocked("An immutable image digest and generated worker name are required")
     if phase not in {"whitebox","blackbox"} or (phase=="blackbox" and source_dir):
@@ -74,8 +141,10 @@ def docker_command(*,prefix,image,name,phase,inputs,out,broker,runtime=HERE,sour
           "--cap-drop","ALL","--security-opt","no-new-privileges","--read-only","--pids-limit","128",
           "--memory","1g","--memory-swap","1g","--cpus","1","--ulimit","nofile=256:256","--log-driver","none",
           "--tmpfs","/tmp:rw,nosuid,nodev,size=256m,mode=1777","--workdir","/tmp",
+          # Only the worker reads /out back, so a bounded tmpfs replaces a world-writable host directory.
+          "--tmpfs","/out:rw,nosuid,nodev,noexec,size=64m,mode=1777",
           "--env","HOME=/tmp","--env","PYTHONDONTWRITEBYTECODE=1","--env","PROMPTFOO_DISABLE_TELEMETRY=1"]
-    for path,target,readonly in [(inputs,"/inputs",True),(out,"/out",False),(broker,"/broker",True),(runtime,"/runtime",True)]:
+    for path,target,readonly in [(inputs,"/inputs",True),(broker,"/broker",True),(runtime,"/runtime",True)]:
         source=str(Path(path).resolve(strict=True))
         if any(c in source for c in ",\r\n\0"): raise WorkerBlocked("Unsupported bind mount path")
         argv += ["--mount",f"type=bind,source={source},target={target},bind-propagation=rprivate"+(",readonly,bind-recursive=readonly" if readonly else "")]
@@ -198,6 +267,7 @@ class WorkerRuntime:
         capability=await self.capabilities()
         if not capability.get("available"):
             return {"status":"blocked","reason":capability["reason"],"cleanup_confirmed":True}
+        private=proc=None
         try:
             spec,files=self._normalize(spec,manifest)
             if cancel_event is not None and cancel_event.is_set(): raise WorkerBlocked("Run was cancelled")
@@ -207,7 +277,7 @@ class WorkerRuntime:
                 raise WorkerBlocked("Provision a trusted immutable worker image digest")
             private=Path(tempfile.mkdtemp(prefix="w-",dir=self.root));os.chmod(private,0o700)
             inputs=private/"inputs";out=private/"out";broker=private/"broker"
-            for directory,mode in [(inputs,0o755),(out,0o777),(broker,0o711)]: directory.mkdir();os.chmod(directory,mode)
+            for directory,mode in [(inputs,0o755),(out,0o700),(broker,0o711)]: directory.mkdir();os.chmod(directory,mode)
             for name,data in files.items():
                 path=inputs/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(data);os.chmod(path,0o444)
             worker_id=uuid.uuid4().hex;name="vibeaudit-worker-"+worker_id
@@ -218,7 +288,7 @@ class WorkerRuntime:
                                   max_requests=min(spec.get("max_requests",100),manifest.get("budget",{}).get("max_requests",100)),
                                     ttl_seconds=self.ttl,max_seconds=spec["timeout_seconds"],operation=spec["tool_id"]+(":"+spec["task_stage"] if spec.get("task_stage") in {"setup","cleanup"} else ""),repetition=repetition,spec_hash=canonical_hash(spec))
             prefix=[self.docker,"--host","unix:///var/run/docker.sock"] if self.backend=="docker" else []
-            argv=docker_command(prefix=prefix,image=image,name=name,phase=spec["phase"],inputs=inputs,out=out,broker=broker,source_dir=spec.get("source_dir"),offline_db_dir=spec.get("offline_db_dir")) if self.backend=="docker" else [sys.executable,"-I",str(HERE/"worker_entry.py"),"worker",str(inputs/"_worker_task.json")]
+            argv=docker_command(prefix=prefix,image=image,name=name,phase=spec["phase"],inputs=inputs,broker=broker,source_dir=spec.get("source_dir"),offline_db_dir=spec.get("offline_db_dir")) if self.backend=="docker" else [sys.executable,"-I",str(HERE/"worker_entry.py"),"worker",str(inputs/"_worker_task.json")]
             # Only the supervisor receives target credential references; the
             # worker task file contains cases/specification and relay access.
             narrow={k:manifest[k] for k in ("run_id","mode","target_url","allowed_target_ips","allowed_requests","auth_profiles","budget","deployment_id","deployment_header") if k in manifest}
@@ -288,23 +358,22 @@ class WorkerRuntime:
             if result is None:
                 self.leases.revoke(cap["id"],"No verified supervisor result")
                 result={"status":"outcome_unknown","reason":"No complete worker result; do not replay","cleanup_confirmed":False,"task_id":cap["task_id"]}
-            for profile in manifest.get("auth_profiles",[]):
-                secret=os.environ.get(profile.get("credential_env",""),"")
-                if secret:
-                    def redact(value):
-                        if isinstance(value,str): return value.replace(secret,"[REDACTED_CREDENTIAL]")
-                        if isinstance(value,list): return [redact(v) for v in value]
-                        if isinstance(value,dict): return {k:redact(v) for k,v in value.items()}
-                        return value
-                    result=redact(result)
+            if result.get("cleanup_confirmed") is True and proc.returncode is not None:
+                # The worker is gone; its inputs, outputs and unredacted supervisor record must not stay on disk.
+                result["work_dir_removed"]=remove_private_tree(private)
+            # Decode first: a credential inside a base64 tool artifact is invisible to text redaction.
             if isinstance(result.get("artifacts"),dict):
                 result["artifacts"]={k:base64.b64decode(v) for k,v in result["artifacts"].items()}
-            return result
+            if spec.get("operation")=="request_sequence":
+                result=supervised_sequence(spec,result)
+            return redact_credentials(result,manifest)
         except (WorkerBlocked,LeaseError,ValueError,OSError) as exc:
+            # Refused before any supervisor started, so nothing else can still be using the work directory.
+            if private and proc is None: remove_private_tree(private)
             return {"status":"blocked","reason":str(exc),"cleanup_confirmed":True}
 
     async def run_case(self,manifest,case,*,cancel_event,request_hook,lease_hook=None,repetition=0):
-        return await self.execute_tool({"operation":"http_case","tool_id":"http_case","cases":[case],"phase":"blackbox", "timeout_seconds":min(120,manifest.get("budget",{}).get("max_seconds",120))},manifest=manifest,cancel_event=cancel_event,request_hook=request_hook,lease_hook=lease_hook,repetition=repetition)
+        return supervised_verdict(case,await self.execute_tool({"operation":"http_case","tool_id":"http_case","cases":[case],"phase":"blackbox", "timeout_seconds":min(120,manifest.get("budget",{}).get("max_seconds",120))},manifest=manifest,cancel_event=cancel_event,request_hook=request_hook,lease_hook=lease_hook,repetition=repetition))
 
     async def run_scanner(self,scanner_id,source_dir,*,manifest,cancel_event,request_hook=None,lease_hook=None,image_pin=None,offline_db_dir=None):
         from .sandbox import _parse

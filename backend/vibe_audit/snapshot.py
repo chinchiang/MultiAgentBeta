@@ -19,16 +19,25 @@ MAX_TOTAL_BYTES = 384 * 1024
 MAX_ENTRIES = 5000
 MAX_DEPTH = 12
 MAX_GAPS = 256
-_SKIP_DIRS = {".git", ".hg", ".svn", "node_modules", ".venv", "venv", "env", "dist", "build", ".next", ".cache", "__pycache__", ".idea", ".vscode", ".ssh", ".aws", ".azure", ".config"}
+_SKIP_DIRS = {".git", ".hg", ".svn", "node_modules", ".venv", "venv", "env", "dist", "build", ".next", ".cache", "__pycache__", ".idea", ".vscode", ".ssh", ".aws", ".azure", ".config", ".docker", ".kube", ".gnupg", ".terraform"}
 _TEXT_SUFFIXES = {".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json", ".yaml", ".yml", ".toml", ".md", ".html", ".css", ".sql", ".txt", ".go", ".rs", ".java", ".cs", ".php", ".rb", ".tf", ".sh", ".ps1"}
 _SECRET_SUFFIXES = {".pem", ".key", ".p12", ".pfx", ".jks", ".keystore", ".kdbx", ".crt", ".cer"}
 _SECRET_NAMES = {"credentials", "credentials.json", "credential.json", "secrets.json", "secrets.yaml", "secrets.yml", "id_rsa", "id_ed25519", "id_ecdsa", "id_dsa", ".npmrc", ".pypirc", ".netrc", "service-account.json", "service_account.json"}
-_PRIVATE_KEY = re.compile(r"-----BEGIN [^-\r\n]*PRIVATE KEY-----.*?(?:-----END [^-\r\n]*PRIVATE KEY-----|\Z)", re.S)
-_SECRET_ASSIGNMENT = re.compile(r'''(?im)(["']?(?:[A-Za-z0-9_]*?(?:api[_-]?key|password|passwd|secret|access[_-]?token|auth[_-]?token|client[_-]?secret|private[_-]?key))["']?\s*[:=]\s*)(["'])([^\r\n]*?)(\2)''')
-_UNQUOTED_SECRET = re.compile(r"(?im)^(\s*[A-Za-z0-9_.-]*(?:api[_-]?key|password|passwd|secret|access[_-]?token|client[_-]?secret)\s*[:=]\s*)([^\r\n#]+)")
-_KNOWN_SECRET = re.compile(r"\b(?:sk-(?:proj-|ant-)?[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[A-Z0-9]{16})\b")
+_PRIVATE_KEY = re.compile(r"-----BEGIN [^-\r\n]*PRIVATE KEY(?: BLOCK)?-----.*?(?:-----END [^-\r\n]*PRIVATE KEY(?: BLOCK)?-----|\Z)", re.S)
+_SECRET_WORDS = r"api[_-]?key|password|passwd|secret|access[_-]?token|auth[_-]?token|refresh[_-]?token|client[_-]?secret|private[_-]?key"
+# SECRET_KEY / SECRET_KEY_BASE style names; password_hash and similar code stay readable for reviewers.
+_KEY_SUFFIX = r"(?:[_-]?key(?:[_-]?base)?)?"
+_SECRET_ASSIGNMENT = re.compile(rf'''(?im)(["']?(?:[A-Za-z0-9_]*?(?:{_SECRET_WORDS}|token){_KEY_SUFFIX})["']?\s*[:=]\s*)(["'])([^\r\n]*?)(\2)''')
+_UNQUOTED_SECRET = re.compile(rf"(?im)^(\s*[A-Za-z0-9_.-]*?(?:{_SECRET_WORDS}){_KEY_SUFFIX}\s*[:=]\s*)([^\r\n#]+)")
+# Shell, Dockerfile and batch declarations hold literal values, so any secret-like name counts.
+_ENV_DECLARATION = re.compile(rf"(?im)^(\s*(?:export|ENV|ARG|set|setx)\s+[A-Za-z0-9_.-]*?(?:{_SECRET_WORDS}|token)[A-Za-z0-9_]*\s*=\s*)([^\r\n#]+)")
+_DEFINE_SECRET = re.compile(rf'''(?i)(\bdefine\(\s*(["'])[A-Za-z0-9_]*?(?:{_SECRET_WORDS}|token)[A-Za-z0-9_]*\2\s*,\s*)(["'])([^\r\n]*?)(\3)''')
+_CONNECTION_PASSWORD = re.compile(r'''(?im)((?:^|[;"'])\s*(?:password|pwd)\s*=\s*)([^;"'\r\n]+)''')
+_AUTH_FIELD = re.compile(r'''(?i)(["'](?:auth|identitytoken|registrytoken)["']\s*:\s*)(["'])([^"'\r\n]*)(\2)''')
+_KNOWN_SECRET = re.compile(r"\b(?:sk-(?:proj-|ant-)?[A-Za-z0-9_-]{16,}|[sr]k_(?:live|test)_[A-Za-z0-9]{16,}|gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{20,}|xox[abposr]-[A-Za-z0-9-]{10,}|AKIA[A-Z0-9]{16}|AIza[0-9A-Za-z_-]{35}|npm_[A-Za-z0-9]{36}|eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})\b")
 _BEARER = re.compile(r"(?i)\b(Bearer\s+)[A-Za-z0-9._~+/=-]{8,}")
-_URL_AUTH = re.compile(r"(?i)(https?://)[^/\s:@]+:[^/\s@]+@")
+# Any scheme: postgres://, mongodb+srv://, redis://:password@ and so on.
+_URL_AUTH = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://)[^/\s:@]*:[^/\s@]+@")
 
 
 def redact_text(text: str) -> str:
@@ -36,6 +45,10 @@ def redact_text(text: str) -> str:
     text = _PRIVATE_KEY.sub("[REDACTED_PRIVATE_KEY]", text)
     text = _SECRET_ASSIGNMENT.sub(lambda m: m[1] + m[2] + "[REDACTED]" + m[4], text)
     text = _UNQUOTED_SECRET.sub(lambda m: m[1] + "[REDACTED]", text)
+    text = _ENV_DECLARATION.sub(lambda m: m[1] + "[REDACTED]", text)
+    text = _DEFINE_SECRET.sub(lambda m: m[1] + m[3] + "[REDACTED]" + m[5], text)
+    text = _CONNECTION_PASSWORD.sub(lambda m: m[1] + "[REDACTED]", text)
+    text = _AUTH_FIELD.sub(lambda m: m[1] + m[2] + "[REDACTED]" + m[4], text)
     text = _KNOWN_SECRET.sub("[REDACTED_TOKEN]", text)
     text = _BEARER.sub(lambda m: m[1] + "[REDACTED]", text)
     return _URL_AUTH.sub(lambda m: m[1] + "[REDACTED]@", text)

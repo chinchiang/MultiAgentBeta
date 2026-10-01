@@ -15,4 +15,4 @@ try {
     npm.cmd run build
     if ($LASTEXITCODE -ne 0) { throw 'Frontend build failed.' }
 } finally { Pop-Location }
-Write-Output 'Setup complete. Run scripts\start-local.ps1 and open http://127.0.0.1:8000'
+Write-Output 'Setup complete. Run scripts\start-local.ps1 and open the printed http://127.0.0.1:8000/#token=... URL'
