@@ -24,6 +24,8 @@ python -m vibe_audit.benchmark --mode local_tools --output benchmarks/results-lo
 
 正式 gold 需要兩位獨立且具名的人工 reviewer、明確 positive／negative issue IDs、oracle_verified 與 evidence references，並標示 synthetic=false。聲明本身不代替人工工作；正式研究還須保留 reviewer 原始記錄、分歧仲裁、oracle 執行證據與不可變樣本 digest。模型的未知 finding 必須先做人類盲審 matching，不能用標準分類 ID 直接當成漏洞同一性。
 
+已知限制：runner 不提供人工裁定流程。human_reviewed、reviewers 與 oracle_evidence 是宣告欄位，只檢查格式（至少兩個不同姓名、證據清單非空），不能證明審核確實發生；未知 finding 列於 `unadjudicated_ids`，沒有盲審 matching 介面可回填為 TP／FP，因此 precision 維持 null。上述審核、分歧仲裁與 matching 須在工具外完成後再產生新的 gold。
+
 隨附 gold 的 human_reviewed=false，所有品質指標只放在 `preview_metrics`，正式 `metrics=null`。模型組在 local_tools／live 的 blocked 情境不填零品質分數，以免把未測當成漏報。
 
 ## 指標定義與限制

@@ -64,6 +64,8 @@ sample-report.json / .md 是實際本地合成 demo 的匯出。它刻意包含�
 
 benchmarks/results-synthetic 有七組、每組六件的 42 次合成比較，用於驗證預算、分組、記錄與指標管線。results-local 的本地 AST 基線實際讀取樣本；沒有模型端點的組別明列 blocked。沒有人工核定的完整 ground truth 與真模型輸出時，正式 efficacy metrics 保持 null，不發布減偏或 recall 改善結論。
 
+已知限制：runner 不提供人工裁定流程。gold 的 human_reviewed、reviewers 與 oracle_evidence 是宣告欄位，只檢查格式（至少兩個不同姓名、證據清單非空），不能證明審核確實發生。模型的未知 finding 列於 unadjudicated_ids，沒有盲審 matching 介面可回填為 TP／FP，因此 precision 維持 null。正式研究須在工具外完成兩人審核、分歧仲裁與盲審 matching，再產生新的 gold。
+
 ## 尚未驗證或不包含的能力
 
 - 真實三個模型的確切型號、端點、額度、用量與模型品質；使用者自己的 staging 和後端觀測。這些依使用者決定留待配置完成後驗收。

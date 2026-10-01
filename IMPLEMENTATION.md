@@ -4,7 +4,7 @@ Authoritative validation: backend/vibe_audit/domain.py, contracts.py, policy.py 
 
 ## API
 
-All routes start with /api. Local bootstrap establishes a session; mutations require X-CSRF-Token. Host/Origin checks include workspace routes. Errors: {detail: ...}.
+All routes start with /api; with a session, an unknown /api path is a JSON 404. GET /session exchanges the startup token (X-VibeAudit-Token; printed as `#token=…` in the launch URL, or fixed with VIBEAUDIT_SESSION_TOKEN) for an 8-hour HttpOnly SameSite=Strict session cookie and the CSRF token; mutations require X-CSRF-Token. Host/Origin checks include workspace routes. Errors: {detail: ...}.
 
 | Method | Route | Purpose |
 |---|---|---|
@@ -20,8 +20,10 @@ All routes start with /api. Local bootstrap establishes a session; mutations req
 | GET | /runs/{id}/trace | Persisted entities, links and history |
 | GET | /runs/{id}/evidence/{artifact_id} | Run-bound, hash-verified envelope |
 | GET | /runs/{id}/report?format=json or markdown or sarif | Verified export |
-| POST | /runs/{id}/retest | New run linked to original findings |
+| POST | /runs/{id}/retest | New run linked to original findings (trace `retests` links, Markdown and SARIF note the parent) |
+| POST | /runs/{id}/reconcile | Operator attestation of worker cleanup; closes a cancelling run, which stays unresumable |
 | POST | /runs/{id}/findings/{finding_id}/decision | Evidence-backed refuted/inconclusive decision |
+| GET | /docs, /openapi.json | Interactive API docs and OpenAPI schema (session required) |
 
 Stages: intake → preflight → whitebox → adjudication → threat_model → case_design → blackbox → report → complete.
 Run status: created/running/cancelling/cancelled/completed/incomplete/blocked/failed.

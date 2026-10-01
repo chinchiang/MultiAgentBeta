@@ -7,7 +7,7 @@
 | 階段 | 工程交付 | 外部驗收界線 |
 |---|---|---|
 | P0 | schema v2、逐 Agent 模型、禁止 fallback、四類 provider SDK 合成傳輸契約、固定依賴/image/rule/database 雜湊、授權來源 | 真實 Claude/OpenAI/Nemotron 型號、額度及用量待端點驗收 |
-| P1 | LangGraph、PostgreSQL checkpoint/job ledger、原子提交、獨立 supervisor、持久 lease、撤網先於停止、loopback UI、設定、SSE | 本地單使用者；沒有多人 SaaS 或跨主機 worker fleet 承諾 |
+| P1 | LangGraph、PostgreSQL job ledger（恢復依 run 紀錄與 ledger，不讀 LangGraph checkpoint）、原子提交、獨立 supervisor、持久 lease、撤網先於停止、loopback UI、設定、SSE | 本地單使用者；沒有多人 SaaS 或跨主機 worker fleet 承諾 |
 | P2 | 私有唯讀 staging、三份同核心問題初審、並行靜態工具、一輪 Challenger、程式引用、少數發現聯集、Semgrep/Gitleaks/OSV runner | 程式摘要有上限；模型品質與任意 framework 深度分析不能由契約測試推論 |
 | P3 | 威脅/Requirement gate、版本凍結、追溯、ZAP/Schemathesis/Playwright、登入/登出 fixture、正控制與 oracle | ZAP 為核准路徑 requestor + passive；Schemathesis 為明確 example；Playwright 為 API 流程，不是任意探索、全站 fuzz 或任意瀏覽器腳本 |
 | P4 | promptfoo 本地 eval、PyRIT target、可註冊 fixture protocol、獨立 effect collector/sink、五次重置、提出/拒絕/呼叫/副作用分離 | mock 成功不代表真實後端授權正確；真實 target 必須提供可信觀測，否則 blocked/inconclusive |

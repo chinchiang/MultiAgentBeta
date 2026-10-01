@@ -10,7 +10,7 @@ def main():
     args=parser.parse_args()
     # Catalogs, fixtures and the built UI sit beside backend/, so a copied wheel would run without its evidence base.
     if not (Path(__file__).resolve().parents[2]/"catalogs").is_dir():
-        parser.exit(2,"Vibe Audit runs from its source checkout: install with scripts/setup.ps1 or pip install -e . there\n")
+        parser.exit(2,"Vibe Audit runs from its source checkout: start it with scripts/start-local.ps1 there, or pip install -e . in it\n")
     # Disable optional cloud tracing before loading orchestration libraries.
     os.environ["LANGCHAIN_TRACING_V2"]="false"
     os.environ["LANGSMITH_TRACING"]="false"
