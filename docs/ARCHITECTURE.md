@@ -24,6 +24,8 @@ flowchart TB
 
 The trusted control plane includes operator configuration, the model gateway, supervisor, database and evidence writer. Repository, model, target, scanner artifacts and report text are untrusted data. JSON schema validation does not establish semantic correctness. The broker is the enforcement point; model prompts are not security boundaries.
 
+The API listens on 127.0.0.1 only. A browser gets a session by sending the startup token, printed as the `#token=…` fragment of the launch URL or fixed with `VIBEAUDIT_SESSION_TOKEN`, to `/api/session` in `X-VibeAudit-Token`. It then holds an 8-hour HttpOnly, SameSite=Strict cookie that every other `/api` route requires; mutations also need `X-CSRF-Token`. Every request must carry an allowed Host, and an allowed Origin when it sends one.
+
 ## Ordered methodology
 
 1. Freeze source staging, redacted context, deployment declaration, scope, budgets, profiles and resource versions. Record omissions.
@@ -43,7 +45,7 @@ Linux Docker workers use nonroot UID 65532 for whitebox and 65533 for blackbox, 
 
 The independent Python supervisor uses a Unix socket relay and owns target credentials, IP-pinned transport and dispatch ledger. It survives controller loss long enough to revoke communication and terminate the worker. Lease expiry, cancellation or controller EOF revoke sockets before process/container cleanup. It does not claim to undo an already completed remote side effect.
 
-PostgreSQL stores checkpoint, job and lease records. Jobs become sent before I/O; aggregate result and completed job are committed atomically. A crash may leave harmless orphan artifacts but cannot promote an uncertain dispatch into a fresh implicit attempt. Execution and cleanup have separate fixed lifecycle identities, both replay-protected. SQLite and process_test are for explicitly synthetic/test paths, not production isolation.
+PostgreSQL stores job and lease records and the LangGraph checkpoints. Resume does not restore from those checkpoints. It is refused while a job is still sent, a worker awaits cleanup or an execution is outcome_unknown. Otherwise the graph restarts against the stored run record: manifest policy is checked again, stages already marked complete are skipped, an interrupted whitebox stage reuses sealed reviews whose input hash still matches the source digest, and blackbox re-runs the case gate on the stored cases before dispatching only case repetitions that have no execution yet. Jobs become sent before I/O; aggregate result and completed job are committed atomically. A crash may leave harmless orphan artifacts but cannot promote an uncertain dispatch into a fresh implicit attempt. Execution and cleanup have separate fixed lifecycle identities, both replay-protected. SQLite and process_test are for explicitly synthetic/test paths, not production isolation.
 
 ## Tool and AI boundaries
 

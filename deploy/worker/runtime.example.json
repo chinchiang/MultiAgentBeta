@@ -4,7 +4,7 @@
       "backend": "docker",
       "work_root": "/var/lib/vibeaudit/workers",
       "database_url_env": "VIBEAUDIT_DATABASE_URL",
-      "ttl_seconds": 5,
+      "ttl_seconds": 10,
       "image_pins": {}
     }
   }

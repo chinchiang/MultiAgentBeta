@@ -4,7 +4,7 @@ React + TypeScript + Vite 前端，Apache-2.0。介面使用繁體中文；所�
 
 ## 建置與使用
 
-需 Node.js 20.19+ 或 22.12+。
+需 Node.js 24，與專案其餘部分一致（TS fixture 以內建 type stripping 執行）；UI 建置本身使用 Vite 6，Node 18、20 或 22+ 也可建置。
 
 ```powershell
 cd frontend

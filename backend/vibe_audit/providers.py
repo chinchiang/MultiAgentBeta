@@ -43,6 +43,21 @@ class ProviderError(RuntimeError):
         self.usage = usage or {"model_calls": 0, "tokens": 0, "tokens_known": True}
 
 
+class _NotSent(ProviderError):
+    """The endpoint could not be resolved or connected, so no request byte left the controller."""
+
+
+def _not_sent(exc: BaseException | None) -> bool:
+    # SDKs wrap transport errors; the original stays on the cause/context chain.
+    seen = set()
+    while exc is not None and id(exc) not in seen:
+        if isinstance(exc, _NotSent):
+            return True
+        seen.add(id(exc))
+        exc = exc.__cause__ or exc.__context__
+    return False
+
+
 def _origin(value: str) -> tuple[str, str]:
     try:
         if not isinstance(value, str) or any(c.isspace() for c in value) or "\\" in value:
@@ -206,7 +221,11 @@ class _OriginTransport(httpx.AsyncBaseTransport):
         # The transport connects to a resolved IP while TLS still verifies the
         # approved hostname. No second DNS lookup can change the destination.
         pinned = httpx.Request(request.method, request.url.copy_with(host=self.pinned_ip), headers=request.headers, stream=request.stream, extensions={**request.extensions, "sni_hostname": request.url.host})
-        response = await self.inner.handle_async_request(pinned)
+        try:
+            response = await self.inner.handle_async_request(pinned)
+        except (httpx.ConnectError, httpx.ConnectTimeout):
+            # TCP connect and the TLS handshake come before the request is written, and retries are denied above.
+            raise _NotSent("Model endpoint connection failed", code="endpoint_unavailable") from None
         if 300 <= response.status_code < 400:
             await response.aclose()
             raise ProviderError("Model endpoint redirects are disabled", code="redirect_denied")
@@ -247,7 +266,7 @@ async def _resolve_model_ip(endpoint: str) -> str:
             raise ProviderError("Model DNS resolved outside globally routable addresses", code="origin_denied")
         return ips[0]
     except (OSError, ValueError):
-        raise ProviderError("Model DNS resolution failed", code="endpoint_unavailable") from None
+        raise _NotSent("Model DNS resolution failed", code="endpoint_unavailable") from None
 
 
 async def _invoke(library, profile: dict, endpoint: str, origin: str, credential: str, messages: list[dict], output_limit: int, timeout: float):
@@ -357,6 +376,9 @@ async def generate_json(profile: dict, system: str, payload: dict, policy: dict)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            if _not_sent(exc):
+                # Nothing reached the provider, so this attempt is known to cost nothing.
+                raise ProviderError("Model endpoint could not be reached; no request was sent", code="endpoint_unavailable", usage=usage.copy()) from None
             # Unknown metering must never be represented as zero cost or retried.
             usage["tokens_known"] = False
             code = exc.code if isinstance(exc, ProviderError) else "provider_request_failed"

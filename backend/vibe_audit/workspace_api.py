@@ -33,6 +33,11 @@ class FindingDecision(BaseModel):
     evidence_ids: list[str] = Field(min_length=1, max_length=100)
 
 
+class CleanupAttestation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    attestation: str = Field(min_length=1, max_length=4000)
+
+
 def workspace_router(store, engine, source_roots):
     router = APIRouter(prefix="/api")
 
@@ -116,5 +121,9 @@ def workspace_router(store, engine, source_roots):
         finding["counterevidence"] = data.evidence_ids
         engine.event(run, "Local operator recorded an evidence-linked decision for " + finding_id)
         return run
+
+    @router.post("/runs/{run_id}/reconcile")
+    async def reconcile(run_id: str, data: CleanupAttestation):
+        return engine.reconcile(run_id, data.attestation)
 
     return router

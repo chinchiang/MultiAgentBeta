@@ -47,6 +47,24 @@ async def test_end_to_end_demo_is_honest_and_preserves_minority(engine):
     assert report_sarif(run)["runs"][0]["results"][0]["properties"]["synthetic"] is True
 
 
+async def test_sarif_level_follows_evidence_and_keeps_blackbox_findings(engine):
+    run=await finished_demo(engine)
+    results=report_sarif(run)["runs"][0]["results"]
+    assert len(results)==len(run["findings"])
+    by_state={r["properties"]["evidenceState"]:r for r in results}
+    assert by_state["hypothesis"]["level"]=="note"
+    dynamic=by_state["validated_dynamic"]
+    assert dynamic["level"]=="error" and dynamic["ruleId"]=="blackbox-observation"
+    assert dynamic["locations"][0]["logicalLocations"]==[{"name":"GET /orders/private","kind":"resource"}]
+    assert dynamic["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]=="/orders/private"
+    refuted=copy.deepcopy(run)
+    finding=next(f for f in refuted["findings"] if f["state"]=="validated_dynamic")
+    finding.update(state="refuted",counterevidence=["E-pass"])
+    result=next(r for r in report_sarif(refuted)["runs"][0]["results"] if r["properties"]["evidenceState"]=="refuted")
+    assert result["level"]=="none" and result["suppressions"][0]["kind"]=="external"
+    assert "E-pass" in result["suppressions"][0]["justification"]
+
+
 async def test_catalog_failure_names_the_file(engine,tmp_path,monkeypatch):
     root=tmp_path/"catalog-copy"
     shutil.copytree(default_catalog_root(),root)
@@ -83,6 +101,117 @@ async def test_threat_and_case_gate_fail_closed(engine,mutation):
         run["cases"][0]["threat_ids"]=["T-MISSING"]
         run["cases"][0]["hash"]=sealed(run["cases"][0])
     with pytest.raises(PolicyError): engine.policy.case_gate(run)
+
+
+async def test_malformed_model_case_still_saves_the_blocked_run(engine,monkeypatch):
+    gate=engine.policy.case_gate
+    def omit_requirement(run):
+        # Model output can leave out any field; the gate must reject it and the save must still succeed.
+        del run["cases"][0]["requirement_id"]
+        run["cases"][0]["hash"]=sealed(run["cases"][0])
+        gate(run)
+    monkeypatch.setattr(engine.policy,"case_gate",omit_requirement)
+    run=await finished_demo(engine)
+    assert (run["stage"],run["status"],run["error"])==("case_design","blocked","Case security requirement mismatch")
+    engine.event(engine.runs[run["id"]],"Later event")
+    assert engine.store.get(run["id"])["events"][-1]["message"]=="Later event"
+
+
+async def test_whitebox_resume_keeps_paid_reviews_and_sealed_scans(engine,monkeypatch):
+    run=await finished_demo(engine)
+    run.update(mode="live",status="running",stage="whitebox",reviews=[],tool_results=[],commander_plan=None)
+    manifest=run["manifest"]
+    manifest.update(mode="live",static_tools=["semgrep","osv"])
+    for profile in manifest["models"]:
+        profile.update(provider="openai_compatible",endpoint="http://127.0.0.1:11434/v1")
+    run["manifest_hash"]=digest(manifest)
+    run.update(staging={"path":"unused"},tool_manifest={"tools":1},runtime_config_hash="h")
+    engine.runtime_configs["h"]={}
+    monkeypatch.setattr("vibe_audit.staging.verify_staging",lambda staging:True)
+    monkeypatch.setattr("vibe_audit.resource_manifest.resource_manifest",lambda config,tools:{"tools":1})
+    scans,calls=[],[]
+    class Runtime:
+        async def run_scanner(self,tool,path,**kwargs):
+            scans.append(tool)
+            return {"status":"completed","findings":[{"file":"app.py","line":1,"title":tool,"rule_id":tool}],"gaps":[],"limitations":[]}
+    monkeypatch.setattr(engine,"runtime",lambda run:Runtime())
+    reviewers=[p["id"] for p in manifest["models"] if p["role"]=="reviewer"]
+    failing={reviewers[-1]}
+    async def model(run,profile,instruction,payload,contract=None):
+        calls.append(profile["id"])
+        if profile["role"]=="commander":
+            return {"reviewer_order":reviewers,"focus":["Billing export"],"rationale":"r"}
+        if profile["id"] in failing:
+            raise RuntimeError("transient provider failure")
+        return {"findings":[],"gaps":[]}
+    monkeypatch.setattr(engine,"model",model)
+    engine.cancel_flags[run["id"]]=asyncio.Event()
+    with pytest.raises(PolicyError,match="Incomplete review"):
+        await engine._whitebox(run)
+    focus=list(run["commander_plan"]["focus"])
+    failing.clear()
+    calls.clear()
+    await engine._whitebox(run)
+    # Only the reviewer that failed is called again; scanner results are not appended twice.
+    assert calls==reviewers[-1:]
+    assert scans==["semgrep","osv"] and [r["scanner_id"] for r in run["tool_results"]]==["semgrep","osv"]
+    assert [r["agent_id"] for r in run["reviews"]]==reviewers and all(r["status"]=="completed" for r in run["reviews"])
+    assert run["commander_plan"]["focus"]==focus
+
+
+async def test_time_budget_counts_active_time_across_resume_and_restart(engine,tmp_path):
+    run=await finished_demo(engine)
+    budget=run["manifest"]["budget"]["max_seconds"]
+    spent=run["active_seconds"]
+    assert run["attempt_started_at"] is None and 0<spent<budget
+    # The pause before resuming outlasts the whole budget; only the active time counts.
+    run["started_at"]="2026-01-01T00:00:00+00:00"
+    engine.store.save(run)
+    engine.start(run["id"],resume=True)
+    await engine.tasks[run["id"]]
+    resumed=engine.store.get(run["id"])
+    assert (resumed["status"],resumed["error"])==("incomplete",None)
+    assert spent<=resumed["active_seconds"]<budget
+    # A controller restart charges the interrupted attempt up to its last save.
+    resumed.update(status="running",attempt_started_at="2026-01-01T00:00:00+00:00")
+    engine.store.save(resumed)
+    restarted=Engine(engine.store).store.get(run["id"])
+    assert restarted["attempt_started_at"] is None and restarted["active_seconds"]>budget
+    with pytest.raises(PolicyError,match="Time budget exhausted"):
+        engine.check_active(restarted)
+    restarted.update(status="running",stage="blackbox")
+    engine.policy.case_gate(restarted)
+    with pytest.raises(PolicyError,match="Run time budget exhausted"):
+        engine.policy.authorize(restarted,restarted["cases"][0],asyncio.Event())
+
+
+@pytest.mark.parametrize("outcome",["success","known_failure","unknown_failure"])
+async def test_model_call_returns_its_reservation_once_usage_is_counted(engine,monkeypatch,outcome):
+    from vibe_audit.providers import ProviderError
+    run=engine.create(RunInput(name="Reservation"))
+    run["status"]="running"
+    engine.cancel_flags[run["id"]]=asyncio.Event()
+    engine.locks[run["id"]]=asyncio.Lock()
+    async def generate_json(profile,system,payload,policy):
+        await policy["request_hook"]()
+        assert run["reserved_tokens"]>0
+        if outcome=="success":
+            return {"data":{"ok":True},"usage":{"tokens":7}}
+        raise ProviderError("synthetic",code="endpoint_unavailable",usage={"model_calls":1,"tokens":0,"tokens_known":outcome=="known_failure"})
+    monkeypatch.setattr("vibe_audit.providers.generate_json",generate_json)
+    profile=run["manifest"]["models"][0]
+    if outcome=="success":
+        assert await engine.model(run,profile,"Return JSON.",{})=={"ok":True}
+    else:
+        with pytest.raises(ProviderError):
+            await engine.model(run,profile,"Return JSON.",{})
+    stored=engine.store.get(run["id"])
+    if outcome=="unknown_failure":
+        # The provider may have billed the call, so its reservation stays and the latch stops further calls.
+        assert stored["usage_unknown"] is True and stored["reserved_tokens"]>0
+    else:
+        assert stored["reserved_tokens"]==0 and not stored.get("usage_unknown")
+        assert stored["usage"]["tokens"]==(7 if outcome=="success" else 0)
 
 
 async def test_capability_rejects_changed_case_and_manifest(engine):
@@ -154,6 +283,48 @@ def test_local_api_session_csrf_origin_host_and_source_boundary(tmp_path):
         assert response.status_code==201
         assert response.json()["mode"]=="demo"
         assert client.get("/api/runs").json()["runs"]
+        for path in ["/api","/api/nope","/api/runs/x/nope"]:
+            response=client.get(path)
+            assert (response.status_code,response.headers["content-type"])==(404,"application/json")
+        assert client.get("/api/docs").status_code==200
+        assert "redoc" not in client.get("/redoc").text.lower()
+
+
+def test_unconfirmed_worker_cleanup_closes_by_attestation_and_never_resumes(tmp_path):
+    store=Store(tmp_path)
+    run=Engine(store).create(RunInput(name="Stuck cleanup"))
+    run.update(status="running",workers_pending_cleanup=True)
+    store.save(run)
+    store.close()
+    with TestClient(create_app(tmp_path,testing=True)) as client:
+        headers={"X-CSRF-Token":open_session(client).json()["csrf_token"]}
+        base=f"/api/runs/{run['id']}"
+        assert client.get(base).json()["status"]=="cancelling"
+        # No task is left to move the run, so the stream ends instead of polling forever.
+        assert "event: done" in client.get(base+"/events").text
+        assert client.post(base+"/resume",headers=headers).status_code==409
+        assert client.post(base+"/reconcile",json={"attestation":""},headers=headers).status_code==422
+        response=client.post(base+"/reconcile",json={"attestation":"Removed worker containers by hand"},headers=headers)
+        assert response.status_code==200
+        reconciled=response.json()
+        assert reconciled["status"]=="blocked" and reconciled["workers_pending_cleanup"] is True
+        assert any("attested by the local operator" in gap for gap in reconciled["gaps"])
+        artifact=reconciled["artifacts"][-1]
+        assert artifact["producer"]=="operator-attestation"
+        assert client.get(f"{base}/evidence/{artifact['id']}").json()["content"]["attestation"]=="Removed worker containers by hand"
+        assert client.post(base+"/reconcile",json={"attestation":"again"},headers=headers).status_code==409
+        assert "outcome_unknown" in client.post(base+"/resume",headers=headers).json()["detail"]
+
+
+async def test_reconcile_waits_for_the_task_and_keeps_an_operator_cancel_cancelled(engine):
+    run=engine.create(RunInput(name="Cancelled with cleanup pending"))
+    run.update(status="cancelling",workers_pending_cleanup=True)
+    engine.store.save(run)
+    engine.tasks[run["id"]]=asyncio.get_running_loop().create_future()
+    with pytest.raises(PolicyError,match="still executing"):
+        engine.reconcile(run["id"],"done")
+    engine.tasks[run["id"]].set_result(None)
+    assert engine.reconcile(run["id"],"done")["status"]=="cancelled"
 
 
 @pytest.mark.parametrize("token",["x"*31,"x"*32+" ","x"*32+"#"])
@@ -340,9 +511,8 @@ async def test_positive_control_needs_exact_scope_and_sealed_case_authorization(
     assert run["usage"]["requests"]==used
 
 
-@pytest.mark.parametrize("provenance",["model","retest","operator"])
-async def test_model_designed_post_cannot_declare_itself_read_only(engine,monkeypatch,provenance):
-    from vibe_audit import adapters
+async def live_post_case(engine,*,adapter,provenance):
+    """Turn a finished demo into a live blackbox stage holding one POST case."""
     run=await finished_demo(engine)
     run.update(mode="live",status="running",stage="blackbox",executions=[])
     manifest=run["manifest"]
@@ -356,7 +526,7 @@ async def test_model_designed_post_cannot_declare_itself_read_only(engine,monkey
     run["threat_model"]["requirements"]=run["threat_model"]["requirements"][:1]
     run["threat_model"]["hash"]=sealed(run["threat_model"])
     case=copy.deepcopy(run["cases"][0])
-    case.update(adapter="http",method="POST",body={},preconditions=[],side_effects=False,threat_model_hash=run["threat_model"]["hash"])
+    case.update(adapter=adapter,method="POST",body={},preconditions=[],side_effects=False,threat_model_hash=run["threat_model"]["hash"])
     if provenance!="operator":
         case["designed_by"]="model"
     # A retest copies the parent's sealed cases, model-designed ones included, into its manifest.
@@ -365,6 +535,13 @@ async def test_model_designed_post_cannot_declare_itself_read_only(engine,monkey
     case["hash"]=sealed(case)
     run["cases"]=[case]
     run["usage"]["requests"]=0
+    return run
+
+
+@pytest.mark.parametrize("provenance",["model","retest","operator"])
+async def test_model_designed_post_cannot_declare_itself_read_only(engine,monkeypatch,provenance):
+    from vibe_audit import adapters
+    run=await live_post_case(engine,adapter="http",provenance=provenance)
     dispatched=[]
     def synthetic_request(scheme,host,port,pinned,method,path,*rest):
         dispatched.append((method,path))
@@ -384,3 +561,21 @@ async def test_model_designed_post_cannot_declare_itself_read_only(engine,monkey
         assert dispatched==[]
         assert run["executions"][0]["status"]=="blocked"
         assert run["usage"]["requests"]==0
+
+
+@pytest.mark.parametrize("provenance",["model","operator"])
+async def test_tool_adapter_cannot_bypass_side_effect_gate(engine,monkeypatch,provenance):
+    run=await live_post_case(engine,adapter="schemathesis",provenance=provenance)
+    dispatched=[]
+    class ToolRuntime:
+        async def execute_tool(self,spec,**kwargs):
+            dispatched.append(spec["tool_id"])
+            return {"status":"execution_error","reason":"synthetic tool","cleanup_confirmed":True}
+    monkeypatch.setattr(engine,"runtime",lambda _:ToolRuntime())
+    await engine._blackbox(run)
+    if provenance=="operator":
+        assert dispatched==["schemathesis"]
+    else:
+        assert dispatched==[]
+        assert run["executions"][0]["status"]=="blocked"
+        assert "reset/cleanup fixture" in run["executions"][0]["reason"]

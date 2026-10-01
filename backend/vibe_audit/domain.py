@@ -96,6 +96,12 @@ class RunInput(StrictModel):
     deployment_header: str | None = Field(default=None, pattern=r"^[A-Za-z0-9-]{1,100}$")
     cases: list[dict] = Field(default_factory=list, max_length=100)
 
+    @field_validator("requirements")
+    @classmethod
+    def supplied_requirements(cls, value):
+        # Whoever submits the run states these, so none is model-derived; the threat gate then insists each is mapped.
+        return [r.model_copy(update={"source_kind": "operator"}) if r.source_kind == "derived" else r for r in value]
+
     @model_validator(mode="after")
     def validate_live(self):
         ids = [p.id for p in self.models]

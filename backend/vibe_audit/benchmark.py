@@ -184,7 +184,7 @@ def run_job(job, sample, budget, mode):
     computed = compute_metrics(final, reproduced, reviews, gold, completed)
     real_model_arm = job["arm"] != "traditional" and mode != "synthetic"
     blocked = real_model_arm or all(o["response"]["status"] == "blocked" for o in observations)
-    valid_efficacy = eligible and mode != "synthetic" and not blocked
+    valid_efficacy = eligible and mode != "synthetic" and not blocked and completed
     costs = [o["response"]["cost_usd"] for o in observations]
     return job | {"status": "blocked" if blocked else "completed" if completed else "incomplete",
                   "budget": budget.copy(), "usage": consumed, "measured_wall_seconds": time.perf_counter() - start,
@@ -200,15 +200,19 @@ def summarize(records):
     arms = {}
     for arm in ARMS:
         rows = [r for r in records if r["arm"] == arm]
-        usable = [r["metrics"] for r in rows if r["metrics"] is not None]
-        previews = [r["preview_metrics"] for r in rows if r["preview_metrics"] is not None]
-        def mean_metrics(items):
-            return {key: statistics.mean(values) if (values := [i[key] for i in items if i[key] is not None]) else None
-                    for key in ["precision", "recall", "common_miss_rate", "minority_retention", "reproduce_rate", "completion"]}
+        def mean_metrics(field):
+            scored = [r for r in rows if r[field] is not None]
+            if not scored:
+                return None
+            # An unfinished run's partial findings would skew the arm; only completion counts every scored run.
+            finished = [r[field] for r in scored if r["status"] == "completed"]
+            means = {key: statistics.mean(values) if (values := [i[key] for i in finished if i[key] is not None]) else None
+                     for key in ["precision", "recall", "common_miss_rate", "minority_retention", "reproduce_rate"]}
+            return means | {"completion": statistics.mean(r[field]["completion"] for r in scored)}
         arms[arm] = {"scheduled": len(rows), "completed": sum(r["status"] == "completed" for r in rows),
                      "blocked": sum(r["status"] == "blocked" for r in rows),
-                     "metrics": mean_metrics(usable) if usable else None,
-                     "preview_metrics": mean_metrics(previews) if previews else None,
+                     "metrics": mean_metrics("metrics"),
+                     "preview_metrics": mean_metrics("preview_metrics"),
                      "tokens": sum(r["usage"]["tokens"] for r in rows),
                      "requests": sum(r["usage"]["requests"] for r in rows),
                      "model_calls": sum(r["usage"]["model_calls"] for r in rows),
@@ -227,7 +231,8 @@ def summarize(records):
                 continue
             efficacy = row["metrics"] is not None and reference["metrics"] is not None
             left, right = row["metrics"] or row["preview_metrics"], reference["metrics"] or reference["preview_metrics"]
-            delta = {k: left[k] - right[k] if left and right and left[k] is not None and right[k] is not None else None
+            finished = row["status"] == reference["status"] == "completed"
+            delta = {k: left[k] - right[k] if left and right and (finished or k == "completion") and left[k] is not None and right[k] is not None else None
                      for k in ["precision", "recall", "reproduce_rate", "completion"]}
             paired.append({"pair_id": pair_id, "arm": arm, "reference": "single_a", "efficacy_eligible": efficacy,
                            "paired_differences": delta})
@@ -239,13 +244,13 @@ def run_benchmark(dataset_path=DEFAULT_DATASET, output_dir=None, *, mode="synthe
                   profiles=None, model_policy=None, tool_runner=None, model_runner=None):
     if mode not in {"synthetic", "local_tools", "live"}:
         raise BenchmarkError("Unknown benchmark mode")
-    budget = dict(DEFAULT_BUDGET if budget is None else budget)
-    if set(budget) != set(DEFAULT_BUDGET) or any(not isinstance(v, int) or v <= 0 for v in budget.values()):
-        raise BenchmarkError("All four positive integer budget limits are required")
     if mode == "live":
         return asyncio.run(run_live_benchmark(dataset_path, output_dir, repetitions=repetitions, seed=seed, split=split,
                                              budget=budget, profiles=profiles, model_policy=model_policy,
                                              tool_runner=tool_runner, model_runner=model_runner))
+    budget = dict(DEFAULT_BUDGET if budget is None else budget)
+    if set(budget) != set(DEFAULT_BUDGET) or any(not isinstance(v, int) or v <= 0 for v in budget.values()):
+        raise BenchmarkError("All four positive integer budget limits are required")
     dataset = load_dataset(dataset_path)
     jobs = schedule(dataset, repetitions, seed, split)
     samples = {s["id"]: s for p in dataset["projects"] for s in p["samples"]}
@@ -283,10 +288,14 @@ async def run_live_benchmark(dataset_path=DEFAULT_DATASET, output_dir=None, *, r
     Callbacks are host configuration, never imported from data or model output.
     """
     from .domain import ModelProfile
-    from .providers import generate_json, ProviderError
-    budget = dict(DEFAULT_BUDGET if budget is None else budget)
+    from .providers import MAX_ATTEMPTS, generate_json, ProviderError
+    # Every model step gets the same schema-repair attempts; an even split of six calls would leave debate's four steps one try each.
+    longest = max(len(arm_steps(arm)) for arm in ARMS if arm != "traditional")
+    budget = dict(DEFAULT_BUDGET | {"max_model_calls": MAX_ATTEMPTS * longest} if budget is None else budget)
     if set(budget) != set(DEFAULT_BUDGET) or any(type(v) is not int or v <= 0 for v in budget.values()):
         raise BenchmarkError("All four positive integer budget limits are required")
+    if budget["max_model_calls"] < MAX_ATTEMPTS * longest:
+        raise BenchmarkError(f"max_model_calls must allow {MAX_ATTEMPTS} attempts for each of the {longest} model steps")
     profiles = {alias: ModelProfile.model_validate(profile).model_dump() for alias, profile in (profiles or {}).items()}
     if set(profiles) - {"a", "b", "c"} or any(p["provider"] == "demo" for p in profiles.values()):
         raise BenchmarkError("Live profiles use a/b/c aliases and real providers only")
@@ -341,7 +350,7 @@ async def run_live_benchmark(dataset_path=DEFAULT_DATASET, output_dir=None, *, r
             data = None
             step_start = time.perf_counter()
             can_call = (not issues and profile is not None and model_policy.get("data_policy") in {"local_only", "cloud_allowed"}
-                        and caps["max_tokens"] > 0 and caps["max_model_calls"] > 0 and caps["max_seconds"] > 0)
+                        and caps["max_tokens"] > 0 and caps["max_model_calls"] >= MAX_ATTEMPTS and caps["max_seconds"] > 0)
             if can_call:
                 policy = model_policy | {"max_tokens": caps["max_tokens"], "max_model_calls": caps["max_model_calls"],
                                           "timeout_seconds": caps["max_seconds"], "response_schema": MODEL_FINDINGS_SCHEMA}
@@ -369,6 +378,8 @@ async def run_live_benchmark(dataset_path=DEFAULT_DATASET, output_dir=None, *, r
                     response.update(tokens=caps["max_tokens"], model_calls=caps["max_model_calls"], latency_seconds=time.perf_counter() - step_start)
             elif issues:
                 response = _blocked(issues[-1])
+            elif profile is not None and caps["max_model_calls"] < MAX_ATTEMPTS:
+                response = _blocked("Shared tool context left fewer model calls per step than the equal retry allowance")
             validate(response, BENCHMARK_OBSERVATION_SCHEMA)
             if response["tokens"] > caps["max_tokens"] or response["model_calls"] > caps["max_model_calls"] or response["latency_seconds"] > caps["max_seconds"]:
                 response = response | {"status": "incomplete", "finding_ids": [], "reason": "Observed usage exceeded step budget; result withheld, usage preserved"}
@@ -398,9 +409,10 @@ async def run_live_benchmark(dataset_path=DEFAULT_DATASET, output_dir=None, *, r
                               "budget": budget.copy(), "usage": usage, "measured_wall_seconds": time.perf_counter() - start,
                               "cost_usd": sum(costs) if all(c is not None for c in costs) else None,
                               "tool_context_hash": _digest(context), "observations": observations, "finding_ids": sorted(final),
-                              "reproduced_ids": sorted(reproduced), "metrics": computed if eligible and not blocked else None,
+                              "reproduced_ids": sorted(reproduced), "metrics": computed if eligible and complete else None,
                               "preview_metrics": computed if not blocked else None, "gold_eligible": eligible, "simulated": False,
-                              "issues": issues, "limitation": None if eligible else "Gold is synthetic or awaits two human reviews and oracle verification"})
+                              "issues": issues, "limitation": None if eligible and complete else "Unfinished run; partial findings are not scored" if eligible
+                              else "Gold is synthetic or awaits two human reviews and oracle verification"})
     report = {"schema_version": 1, "dataset_id": dataset["id"], "dataset_hash": _digest(dataset), "mode": "live",
               "seed": seed, "split": split, "repetitions": repetitions, "budget": budget, "profiles": profiles,
               "policy": {k: model_policy.get(k) for k in ["data_policy", "allowed_model_origins"]},

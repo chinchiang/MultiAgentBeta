@@ -6,7 +6,7 @@ import json
 import html
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import TypedDict
 
 from langgraph.graph import StateGraph, START, END
@@ -14,7 +14,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 
 from .catalog import CatalogError
 from .domain import RunInput, digest, new_run, now
-from .policy import Policy, PolicyError, sealed
+from .policy import Policy, PolicyError, elapsed_seconds, sealed
 from .store import Store
 from .contracts import (CORE_REVIEW_QUESTIONS, CommanderProposal, ArchitectureProposal,
                         ReviewProposal, ThreatModelProposal, ReportOrderProposal, complete_requirements, verify_source_references)
@@ -43,6 +43,11 @@ class Engine:
             if run["status"] in {"running","cancelling"}:
                 run["status"]="cancelling" if run.get("workers_pending_cleanup") else "incomplete"
                 run["error"]="Controller restarted; execution journal must be reconciled before resume"
+                if run.get("attempt_started_at"):
+                    # The interrupted attempt was active until its last save at the latest.
+                    attempt=(datetime.fromisoformat(run["updated_at"])-datetime.fromisoformat(run["attempt_started_at"])).total_seconds()
+                    run["active_seconds"]=run.get("active_seconds",0)+max(0,attempt)
+                    run["attempt_started_at"]=None
                 if run.get("reserved_tokens",0)>0:
                     run["usage_unknown"]=True
                     run["usage"]["tokens_known"]=False
@@ -65,7 +70,7 @@ class Engine:
         self.store.save(run)
 
     def start(self, run_id: str, resume=False):
-        if run_id in self.tasks and not self.tasks[run_id].done():
+        if self.executing(run_id):
             raise PolicyError("Run is already executing")
         run=self.store.get(run_id)
         if not resume and run["status"]!="created":
@@ -84,6 +89,7 @@ class Engine:
         run["status"]="running"
         run["error"]=None
         run["started_at"]=run.get("started_at") or now()
+        run["attempt_started_at"]=now()
         self.event(run,"Resuming journaled workflow" if resume else "Starting evidence-gated workflow")
         self.tasks[run_id]=asyncio.create_task(self._run(run))
         return copy.deepcopy(run)
@@ -98,10 +104,28 @@ class Engine:
         self.event(run,"Execution capabilities revoked; waiting for bounded in-flight operations", "warning")
         return copy.deepcopy(run)
 
+    def executing(self,run_id):
+        return run_id in self.tasks and not self.tasks[run_id].done()
+
+    def reconcile(self,run_id,attestation):
+        # Only the operator can vouch for workers the supervisor could not confirm removed.
+        # The run closes but stays unresumable: workers_pending_cleanup remains set, so work continues in a new run.
+        if self.executing(run_id):
+            raise PolicyError("Run is still executing; wait for bounded workers to return")
+        run=self.runs.get(run_id) or self.store.get(run_id)
+        if run["status"]!="cancelling":
+            raise PolicyError("Only a run waiting for worker cleanup can be reconciled")
+        artifact=self.store.put_evidence(run_id,"operator-attestation",{"kind":"worker_cleanup","actor":"local_operator","attestation":attestation})
+        run["artifacts"].append(artifact)
+        run["gaps"].append("Worker cleanup was attested by the local operator, not confirmed by the supervisor")
+        run["status"]="blocked" if run.get("error") else "cancelled"
+        self.event(run,"Local operator attested worker cleanup; continue in a new run","warning")
+        return copy.deepcopy(run)
+
     def check_active(self,run):
         if self.cancel_flags[run["id"]].is_set():
             raise asyncio.CancelledError()
-        if run.get("started_at") and (datetime.now(timezone.utc)-datetime.fromisoformat(run["started_at"])).total_seconds()>run["manifest"]["budget"]["max_seconds"]:
+        if elapsed_seconds(run)>run["manifest"]["budget"]["max_seconds"]:
             raise PolicyError("Time budget exhausted; remaining work is incomplete")
 
     async def _run(self,run):
@@ -157,9 +181,12 @@ class Engine:
             self.event(run,run["error"],"error")
         finally:
             self.policy.revoke(run["id"])
+            run["active_seconds"]=elapsed_seconds(run)
+            run["attempt_started_at"]=None
             self.store.save(run)
 
     def model_policy(self,run,profile,payload):
+        reserved=[]
         async def reserve(*args,**kwargs):
             async with self.locks[run["id"]]:
                 self.check_active(run)
@@ -175,28 +202,38 @@ class Engine:
                     raise PolicyError("Insufficient token budget for bounded model request")
                 usage["model_calls"]+=1
                 run["reserved_tokens"]=run.get("reserved_tokens",0)+reserve_tokens
+                reserved.append(reserve_tokens)
                 self.store.save(run)
-        return dict(data_policy=run["manifest"]["data_policy"],allowed_model_origins=run["manifest"]["allowed_model_origins"],max_tokens=run["manifest"]["budget"]["max_tokens"],timeout_seconds=profile.get("timeout_seconds",60),request_hook=reserve)
+        def release():
+            # Counted usage replaces this call's upper-bound reservation; parallel calls keep theirs.
+            run["reserved_tokens"]=max(0,run.get("reserved_tokens",0)-sum(reserved))
+            reserved.clear()
+        return dict(data_policy=run["manifest"]["data_policy"],allowed_model_origins=run["manifest"]["allowed_model_origins"],max_tokens=run["manifest"]["budget"]["max_tokens"],timeout_seconds=profile.get("timeout_seconds",60),request_hook=reserve),release
 
     async def model(self,run,profile,instruction,payload,response_contract=None):
         from .providers import generate_json
         self.check_active(run)
-        policy=self.model_policy(run,profile,{"instruction":instruction,"payload":payload,"response_schema":response_contract.model_json_schema() if response_contract else None})
+        policy,release=self.model_policy(run,profile,{"instruction":instruction,"payload":payload,"response_schema":response_contract.model_json_schema() if response_contract else None})
         if response_contract:
             policy["response_schema"]=response_contract.model_json_schema()
+        counted=False
         try:
             result=await generate_json(profile,SYSTEM+"\n"+instruction,payload,policy)
             run["usage"]["tokens"]+=int(result["usage"]["tokens"])
+            counted=True
             return response_contract.model_validate(result["data"]).model_dump() if response_contract else result["data"]
         except Exception as exc:
             used=getattr(exc,"usage",{})
             run["usage"]["tokens"]+=int(used.get("tokens",0) or 0)
-            if used.get("tokens_known") is False:
+            counted=used.get("tokens_known") is not False
+            if not counted:
                 run["usage_unknown"]=True
                 run["usage"]["tokens_known"]=False
             raise
         finally:
-            # Parallel reviews reserve separately; reservations are conservatively retained until stage barrier.
+            # A cancelled call or one with unknown usage keeps its reservation.
+            if counted:
+                release()
             self.store.save(run)
 
     def profile(self,run,role):
@@ -243,7 +280,7 @@ class Engine:
             run["gaps"].extend(source["gaps"])
             run.setdefault("limitations",[]).extend(source.get("limitations",[]))
             for profile in run["manifest"]["models"]:
-                policy=self.model_policy(run,profile,{"probe":True})
+                policy,release=self.model_policy(run,profile,{"probe":True})
                 try:
                     result=await probe_model(profile,policy)
                 except Exception as exc:
@@ -252,6 +289,8 @@ class Engine:
                     if used.get("tokens_known") is False:
                         run["usage_unknown"]=True
                         run["usage"]["tokens_known"]=False
+                    else:
+                        release()
                     raise
                 run["usage"]["tokens"]+=int(result.get("usage",{}).get("tokens",0) or 0)
                 run["model_probes"].append(dict(agent_id=profile["id"],**result))
@@ -281,7 +320,11 @@ class Engine:
         if current!=run["tool_manifest"]:
             raise PolicyError("Scanner versions, rules or offline data changed after preflight")
         manifest={**run["manifest"],"run_id":run["id"],"source_digest":run["source_digest"]}
+        recorded={r.get("scanner_id") for r in run.get("tool_results",[])}
         for tool in run["manifest"].get("static_tools",[]):
+            if tool in recorded:
+                # A result is sealed with its evidence and gaps; a second scan would duplicate every finding.
+                continue
             self.check_active(run)
             async def lease_hook(*args,**kwargs):
                 self.check_active(run)
@@ -300,11 +343,16 @@ class Engine:
         return self.store.evidence(next(a for a in run["artifacts"] if a["id"]==run["snapshot_id"]),run["id"])["content"]
 
     async def _whitebox(self,run):
+        # Resume reruns this stage: keep the plan and the reviews an earlier attempt already paid for.
+        done={r["agent_id"]:r for r in run.get("reviews",[]) if r["status"]=="completed" and r["input_hash"]==run["source_digest"]}
         run["reviews"]=[]
         profiles=[p for p in run["manifest"]["models"] if p["role"]=="reviewer"]
         commander=next(p for p in run["manifest"]["models"] if p["role"]=="commander")
         source=self.source(run)
-        if run["mode"]=="live":
+        if run["mode"]=="live" and run.get("commander_plan"):
+            by_id={p["id"]:p for p in profiles}
+            profiles=[by_id[agent_id] for agent_id in run["commander_plan"]["reviewer_order"]]
+        elif run["mode"]=="live":
             plan=await self.model(run,commander,'Plan an independent review. All provided reviewer IDs exactly once; all reviewers cover the SAME core scope. Add focus questions, never delete required coverage.',{"reviewers":[p["id"] for p in profiles],"source_inventory":[f["path"] for f in source["files"]],"user_requirements":run["manifest"]["notes"],"core_questions":CORE_REVIEW_QUESTIONS},CommanderProposal)
             if set(plan.get("reviewer_order",[]))!={p["id"] for p in profiles} or len(plan["reviewer_order"])!=3:
                 raise PolicyError("Commander proposal does not preserve three independent reviews")
@@ -339,8 +387,10 @@ class Engine:
             return dict(agent_id=profile["id"],provider=profile["provider"],model_id=profile["model_id"],family=profile["family"],status="completed",findings=findings,gaps=data["gaps"],input_hash=run["source_digest"],simulated=run["mode"]=="demo")
         # Independent contexts; publish the sealed batch only after all reviewers finish.
         scanner_task=asyncio.create_task(self._scan_source(run))
-        results=await asyncio.gather(*(review(p) for p in profiles),return_exceptions=True)
-        for p,result in zip(profiles,results):
+        pending=[p for p in profiles if p["id"] not in done]
+        results=dict(zip([p["id"] for p in pending],await asyncio.gather(*(review(p) for p in pending),return_exceptions=True)))
+        for p in profiles:
+            result=done[p["id"]] if p["id"] in done else results[p["id"]]
             if isinstance(result,BaseException):
                 run["reviews"].append(dict(agent_id=p["id"],provider=p["provider"],model_id=p["model_id"],family=p["family"],status="incomplete",findings=[],gaps=[type(result).__name__],input_hash=run["source_digest"],simulated=False))
             else:
@@ -484,11 +534,12 @@ class Engine:
                     if fixture:
                         from .fixture_protocol import run_fixture_case
                         result=await run_fixture_case(runtime,manifest,case,fixture_profile=case.get("fixture_profile") or manifest["fixture_profile"],cancel_event=self.cancel_flags[run["id"]],request_hook=request_hook,lease_hook=lease_hook,repetitions=case.get("repetitions",5))
+                    # Tool adapters send the case's method too, so they take the same side-effect gate.
+                    elif side_effects:
+                        result={"status":"blocked","reason":"A state-changing case needs a registered reset/cleanup fixture protocol","observations":[],"evidence":[],"requests":0}
                     elif case["adapter"] in {"zap","schemathesis","playwright","promptfoo","pyrit"}:
                         from .tool_runners import run_tool
                         result=await run_tool(runtime,case["adapter"],manifest,case,cancel_event=self.cancel_flags[run["id"]],request_hook=request_hook,lease_hook=lease_hook,repetition=repetition)
-                    elif side_effects:
-                        result={"status":"blocked","reason":"A state-changing case needs a registered reset/cleanup fixture protocol","observations":[],"evidence":[],"requests":0}
                     else:
                         result=await runtime.run_case(manifest,case,cancel_event=self.cancel_flags[run["id"]],request_hook=request_hook,lease_hook=lease_hook,repetition=repetition)
                     if "security_status" in result:
@@ -546,7 +597,10 @@ def report_markdown(run:dict)->str:
     for execution in run["executions"]:
         for key in ("case_id","status","reason"): execution[key]=safe(execution[key])
     run["gaps"]=[safe(value) for value in run["gaps"]]
-    lines=[f"# {run['name']}","",f"Run: {run['id']}",f"Mode: {run['mode']} | Status: {run['status']}","",run.get("report_note","Incomplete report; workflow has not finished"),"","## Findings",""]
+    manifest=run.get("manifest") or {}
+    # A retest report says what it re-checks, so a clean result is not read as a fresh assessment.
+    retest=[f"Retest of: {safe(manifest['parent_run_id'])} (findings: {', '.join(safe(value) for value in manifest.get('parent_finding_ids',[]))})"] if manifest.get("parent_run_id") else []
+    lines=[f"# {run['name']}","",f"Run: {run['id']}",*retest,f"Mode: {run['mode']} | Status: {run['status']}","",run.get("report_note","Incomplete report; workflow has not finished"),"","## Findings",""]
     for f in run["findings"]:
         lines.extend([f"- [{f['severity']} / {f['state']}] {f['title']}",f"  Evidence: {', '.join(f['evidence_ids'])}"])
     lines.extend(["","## Coverage gaps",""]+["- "+str(g) for g in run["gaps"]])
@@ -555,9 +609,32 @@ def report_markdown(run:dict)->str:
     return "\n".join(lines)
 
 
+SARIF_LEVELS={"validated_dynamic":"error","corroborated_static":"warning","hypothesis":"note","inconclusive":"note","refuted":"none"}
+
+
 def report_sarif(run:dict)->dict:
+    # The level follows how far the evidence got: only an observed failure is an error.
+    cases={c["id"]:c for c in run.get("cases",[])}
+    exercised={e["evidence_id"]:cases[e["case_id"]] for e in run.get("executions",[]) if e.get("case_id") in cases}
     results=[]
     for f in run["findings"]:
+        case=next((exercised[e] for e in f["evidence_ids"] if e in exercised),None)
         if f.get("file") and isinstance(f.get("line"),int) and f["line"]>0:
-            results.append({"ruleId":f.get("cwe") or "security-hypothesis","level":"warning","message":{"text":f["title"]},"locations":[{"physicalLocation":{"artifactLocation":{"uri":f["file"]},"region":{"startLine":f["line"]}}}],"properties":{"evidenceState":f["state"],"runId":run["id"],"synthetic":run["mode"]=="demo"}})
-    return {"version":"2.1.0","$schema":"https://json.schemastore.org/sarif-2.1.0.json","runs":[{"tool":{"driver":{"name":"Vibe Audit","version":"0.2.0"}},"results":results}]}
+            rule=f.get("cwe") or "security-hypothesis"
+            location={"physicalLocation":{"artifactLocation":{"uri":f["file"]},"region":{"startLine":f["line"]}}}
+        elif case:
+            # A black-box finding lives at the endpoint it was observed on, not at a source line.
+            rule=f.get("cwe") or "blackbox-observation"
+            path=case.get("path") or "/"
+            location={"physicalLocation":{"artifactLocation":{"uri":run["manifest"].get("target_url","").rstrip("/")+path}},"logicalLocations":[{"name":case.get("method","GET")+" "+path,"kind":"resource"}]}
+        else:
+            continue
+        result={"ruleId":rule,"level":SARIF_LEVELS.get(f["state"],"warning"),"message":{"text":f["title"]},"locations":[location],"properties":{"evidenceState":f["state"],"severity":f["severity"],"runId":run["id"],"synthetic":run["mode"]=="demo"}}
+        if f["state"]=="refuted":
+            result["suppressions"]=[{"kind":"external","status":"accepted","justification":"Refuted by the local operator citing black-box evidence "+", ".join(f.get("counterevidence",[]))}]
+        results.append(result)
+    manifest=run.get("manifest") or {}
+    properties={"runId":run["id"]}
+    if manifest.get("parent_run_id"):
+        properties.update(retestOf=manifest["parent_run_id"],retestedFindingIds=list(manifest.get("parent_finding_ids",[])))
+    return {"version":"2.1.0","$schema":"https://json.schemastore.org/sarif-2.1.0.json","runs":[{"tool":{"driver":{"name":"Vibe Audit","version":"0.2.0"}},"results":results,"properties":properties}]}

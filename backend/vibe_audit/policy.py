@@ -15,6 +15,14 @@ def sealed(value: dict) -> str:
     return digest({k:v for k,v in value.items() if k != "hash"})
 
 
+def elapsed_seconds(run: dict) -> float:
+    """Active time across attempts; the gap between an interruption and its resume spends no budget."""
+    total = run.get("active_seconds", 0)
+    if run.get("attempt_started_at"):
+        total += (datetime.now(timezone.utc)-datetime.fromisoformat(run["attempt_started_at"])).total_seconds()
+    return total
+
+
 class Policy:
     def __init__(self):
         self.receipts = {}
@@ -86,7 +94,7 @@ class Policy:
         for requirement in requirements.values():
             if not set(requirement.get("threat_ids",[]))<=tids:
                 raise PolicyError("Security requirement references an unknown threat")
-            if requirement.get("source_kind")=="operator" and not requirement.get("threat_ids"):
+            if requirement.get("source_kind") in {"operator","specification"} and not requirement.get("threat_ids"):
                 raise PolicyError("Operator security requirement has not been mapped to a threat")
         run["gate_receipts"]["threat_model"] = tm["hash"]
 
@@ -173,8 +181,7 @@ class Policy:
                 raise PolicyError("Identity is outside the sealed case scope")
         if run["usage"]["requests"]>=run["manifest"]["budget"]["max_requests"]:
             raise PolicyError("Request budget exhausted")
-        start=run.get("started_at")
-        if start and (datetime.now(timezone.utc)-datetime.fromisoformat(start)).total_seconds()>=run["manifest"]["budget"]["max_seconds"]:
+        if elapsed_seconds(run)>=run["manifest"]["budget"]["max_seconds"]:
             raise PolicyError("Run time budget exhausted")
         run["usage"]["requests"]+=1
 

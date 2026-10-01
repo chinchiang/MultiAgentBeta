@@ -1,3 +1,5 @@
+# Original recipe, kept only to refresh deploy/worker/locks. Release images are built from
+# Dockerfile.tools.locked, which installs exactly the captured closure.
 # Build-time internet is allowed for provisioning. Runtime has --network none.
 # The final image ID is recorded and is the only value accepted by the runtime.
 FROM node@sha256:a9f5f7c91a432850b2a8a7797adf5eadb6c733ceed61167806cee7ea7fbc29df AS node

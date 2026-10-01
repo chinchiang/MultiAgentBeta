@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-09-24T05:15:11.534405+00:00",
+  "generated_at": "2026-10-01T22:25:43.583182+00:00",
   "model_endpoints_tested": false,
   "efficacy_established": false,
   "note": "Suites overlap; do not add counts as distinct tests. JUnit successful records include subtests where emitted. Docker, database and synthetic model contracts are separate evidence.",
@@ -139,19 +139,20 @@
     },
     {
       "file": "docs/windows-regression.xml",
-      "tests": 216,
+      "tests": 308,
       "failures": 0,
       "errors": 0,
-      "skipped": 21,
-      "passed": 195,
-      "seconds": 400.26,
+      "skipped": 25,
+      "passed": 283,
+      "seconds": 483.693,
       "timestamp": [
-        "2026-09-24T12:33:09.803496+08:00"
+        "2026-10-02T06:16:12.837090+08:00"
       ],
       "skip_reasons": [
         "Explicit pinned Docker tool image required",
         "Hard-crash integration uses POSIX process semantics",
         "OS does not permit creating symlinks for this account",
+        "Pinned Docker tool image required",
         "Provide dedicated PostgreSQL integration database",
         "Provisioned Linux scanner images and PostgreSQL required",
         "Real Docker/PostgreSQL runtime required",

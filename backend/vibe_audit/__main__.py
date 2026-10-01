@@ -1,5 +1,6 @@
 import argparse
 import os
+from pathlib import Path
 
 
 def main():
@@ -7,6 +8,9 @@ def main():
     parser.add_argument("--port",type=int,default=8000)
     parser.add_argument("--data-dir",default=None)
     args=parser.parse_args()
+    # Catalogs, fixtures and the built UI sit beside backend/, so a copied wheel would run without its evidence base.
+    if not (Path(__file__).resolve().parents[2]/"catalogs").is_dir():
+        parser.exit(2,"Vibe Audit runs from its source checkout: start it with scripts/start-local.ps1 there, or pip install -e . in it\n")
     # Disable optional cloud tracing before loading orchestration libraries.
     os.environ["LANGCHAIN_TRACING_V2"]="false"
     os.environ["LANGSMITH_TRACING"]="false"
