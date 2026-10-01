@@ -94,7 +94,7 @@ class Policy:
         for requirement in requirements.values():
             if not set(requirement.get("threat_ids",[]))<=tids:
                 raise PolicyError("Security requirement references an unknown threat")
-            if requirement.get("source_kind")=="operator" and not requirement.get("threat_ids"):
+            if requirement.get("source_kind") in {"operator","specification"} and not requirement.get("threat_ids"):
                 raise PolicyError("Operator security requirement has not been mapped to a threat")
         run["gate_receipts"]["threat_model"] = tm["hash"]
 

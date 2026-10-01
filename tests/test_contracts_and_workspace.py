@@ -47,6 +47,21 @@ def test_model_cannot_claim_operator_requirements_or_change_supplied_rules():
         complete_requirements(model,[{"id":"R1","statement":"a different operator policy","source":"owner","source_kind":"operator"}])
 
 
+async def test_supplied_requirement_without_kind_must_still_be_mapped(tmp_path):
+    supplied=RunInput(name="Supplied requirements",requirements=[{"id":"R-OWNER","statement":"Only tenant members read invoices","source":"owner"},
+                                                                {"id":"R-SPEC","statement":"Sessions expire","source":"spec 4.2","source_kind":"specification"}])
+    assert [r.source_kind for r in supplied.requirements]==["operator","specification"]
+    store=Store(tmp_path)
+    engine=Engine(store)
+    run=engine.create(supplied)
+    engine.start(run["id"])
+    await engine.tasks[run["id"]]
+    result=store.get(run["id"])
+    assert result["status"]=="blocked" and result["stage"]=="threat_model"
+    assert "has not been mapped" in result["error"]
+    store.close()
+
+
 def test_scanner_snapshot_raw_secret_stays_private_and_detects_added_files(tmp_path):
     source=tmp_path/"source"
     source.mkdir()
