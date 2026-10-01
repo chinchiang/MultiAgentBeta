@@ -4,32 +4,44 @@ from __future__ import annotations
 from .domain import digest
 
 
+def _ids(value):
+    return value if isinstance(value, list) else []
+
+
 def entities_and_links(run: dict) -> tuple[list[dict], list[dict]]:
+    # Model-designed cases are saved before the gates reject them, and the failed run must still be saved.
+    # A missing or malformed field therefore drops its links instead of failing the save.
     entities, links = [], []
     def entity(kind, identity, value):
         entities.append({"kind": kind, "id": str(identity), "version": digest(value), "value": value})
     def link(source_kind, source_id, target_kind, target_id, relation):
+        if source_id is None or target_id is None:
+            return
         links.append({"source_kind": source_kind, "source_id": str(source_id), "target_kind": target_kind, "target_id": str(target_id), "relation": relation})
     entity("run", run["id"], run["manifest"])
     tm = run.get("threat_model") or {}
     if tm:
-        entity("threat_model", tm["id"], tm)
+        entity("threat_model", tm.get("id"), tm)
     for kind, key in (("asset", "assets"), ("dataflow", "dataflows"), ("threat", "threats"), ("requirement", "requirements")):
-        for value in tm.get(key, []):
-            entity(kind, value["id"], value)
-            link("run", run["id"], kind, value["id"], "contains")
+        for value in _ids(tm.get(key)):
+            if not isinstance(value, dict):
+                continue
+            entity(kind, value.get("id"), value)
+            link("run", run["id"], kind, value.get("id"), "contains")
             if kind == "dataflow":
-                link("asset", value["source"], kind, value["id"], "sends")
-                link(kind, value["id"], "asset", value["target"], "reaches")
+                link("asset", value.get("source"), kind, value.get("id"), "sends")
+                link(kind, value.get("id"), "asset", value.get("target"), "reaches")
             elif kind == "threat":
-                for asset_id in value["asset_ids"]:
-                    link("asset", asset_id, kind, value["id"], "exposed_to")
-                link(kind, value["id"], "requirement", value["requirement_id"], "violates")
-    for case in run.get("cases", []):
-        entity("case", case["id"], case)
-        link("requirement", case["requirement_id"], "case", case["id"], "verified_by")
-        for threat_id in case["threat_ids"]:
-            link("threat", threat_id, "case", case["id"], "tested_by")
+                for asset_id in _ids(value.get("asset_ids")):
+                    link("asset", asset_id, kind, value.get("id"), "exposed_to")
+                link(kind, value.get("id"), "requirement", value.get("requirement_id"), "violates")
+    for case in _ids(run.get("cases")):
+        if not isinstance(case, dict):
+            continue
+        entity("case", case.get("id"), case)
+        link("requirement", case.get("requirement_id"), "case", case.get("id"), "verified_by")
+        for threat_id in _ids(case.get("threat_ids")):
+            link("threat", threat_id, "case", case.get("id"), "tested_by")
     for execution in run.get("executions", []):
         entity("execution", execution["id"], execution)
         link("case", execution["case_id"], "execution", execution["id"], "executed_as")

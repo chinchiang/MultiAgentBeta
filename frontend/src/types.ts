@@ -44,7 +44,7 @@ export interface Run {
   id: string; name: string; mode: string; status: string; stage: string; created_at: string; updated_at: string;
   manifest: RunInput; events: AuditEvent[]; reviews: Review[]; threat_model: ThreatModel | null; cases: TestCase[];
   executions: Record<string,unknown>[]; findings: Finding[]; gaps: unknown[]; limitations?: string[]; usage: {requests:number;model_calls:number;tokens:number};
-  artifacts: unknown[]; error: unknown;
+  artifacts: unknown[]; error: unknown; workers_pending_cleanup?: boolean;
 }
 export interface Capabilities { tools: {id:string;available:boolean;status:string;detail:string}[]; runtime: Record<string,unknown>; limitations: string[] }
 export interface Session { csrf_token: string; mode: string; limitations: string[] }

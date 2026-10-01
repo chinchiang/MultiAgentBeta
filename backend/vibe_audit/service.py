@@ -65,7 +65,7 @@ class Engine:
         self.store.save(run)
 
     def start(self, run_id: str, resume=False):
-        if run_id in self.tasks and not self.tasks[run_id].done():
+        if self.executing(run_id):
             raise PolicyError("Run is already executing")
         run=self.store.get(run_id)
         if not resume and run["status"]!="created":
@@ -96,6 +96,24 @@ class Engine:
         self.policy.revoke(run_id)
         run["status"]="cancelling"
         self.event(run,"Execution capabilities revoked; waiting for bounded in-flight operations", "warning")
+        return copy.deepcopy(run)
+
+    def executing(self,run_id):
+        return run_id in self.tasks and not self.tasks[run_id].done()
+
+    def reconcile(self,run_id,attestation):
+        # Only the operator can vouch for workers the supervisor could not confirm removed.
+        # The run closes but stays unresumable: workers_pending_cleanup remains set, so work continues in a new run.
+        if self.executing(run_id):
+            raise PolicyError("Run is still executing; wait for bounded workers to return")
+        run=self.runs.get(run_id) or self.store.get(run_id)
+        if run["status"]!="cancelling":
+            raise PolicyError("Only a run waiting for worker cleanup can be reconciled")
+        artifact=self.store.put_evidence(run_id,"operator-attestation",{"kind":"worker_cleanup","actor":"local_operator","attestation":attestation})
+        run["artifacts"].append(artifact)
+        run["gaps"].append("Worker cleanup was attested by the local operator, not confirmed by the supervisor")
+        run["status"]="blocked" if run.get("error") else "cancelled"
+        self.event(run,"Local operator attested worker cleanup; continue in a new run","warning")
         return copy.deepcopy(run)
 
     def check_active(self,run):

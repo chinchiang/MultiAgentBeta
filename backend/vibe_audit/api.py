@@ -181,7 +181,8 @@ def create_app(data_dir=None, database_url=None, testing=False, session_token=No
                     if event["seq"]>cursor:
                         cursor=event["seq"]
                         yield f"id: {cursor}\nevent: progress\ndata: {json.dumps(event,ensure_ascii=False)}\n\n"
-                if run["status"] not in {"running","cancelling","created"}:
+                # A cancelling run with no task left only changes through an operator reconcile.
+                if run["status"] not in {"running","cancelling","created"} or run["status"]=="cancelling" and not engine.executing(run_id):
                     yield "event: done\ndata: {}\n\n"
                     return
                 yield ": heartbeat\n\n"

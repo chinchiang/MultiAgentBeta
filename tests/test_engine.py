@@ -85,6 +85,20 @@ async def test_threat_and_case_gate_fail_closed(engine,mutation):
     with pytest.raises(PolicyError): engine.policy.case_gate(run)
 
 
+async def test_malformed_model_case_still_saves_the_blocked_run(engine,monkeypatch):
+    gate=engine.policy.case_gate
+    def omit_requirement(run):
+        # Model output can leave out any field; the gate must reject it and the save must still succeed.
+        del run["cases"][0]["requirement_id"]
+        run["cases"][0]["hash"]=sealed(run["cases"][0])
+        gate(run)
+    monkeypatch.setattr(engine.policy,"case_gate",omit_requirement)
+    run=await finished_demo(engine)
+    assert (run["stage"],run["status"],run["error"])==("case_design","blocked","Case security requirement mismatch")
+    engine.event(engine.runs[run["id"]],"Later event")
+    assert engine.store.get(run["id"])["events"][-1]["message"]=="Later event"
+
+
 async def test_capability_rejects_changed_case_and_manifest(engine):
     run=await finished_demo(engine)
     run.update(status="running",stage="blackbox")
@@ -154,6 +168,43 @@ def test_local_api_session_csrf_origin_host_and_source_boundary(tmp_path):
         assert response.status_code==201
         assert response.json()["mode"]=="demo"
         assert client.get("/api/runs").json()["runs"]
+
+
+def test_unconfirmed_worker_cleanup_closes_by_attestation_and_never_resumes(tmp_path):
+    store=Store(tmp_path)
+    run=Engine(store).create(RunInput(name="Stuck cleanup"))
+    run.update(status="running",workers_pending_cleanup=True)
+    store.save(run)
+    store.close()
+    with TestClient(create_app(tmp_path,testing=True)) as client:
+        headers={"X-CSRF-Token":open_session(client).json()["csrf_token"]}
+        base=f"/api/runs/{run['id']}"
+        assert client.get(base).json()["status"]=="cancelling"
+        # No task is left to move the run, so the stream ends instead of polling forever.
+        assert "event: done" in client.get(base+"/events").text
+        assert client.post(base+"/resume",headers=headers).status_code==409
+        assert client.post(base+"/reconcile",json={"attestation":""},headers=headers).status_code==422
+        response=client.post(base+"/reconcile",json={"attestation":"Removed worker containers by hand"},headers=headers)
+        assert response.status_code==200
+        reconciled=response.json()
+        assert reconciled["status"]=="blocked" and reconciled["workers_pending_cleanup"] is True
+        assert any("attested by the local operator" in gap for gap in reconciled["gaps"])
+        artifact=reconciled["artifacts"][-1]
+        assert artifact["producer"]=="operator-attestation"
+        assert client.get(f"{base}/evidence/{artifact['id']}").json()["content"]["attestation"]=="Removed worker containers by hand"
+        assert client.post(base+"/reconcile",json={"attestation":"again"},headers=headers).status_code==409
+        assert "outcome_unknown" in client.post(base+"/resume",headers=headers).json()["detail"]
+
+
+async def test_reconcile_waits_for_the_task_and_keeps_an_operator_cancel_cancelled(engine):
+    run=engine.create(RunInput(name="Cancelled with cleanup pending"))
+    run.update(status="cancelling",workers_pending_cleanup=True)
+    engine.store.save(run)
+    engine.tasks[run["id"]]=asyncio.get_running_loop().create_future()
+    with pytest.raises(PolicyError,match="still executing"):
+        engine.reconcile(run["id"],"done")
+    engine.tasks[run["id"]].set_result(None)
+    assert engine.reconcile(run["id"],"done")["status"]=="cancelled"
 
 
 @pytest.mark.parametrize("token",["x"*31,"x"*32+" ","x"*32+"#"])
