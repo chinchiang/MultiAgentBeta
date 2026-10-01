@@ -37,8 +37,8 @@ no network or filesystem isolation, refuses scanner commands, and returns
 Build the minimal worker using a verified base digest:
 
 ```sh
-docker build --build-arg BASE_IMAGE=python@sha256:<verified-digest> -t vibeaudit-worker:local -f deploy/worker/Dockerfile deploy/worker
-docker image inspect vibeaudit-worker:local --format '{{.Id}}'
+docker build --build-arg BASE_IMAGE=python@sha256:<verified-digest> -t vibeaudit-worker:test -f deploy/worker/Dockerfile deploy/worker
+docker image inspect vibeaudit-worker:test --format '{{.Id}}'
 ```
 
 Tool images must contain `python3` and the fixed tool executable. Static tools
@@ -47,7 +47,9 @@ database snapshot whose directory contains `osv-scanner/`; that directory is
 mounted read-only at `/opt/osv-db`. No database download is performed by a
 worker. Image installation/pulls occur only during trusted provisioning.
 
-Copy `runtime.example.json` to a protected configuration path, fill the image
+`scripts/provision-runtime.py` looks this tag up and records its image ID; the
+lease TTL it writes (10 seconds) is the one the Docker integration runs used.
+Or copy `runtime.example.json` to a protected configuration path, fill the image
 digests and optional `offline_db_dir`, and set `VIBEAUDIT_RUNTIME_CONFIG` plus
 the referenced database environment variable. Keep the work root private to
 the controller/supervisor account on a native Linux filesystem (Unix socket

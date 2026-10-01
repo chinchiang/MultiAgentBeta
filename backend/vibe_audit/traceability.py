@@ -19,6 +19,10 @@ def entities_and_links(run: dict) -> tuple[list[dict], list[dict]]:
             return
         links.append({"source_kind": source_kind, "source_id": str(source_id), "target_kind": target_kind, "target_id": str(target_id), "relation": relation})
     entity("run", run["id"], run["manifest"])
+    # A retest points back at what it re-checks; those entities live in the parent run's own trace.
+    link("run", run["id"], "run", run["manifest"].get("parent_run_id"), "retests")
+    for finding_id in _ids(run["manifest"].get("parent_finding_ids")):
+        link("run", run["id"], "finding", finding_id, "retests")
     tm = run.get("threat_model") or {}
     if tm:
         entity("threat_model", tm.get("id"), tm)

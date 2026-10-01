@@ -181,6 +181,15 @@ def test_workspace_settings_catalog_and_linked_retest(tmp_path):
         assert child["manifest"]["parent_run_id"]==run["id"]
         assert child["status"]=="created" and child["executions"]==[]
         assert len(child["manifest"]["cases"])==3
+        finding_id=run["findings"][0]["id"]
+        links=client.get(f"/api/runs/{child['id']}/trace").json()["links"]
+        assert {(l["target_kind"],l["target_id"]) for l in links if l["relation"]=="retests"}=={("run",run["id"]),("finding",finding_id)}
+        markdown=client.get(f"/api/runs/{child['id']}/report",params={"format":"markdown"}).text
+        assert "Retest of: "+run["id"]+" (findings: "+finding_id.replace("_","\\_")+")" in markdown
+        sarif=client.get(f"/api/runs/{child['id']}/report",params={"format":"sarif"}).json()["runs"][0]["properties"]
+        assert sarif=={"runId":child["id"],"retestOf":run["id"],"retestedFindingIds":[finding_id]}
+        assert "retestOf" not in client.get(f"/api/runs/{run['id']}/report",params={"format":"sarif"}).json()["runs"][0]["properties"]
+        assert "Retest of" not in client.get(f"/api/runs/{run['id']}/report",params={"format":"markdown"}).text
 
 
 def test_finding_decision_needs_independent_execution_evidence(tmp_path):

@@ -597,7 +597,10 @@ def report_markdown(run:dict)->str:
     for execution in run["executions"]:
         for key in ("case_id","status","reason"): execution[key]=safe(execution[key])
     run["gaps"]=[safe(value) for value in run["gaps"]]
-    lines=[f"# {run['name']}","",f"Run: {run['id']}",f"Mode: {run['mode']} | Status: {run['status']}","",run.get("report_note","Incomplete report; workflow has not finished"),"","## Findings",""]
+    manifest=run.get("manifest") or {}
+    # A retest report says what it re-checks, so a clean result is not read as a fresh assessment.
+    retest=[f"Retest of: {safe(manifest['parent_run_id'])} (findings: {', '.join(safe(value) for value in manifest.get('parent_finding_ids',[]))})"] if manifest.get("parent_run_id") else []
+    lines=[f"# {run['name']}","",f"Run: {run['id']}",*retest,f"Mode: {run['mode']} | Status: {run['status']}","",run.get("report_note","Incomplete report; workflow has not finished"),"","## Findings",""]
     for f in run["findings"]:
         lines.extend([f"- [{f['severity']} / {f['state']}] {f['title']}",f"  Evidence: {', '.join(f['evidence_ids'])}"])
     lines.extend(["","## Coverage gaps",""]+["- "+str(g) for g in run["gaps"]])
@@ -630,4 +633,8 @@ def report_sarif(run:dict)->dict:
         if f["state"]=="refuted":
             result["suppressions"]=[{"kind":"external","status":"accepted","justification":"Refuted by the local operator citing black-box evidence "+", ".join(f.get("counterevidence",[]))}]
         results.append(result)
-    return {"version":"2.1.0","$schema":"https://json.schemastore.org/sarif-2.1.0.json","runs":[{"tool":{"driver":{"name":"Vibe Audit","version":"0.2.0"}},"results":results}]}
+    manifest=run.get("manifest") or {}
+    properties={"runId":run["id"]}
+    if manifest.get("parent_run_id"):
+        properties.update(retestOf=manifest["parent_run_id"],retestedFindingIds=list(manifest.get("parent_finding_ids",[])))
+    return {"version":"2.1.0","$schema":"https://json.schemastore.org/sarif-2.1.0.json","runs":[{"tool":{"driver":{"name":"Vibe Audit","version":"0.2.0"}},"results":results,"properties":properties}]}
