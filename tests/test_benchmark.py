@@ -141,3 +141,31 @@ def test_live_provider_unknown_usage_reserves_allocation_and_stops_arm():
     single = next(r for r in report["records"] if r["arm"] == "single_a")
     assert single["usage"]["tokens"] == single["budget"]["max_tokens"]
     assert single["status"] == "blocked"
+
+
+def test_live_every_model_step_gets_equal_retry_attempts():
+    from vibe_audit.providers import MAX_ATTEMPTS
+    allowances = []
+    async def models(profile, system, payload, policy):
+        allowances.append(policy["max_model_calls"])
+        return {"data": {"finding_ids": [], "rationale": "Injected adapter"}, "usage": {"tokens": 10, "model_calls": 1}}
+    run_benchmark(mode="live", repetitions=1, profiles=_profiles(), model_policy={"data_policy": "local_only"}, model_runner=models)
+    assert len(allowances) == 26 and min(allowances) >= MAX_ATTEMPTS
+    with pytest.raises(BenchmarkError, match="attempts"):
+        run_benchmark(mode="live", repetitions=1, profiles=_profiles(), model_policy={"data_policy": "local_only"}, model_runner=models,
+                      budget={"max_tokens": 12000, "max_seconds": 60, "max_requests": 12, "max_model_calls": 6})
+
+
+def test_unfinished_arm_does_not_enter_quality_averages():
+    async def models(profile, system, payload, policy):
+        if payload["peer_reviews"]:
+            raise ValueError("Adjudicator returned an invalid contract")
+        return {"data": {"finding_ids": ["ast:eval:app.py:2"], "rationale": "Injected adapter"}, "usage": {"tokens": 10, "model_calls": 1}}
+    report = run_benchmark(mode="live", repetitions=1, profiles=_profiles(), model_policy={"data_policy": "local_only"}, model_runner=models)
+    debate = [r for r in report["records"] if r["arm"] == "debate"]
+    assert all(r["status"] == "incomplete" and r["preview_metrics"]["recall"] is not None for r in debate)
+    summary = report["summary"]["arms"]["debate"]["preview_metrics"]
+    assert summary["recall"] is None and summary["completion"] == 0
+    assert report["summary"]["arms"]["single_a"]["preview_metrics"]["recall"] is not None
+    paired = [p for p in report["summary"]["paired_comparisons"] if p["arm"] == "debate"]
+    assert all(p["paired_differences"]["recall"] is None and p["paired_differences"]["completion"] == -1 for p in paired)

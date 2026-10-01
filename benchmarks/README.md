@@ -35,7 +35,7 @@ python -m vibe_audit.benchmark --mode local_tools --output benchmarks/results-lo
 - Completion 分開記錄 completed/incomplete/blocked；耗盡預算或缺回應不得算完整。
 - 每組記錄 tokens、requests、model calls、宣告 latency、實測 runner wall time 與 cost。未知價格為 null，合成 token/latency 不冒充實際模型用量。
 
-彙總的品質指標為有定義樣本的 macro mean；原始 TP/FP/FN 仍逐筆保留。以 project/sample/repetition 配對 single A 產生差值，沒有自動做顯著性或降低偏誤的推論。正式比較應先註冊主要指標，以專案為 cluster 做配對重抽樣／信賴區間，不能將同一專案的多次重跑視為獨立樣本。效果研究尚未執行，因此本程式沒有假造 p 值或模型優勢。
+彙總的品質指標只取 completed 紀錄中有定義樣本的 macro mean；incomplete 紀錄的部分結果仍逐筆保留，但不進入平均，只計入 completion。原始 TP/FP/FN 仍逐筆保留。以 project/sample/repetition 配對 single A 產生差值，任一方未完成時只比較 completion，沒有自動做顯著性或降低偏誤的推論。正式比較應先註冊主要指標，以專案為 cluster 做配對重抽樣／信賴區間，不能將同一專案的多次重跑視為獨立樣本。效果研究尚未執行，因此本程式沒有假造 p 值或模型優勢。
 
 ## 真模型效果驗證前仍需提供
 
@@ -47,6 +47,6 @@ python -m vibe_audit.benchmark --mode local_tools --output benchmarks/results-lo
 
 可信 async `tool_runner(input_data, budget)` 必須回傳 `BENCHMARK_OBSERVATION_SCHEMA`。可在 host 設定中連接固定 sandbox 的 Semgrep／OSV／Gitleaks adapter，不可讓 dataset 或模型指定任意 Python import、shell 或工具。工具只能在分配到的時間與請求預算內執行；adapter 本身仍須在每次副作用前預留預算。超時或契約錯誤時所有依賴該工具輸出的組都 blocked，並保守保留資源上限。回傳的 finding ID 必須按人工 matching 規則正規化，不能把工具的 rule ID 當成漏洞實例 ID。
 
-每組共享同一 paired sample 的已封存 tool_context；其用量在每組預算中扣除，剩下額度再均分模型步驟。工具實際每個 pair 只執行一次，報告也保留 `shared_tool_contexts`；各組用量相加不能當作實際總工具花費。所有獨立初審 payload 一致且不包含 gold；debate 才取得匿名初審。模型無法自行宣布動態重現，只有可信工具／oracle adapter 可提供 reproduced_ids；未做重現時 reproduce_rate 為 null。
+每組共享同一 paired sample 的已封存 tool_context；其用量在每組預算中扣除，剩下額度再均分模型步驟。每個模型步驟至少要分到 provider 的重試次數（`MAX_ATTEMPTS`），各組才有相同的 schema 修正機會；live 預設 `max_model_calls` 因此是 8（debate 四步 × 2），傳入不足的預算會直接拒絕，工具用掉呼叫次數而不足時該步驟 blocked。工具實際每個 pair 只執行一次，報告也保留 `shared_tool_contexts`；各組用量相加不能當作實際總工具花費。所有獨立初審 payload 一致且不包含 gold；debate 才取得匿名初審。模型無法自行宣布動態重現，只有可信工具／oracle adapter 可提供 reproduced_ids；未做重現時 reproduce_rate 為 null。
 
 CLI 可用 `--mode live --config path/to/benchmark-config.json`，config 只接受 `profiles` 與 `model_policy`。profiles 的 a/b/c 各自符合既有 ModelProfile，金鑰只能用 `VIBEAUDIT_*` 環境變數參照。CLI 預設傳統工具仍是本地 AST；整合 sandbox 工具時使用 async API 注入。測試用注入 adapter 可驗證調度及預算，不代表真實模型品質。
