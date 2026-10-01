@@ -283,6 +283,11 @@ def test_local_api_session_csrf_origin_host_and_source_boundary(tmp_path):
         assert response.status_code==201
         assert response.json()["mode"]=="demo"
         assert client.get("/api/runs").json()["runs"]
+        for path in ["/api","/api/nope","/api/runs/x/nope"]:
+            response=client.get(path)
+            assert (response.status_code,response.headers["content-type"])==(404,"application/json")
+        assert client.get("/api/docs").status_code==200
+        assert "redoc" not in client.get("/redoc").text.lower()
 
 
 def test_unconfirmed_worker_cleanup_closes_by_attestation_and_never_resumes(tmp_path):

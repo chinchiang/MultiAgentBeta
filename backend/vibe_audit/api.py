@@ -56,7 +56,7 @@ def create_app(data_dir=None, database_url=None, testing=False, session_token=No
             await asyncio.gather(*pending,return_exceptions=True)
         store.close()
 
-    app=FastAPI(title="Vibe Audit",version="0.2.0",lifespan=lifespan,docs_url="/api/docs",openapi_url="/api/openapi.json")
+    app=FastAPI(title="Vibe Audit",version="0.2.0",lifespan=lifespan,docs_url="/api/docs",redoc_url=None,openapi_url="/api/openapi.json")
     app.state.store=store
     app.state.engine=engine
     app.state.session_token=session_token
@@ -239,6 +239,9 @@ def create_app(data_dir=None, database_url=None, testing=False, session_token=No
 
     @app.get("/{path:path}")
     async def frontend(path:str):
+        # A mistyped API call must fail as an API error, not succeed with the workbench HTML.
+        if path=="api" or path.startswith("api/"):
+            return JSONResponse({"detail":"Not Found"},status_code=404)
         dist=ROOT/"frontend"/"dist"
         candidate=(dist/path).resolve()
         if candidate.is_relative_to(dist.resolve()) and candidate.is_file():
