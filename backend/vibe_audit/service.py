@@ -606,9 +606,28 @@ def report_markdown(run:dict)->str:
     return "\n".join(lines)
 
 
+SARIF_LEVELS={"validated_dynamic":"error","corroborated_static":"warning","hypothesis":"note","inconclusive":"note","refuted":"none"}
+
+
 def report_sarif(run:dict)->dict:
+    # The level follows how far the evidence got: only an observed failure is an error.
+    cases={c["id"]:c for c in run.get("cases",[])}
+    exercised={e["evidence_id"]:cases[e["case_id"]] for e in run.get("executions",[]) if e.get("case_id") in cases}
     results=[]
     for f in run["findings"]:
+        case=next((exercised[e] for e in f["evidence_ids"] if e in exercised),None)
         if f.get("file") and isinstance(f.get("line"),int) and f["line"]>0:
-            results.append({"ruleId":f.get("cwe") or "security-hypothesis","level":"warning","message":{"text":f["title"]},"locations":[{"physicalLocation":{"artifactLocation":{"uri":f["file"]},"region":{"startLine":f["line"]}}}],"properties":{"evidenceState":f["state"],"runId":run["id"],"synthetic":run["mode"]=="demo"}})
+            rule=f.get("cwe") or "security-hypothesis"
+            location={"physicalLocation":{"artifactLocation":{"uri":f["file"]},"region":{"startLine":f["line"]}}}
+        elif case:
+            # A black-box finding lives at the endpoint it was observed on, not at a source line.
+            rule=f.get("cwe") or "blackbox-observation"
+            path=case.get("path") or "/"
+            location={"physicalLocation":{"artifactLocation":{"uri":run["manifest"].get("target_url","").rstrip("/")+path}},"logicalLocations":[{"name":case.get("method","GET")+" "+path,"kind":"resource"}]}
+        else:
+            continue
+        result={"ruleId":rule,"level":SARIF_LEVELS.get(f["state"],"warning"),"message":{"text":f["title"]},"locations":[location],"properties":{"evidenceState":f["state"],"severity":f["severity"],"runId":run["id"],"synthetic":run["mode"]=="demo"}}
+        if f["state"]=="refuted":
+            result["suppressions"]=[{"kind":"external","status":"accepted","justification":"Refuted by the local operator citing black-box evidence "+", ".join(f.get("counterevidence",[]))}]
+        results.append(result)
     return {"version":"2.1.0","$schema":"https://json.schemastore.org/sarif-2.1.0.json","runs":[{"tool":{"driver":{"name":"Vibe Audit","version":"0.2.0"}},"results":results}]}

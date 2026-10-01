@@ -47,6 +47,24 @@ async def test_end_to_end_demo_is_honest_and_preserves_minority(engine):
     assert report_sarif(run)["runs"][0]["results"][0]["properties"]["synthetic"] is True
 
 
+async def test_sarif_level_follows_evidence_and_keeps_blackbox_findings(engine):
+    run=await finished_demo(engine)
+    results=report_sarif(run)["runs"][0]["results"]
+    assert len(results)==len(run["findings"])
+    by_state={r["properties"]["evidenceState"]:r for r in results}
+    assert by_state["hypothesis"]["level"]=="note"
+    dynamic=by_state["validated_dynamic"]
+    assert dynamic["level"]=="error" and dynamic["ruleId"]=="blackbox-observation"
+    assert dynamic["locations"][0]["logicalLocations"]==[{"name":"GET /orders/private","kind":"resource"}]
+    assert dynamic["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]=="/orders/private"
+    refuted=copy.deepcopy(run)
+    finding=next(f for f in refuted["findings"] if f["state"]=="validated_dynamic")
+    finding.update(state="refuted",counterevidence=["E-pass"])
+    result=next(r for r in report_sarif(refuted)["runs"][0]["results"] if r["properties"]["evidenceState"]=="refuted")
+    assert result["level"]=="none" and result["suppressions"][0]["kind"]=="external"
+    assert "E-pass" in result["suppressions"][0]["justification"]
+
+
 async def test_catalog_failure_names_the_file(engine,tmp_path,monkeypatch):
     root=tmp_path/"catalog-copy"
     shutil.copytree(default_catalog_root(),root)
