@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import json
 from types import SimpleNamespace
@@ -325,6 +326,46 @@ async def test_installed_litellm_sdk_uses_guarded_http_transport(profile, policy
     assert captured[0].headers["host"] == "127.0.0.1:11434"
     outbound = json.loads(captured[0].content)
     assert outbound["model"] == model
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["refused", "connect_timeout", "dns"])
+@pytest.mark.parametrize("provider", ["openai_compatible", "anthropic"])
+async def test_unreachable_endpoint_is_known_zero_usage(profile, policy, monkeypatch, provider, failure):
+    # Nothing reached the provider, so the run may keep calling instead of latching unknown usage.
+    def handler(request):
+        if failure == "refused":
+            raise httpx.ConnectError("synthetic connection refused", request=request)
+        raise httpx.ConnectTimeout("synthetic connect timeout", request=request)
+    def init(transport, origin, pinned_ip):
+        transport.origin, transport.pinned_ip, transport.dispatched = origin, pinned_ip, False
+        transport.inner = httpx.MockTransport(handler)
+    monkeypatch.setattr(providers._OriginTransport, "__init__", init)
+    if failure == "dns":
+        async def no_dns(*args, **kwargs):
+            raise OSError("synthetic name resolution failure")
+        monkeypatch.setattr(asyncio.get_running_loop(), "getaddrinfo", no_dns)
+        monkeypatch.setenv("VIBEAUDIT_TEST_KEY", "synthetic")
+        profile.update(endpoint="https://model.example.invalid/v1", credential_env="VIBEAUDIT_TEST_KEY")
+        policy.update(data_policy="cloud_allowed", allowed_model_origins=["https://model.example.invalid"])
+    profile["provider"] = provider
+    with pytest.raises(providers.ProviderError) as error:
+        await providers.generate_json(profile, "Return JSON.", {}, policy)
+    assert error.value.code == "endpoint_unavailable"
+    assert error.value.usage["tokens_known"] is True and error.value.usage["tokens"] == 0
+
+
+@pytest.mark.asyncio
+async def test_failure_after_dispatch_keeps_usage_unknown(profile, policy, monkeypatch):
+    def handler(request):
+        raise httpx.ReadTimeout("synthetic read timeout", request=request)
+    def init(transport, origin, pinned_ip):
+        transport.origin, transport.pinned_ip, transport.dispatched = origin, pinned_ip, False
+        transport.inner = httpx.MockTransport(handler)
+    monkeypatch.setattr(providers._OriginTransport, "__init__", init)
+    with pytest.raises(providers.ProviderError) as error:
+        await providers.generate_json(profile, "Return JSON.", {}, policy)
+    assert error.value.usage["tokens_known"] is False
 
 
 @pytest.mark.asyncio

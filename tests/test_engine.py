@@ -167,6 +167,35 @@ async def test_time_budget_counts_active_time_across_resume_and_restart(engine,t
         engine.policy.authorize(restarted,restarted["cases"][0],asyncio.Event())
 
 
+@pytest.mark.parametrize("outcome",["success","known_failure","unknown_failure"])
+async def test_model_call_returns_its_reservation_once_usage_is_counted(engine,monkeypatch,outcome):
+    from vibe_audit.providers import ProviderError
+    run=engine.create(RunInput(name="Reservation"))
+    run["status"]="running"
+    engine.cancel_flags[run["id"]]=asyncio.Event()
+    engine.locks[run["id"]]=asyncio.Lock()
+    async def generate_json(profile,system,payload,policy):
+        await policy["request_hook"]()
+        assert run["reserved_tokens"]>0
+        if outcome=="success":
+            return {"data":{"ok":True},"usage":{"tokens":7}}
+        raise ProviderError("synthetic",code="endpoint_unavailable",usage={"model_calls":1,"tokens":0,"tokens_known":outcome=="known_failure"})
+    monkeypatch.setattr("vibe_audit.providers.generate_json",generate_json)
+    profile=run["manifest"]["models"][0]
+    if outcome=="success":
+        assert await engine.model(run,profile,"Return JSON.",{})=={"ok":True}
+    else:
+        with pytest.raises(ProviderError):
+            await engine.model(run,profile,"Return JSON.",{})
+    stored=engine.store.get(run["id"])
+    if outcome=="unknown_failure":
+        # The provider may have billed the call, so its reservation stays and the latch stops further calls.
+        assert stored["usage_unknown"] is True and stored["reserved_tokens"]>0
+    else:
+        assert stored["reserved_tokens"]==0 and not stored.get("usage_unknown")
+        assert stored["usage"]["tokens"]==(7 if outcome=="success" else 0)
+
+
 async def test_capability_rejects_changed_case_and_manifest(engine):
     run=await finished_demo(engine)
     run.update(status="running",stage="blackbox")

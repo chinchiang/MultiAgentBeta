@@ -186,6 +186,7 @@ class Engine:
             self.store.save(run)
 
     def model_policy(self,run,profile,payload):
+        reserved=[]
         async def reserve(*args,**kwargs):
             async with self.locks[run["id"]]:
                 self.check_active(run)
@@ -201,28 +202,38 @@ class Engine:
                     raise PolicyError("Insufficient token budget for bounded model request")
                 usage["model_calls"]+=1
                 run["reserved_tokens"]=run.get("reserved_tokens",0)+reserve_tokens
+                reserved.append(reserve_tokens)
                 self.store.save(run)
-        return dict(data_policy=run["manifest"]["data_policy"],allowed_model_origins=run["manifest"]["allowed_model_origins"],max_tokens=run["manifest"]["budget"]["max_tokens"],timeout_seconds=profile.get("timeout_seconds",60),request_hook=reserve)
+        def release():
+            # Counted usage replaces this call's upper-bound reservation; parallel calls keep theirs.
+            run["reserved_tokens"]=max(0,run.get("reserved_tokens",0)-sum(reserved))
+            reserved.clear()
+        return dict(data_policy=run["manifest"]["data_policy"],allowed_model_origins=run["manifest"]["allowed_model_origins"],max_tokens=run["manifest"]["budget"]["max_tokens"],timeout_seconds=profile.get("timeout_seconds",60),request_hook=reserve),release
 
     async def model(self,run,profile,instruction,payload,response_contract=None):
         from .providers import generate_json
         self.check_active(run)
-        policy=self.model_policy(run,profile,{"instruction":instruction,"payload":payload,"response_schema":response_contract.model_json_schema() if response_contract else None})
+        policy,release=self.model_policy(run,profile,{"instruction":instruction,"payload":payload,"response_schema":response_contract.model_json_schema() if response_contract else None})
         if response_contract:
             policy["response_schema"]=response_contract.model_json_schema()
+        counted=False
         try:
             result=await generate_json(profile,SYSTEM+"\n"+instruction,payload,policy)
             run["usage"]["tokens"]+=int(result["usage"]["tokens"])
+            counted=True
             return response_contract.model_validate(result["data"]).model_dump() if response_contract else result["data"]
         except Exception as exc:
             used=getattr(exc,"usage",{})
             run["usage"]["tokens"]+=int(used.get("tokens",0) or 0)
-            if used.get("tokens_known") is False:
+            counted=used.get("tokens_known") is not False
+            if not counted:
                 run["usage_unknown"]=True
                 run["usage"]["tokens_known"]=False
             raise
         finally:
-            # Parallel reviews reserve separately; reservations are conservatively retained until stage barrier.
+            # A cancelled call or one with unknown usage keeps its reservation.
+            if counted:
+                release()
             self.store.save(run)
 
     def profile(self,run,role):
@@ -269,7 +280,7 @@ class Engine:
             run["gaps"].extend(source["gaps"])
             run.setdefault("limitations",[]).extend(source.get("limitations",[]))
             for profile in run["manifest"]["models"]:
-                policy=self.model_policy(run,profile,{"probe":True})
+                policy,release=self.model_policy(run,profile,{"probe":True})
                 try:
                     result=await probe_model(profile,policy)
                 except Exception as exc:
@@ -278,6 +289,8 @@ class Engine:
                     if used.get("tokens_known") is False:
                         run["usage_unknown"]=True
                         run["usage"]["tokens_known"]=False
+                    else:
+                        release()
                     raise
                 run["usage"]["tokens"]+=int(result.get("usage",{}).get("tokens",0) or 0)
                 run["model_probes"].append(dict(agent_id=profile["id"],**result))
