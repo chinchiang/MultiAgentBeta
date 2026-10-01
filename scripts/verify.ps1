@@ -15,4 +15,7 @@ try {
     npm.cmd run build
     if ($LASTEXITCODE -ne 0) { throw 'Frontend build failed.' }
 } finally { Pop-Location }
+# The committed manifest must hash exactly the sources and the UI build just produced.
+& $PythonExecutable scripts/package-release.py --check
+if ($LASTEXITCODE -ne 0) { throw 'Source manifest is stale.' }
 Write-Output 'Local checks passed. See docs/VALIDATION.md for untested integrations.'

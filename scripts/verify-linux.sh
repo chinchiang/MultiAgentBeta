@@ -6,3 +6,4 @@ python_executable="${VIBEAUDIT_PYTHON:-$project_root/.venv/bin/python}"
 export PYTHONPATH="$project_root/backend"
 "$python_executable" -m pip check
 "$python_executable" -m pytest tests -q --junitxml=docs/linux-regression.xml
+"$python_executable" scripts/package-release.py --check
