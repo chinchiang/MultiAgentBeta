@@ -340,9 +340,8 @@ async def test_positive_control_needs_exact_scope_and_sealed_case_authorization(
     assert run["usage"]["requests"]==used
 
 
-@pytest.mark.parametrize("provenance",["model","retest","operator"])
-async def test_model_designed_post_cannot_declare_itself_read_only(engine,monkeypatch,provenance):
-    from vibe_audit import adapters
+async def live_post_case(engine,*,adapter,provenance):
+    """Turn a finished demo into a live blackbox stage holding one POST case."""
     run=await finished_demo(engine)
     run.update(mode="live",status="running",stage="blackbox",executions=[])
     manifest=run["manifest"]
@@ -356,7 +355,7 @@ async def test_model_designed_post_cannot_declare_itself_read_only(engine,monkey
     run["threat_model"]["requirements"]=run["threat_model"]["requirements"][:1]
     run["threat_model"]["hash"]=sealed(run["threat_model"])
     case=copy.deepcopy(run["cases"][0])
-    case.update(adapter="http",method="POST",body={},preconditions=[],side_effects=False,threat_model_hash=run["threat_model"]["hash"])
+    case.update(adapter=adapter,method="POST",body={},preconditions=[],side_effects=False,threat_model_hash=run["threat_model"]["hash"])
     if provenance!="operator":
         case["designed_by"]="model"
     # A retest copies the parent's sealed cases, model-designed ones included, into its manifest.
@@ -365,6 +364,13 @@ async def test_model_designed_post_cannot_declare_itself_read_only(engine,monkey
     case["hash"]=sealed(case)
     run["cases"]=[case]
     run["usage"]["requests"]=0
+    return run
+
+
+@pytest.mark.parametrize("provenance",["model","retest","operator"])
+async def test_model_designed_post_cannot_declare_itself_read_only(engine,monkeypatch,provenance):
+    from vibe_audit import adapters
+    run=await live_post_case(engine,adapter="http",provenance=provenance)
     dispatched=[]
     def synthetic_request(scheme,host,port,pinned,method,path,*rest):
         dispatched.append((method,path))
@@ -384,3 +390,21 @@ async def test_model_designed_post_cannot_declare_itself_read_only(engine,monkey
         assert dispatched==[]
         assert run["executions"][0]["status"]=="blocked"
         assert run["usage"]["requests"]==0
+
+
+@pytest.mark.parametrize("provenance",["model","operator"])
+async def test_tool_adapter_cannot_bypass_side_effect_gate(engine,monkeypatch,provenance):
+    run=await live_post_case(engine,adapter="schemathesis",provenance=provenance)
+    dispatched=[]
+    class ToolRuntime:
+        async def execute_tool(self,spec,**kwargs):
+            dispatched.append(spec["tool_id"])
+            return {"status":"execution_error","reason":"synthetic tool","cleanup_confirmed":True}
+    monkeypatch.setattr(engine,"runtime",lambda _:ToolRuntime())
+    await engine._blackbox(run)
+    if provenance=="operator":
+        assert dispatched==["schemathesis"]
+    else:
+        assert dispatched==[]
+        assert run["executions"][0]["status"]=="blocked"
+        assert "reset/cleanup fixture" in run["executions"][0]["reason"]

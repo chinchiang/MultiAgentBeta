@@ -484,11 +484,12 @@ class Engine:
                     if fixture:
                         from .fixture_protocol import run_fixture_case
                         result=await run_fixture_case(runtime,manifest,case,fixture_profile=case.get("fixture_profile") or manifest["fixture_profile"],cancel_event=self.cancel_flags[run["id"]],request_hook=request_hook,lease_hook=lease_hook,repetitions=case.get("repetitions",5))
+                    # Tool adapters send the case's method too, so they take the same side-effect gate.
+                    elif side_effects:
+                        result={"status":"blocked","reason":"A state-changing case needs a registered reset/cleanup fixture protocol","observations":[],"evidence":[],"requests":0}
                     elif case["adapter"] in {"zap","schemathesis","playwright","promptfoo","pyrit"}:
                         from .tool_runners import run_tool
                         result=await run_tool(runtime,case["adapter"],manifest,case,cancel_event=self.cancel_flags[run["id"]],request_hook=request_hook,lease_hook=lease_hook,repetition=repetition)
-                    elif side_effects:
-                        result={"status":"blocked","reason":"A state-changing case needs a registered reset/cleanup fixture protocol","observations":[],"evidence":[],"requests":0}
                     else:
                         result=await runtime.run_case(manifest,case,cancel_event=self.cancel_flags[run["id"]],request_hook=request_hook,lease_hook=lease_hook,repetition=repetition)
                     if "security_status" in result:

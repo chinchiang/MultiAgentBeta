@@ -361,6 +361,9 @@ async def test_retry_policy_denial_retains_previous_billed_usage(profile, policy
     "-----BEGIN PGP PRIVATE KEY BLOCK-----\nsynthetic-secret\n-----END PGP PRIVATE KEY BLOCK-----",
     "stripe = sk_live_" + "s" * 24, "slack = xoxb-" + "1" * 12, "maps = AIza" + "s" * 35,
     "jwt = eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJzeW50aGV0aWMifQ.c3ludGhldGljLXNpZ25hdHVyZQ",
+    # Keys after blank lines or on the line after a separator, and schemes behind a dotted prefix.
+    "\n\n   password: synthetic-secret", "Server=db;\r\nPassword=synthetic-secret",
+    "url = svc.db.postgres://app:synthetic-secret@db/app", "define('my-secret', 'synthetic-secret')",
 ])
 def test_redaction_covers_common_secret_formats(content):
     redacted = redact_text(content)
@@ -373,6 +376,17 @@ def test_redaction_covers_common_secret_formats(content):
 def test_redaction_keeps_security_relevant_code_readable(content):
     # Reviewers must still see how credentials are handled, not only that they exist.
     assert redact_text(content) == content
+
+
+@pytest.mark.parametrize("unit", ["a", "token", "secret_", "\n", " \n", "a.", "a+", "define('token", "export token_"])
+def test_redaction_stays_linear_on_hostile_single_token_files(unit):
+    # Each of these took minutes at the per-file limit with backtracking name scans.
+    import time
+    from vibe_audit.snapshot import MAX_FILE_BYTES
+    content = (unit * (MAX_FILE_BYTES // len(unit) + 1))[:MAX_FILE_BYTES]
+    started = time.perf_counter()
+    redact_text(content)
+    assert time.perf_counter() - started < 2
 
 
 def test_snapshot_skips_container_and_cluster_credential_dirs(tmp_path):
