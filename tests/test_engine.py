@@ -99,6 +99,74 @@ async def test_malformed_model_case_still_saves_the_blocked_run(engine,monkeypat
     assert engine.store.get(run["id"])["events"][-1]["message"]=="Later event"
 
 
+async def test_whitebox_resume_keeps_paid_reviews_and_sealed_scans(engine,monkeypatch):
+    run=await finished_demo(engine)
+    run.update(mode="live",status="running",stage="whitebox",reviews=[],tool_results=[],commander_plan=None)
+    manifest=run["manifest"]
+    manifest.update(mode="live",static_tools=["semgrep","osv"])
+    for profile in manifest["models"]:
+        profile.update(provider="openai_compatible",endpoint="http://127.0.0.1:11434/v1")
+    run["manifest_hash"]=digest(manifest)
+    run.update(staging={"path":"unused"},tool_manifest={"tools":1},runtime_config_hash="h")
+    engine.runtime_configs["h"]={}
+    monkeypatch.setattr("vibe_audit.staging.verify_staging",lambda staging:True)
+    monkeypatch.setattr("vibe_audit.resource_manifest.resource_manifest",lambda config,tools:{"tools":1})
+    scans,calls=[],[]
+    class Runtime:
+        async def run_scanner(self,tool,path,**kwargs):
+            scans.append(tool)
+            return {"status":"completed","findings":[{"file":"app.py","line":1,"title":tool,"rule_id":tool}],"gaps":[],"limitations":[]}
+    monkeypatch.setattr(engine,"runtime",lambda run:Runtime())
+    reviewers=[p["id"] for p in manifest["models"] if p["role"]=="reviewer"]
+    failing={reviewers[-1]}
+    async def model(run,profile,instruction,payload,contract=None):
+        calls.append(profile["id"])
+        if profile["role"]=="commander":
+            return {"reviewer_order":reviewers,"focus":["Billing export"],"rationale":"r"}
+        if profile["id"] in failing:
+            raise RuntimeError("transient provider failure")
+        return {"findings":[],"gaps":[]}
+    monkeypatch.setattr(engine,"model",model)
+    engine.cancel_flags[run["id"]]=asyncio.Event()
+    with pytest.raises(PolicyError,match="Incomplete review"):
+        await engine._whitebox(run)
+    focus=list(run["commander_plan"]["focus"])
+    failing.clear()
+    calls.clear()
+    await engine._whitebox(run)
+    # Only the reviewer that failed is called again; scanner results are not appended twice.
+    assert calls==reviewers[-1:]
+    assert scans==["semgrep","osv"] and [r["scanner_id"] for r in run["tool_results"]]==["semgrep","osv"]
+    assert [r["agent_id"] for r in run["reviews"]]==reviewers and all(r["status"]=="completed" for r in run["reviews"])
+    assert run["commander_plan"]["focus"]==focus
+
+
+async def test_time_budget_counts_active_time_across_resume_and_restart(engine,tmp_path):
+    run=await finished_demo(engine)
+    budget=run["manifest"]["budget"]["max_seconds"]
+    spent=run["active_seconds"]
+    assert run["attempt_started_at"] is None and 0<spent<budget
+    # The pause before resuming outlasts the whole budget; only the active time counts.
+    run["started_at"]="2026-01-01T00:00:00+00:00"
+    engine.store.save(run)
+    engine.start(run["id"],resume=True)
+    await engine.tasks[run["id"]]
+    resumed=engine.store.get(run["id"])
+    assert (resumed["status"],resumed["error"])==("incomplete",None)
+    assert spent<=resumed["active_seconds"]<budget
+    # A controller restart charges the interrupted attempt up to its last save.
+    resumed.update(status="running",attempt_started_at="2026-01-01T00:00:00+00:00")
+    engine.store.save(resumed)
+    restarted=Engine(engine.store).store.get(run["id"])
+    assert restarted["attempt_started_at"] is None and restarted["active_seconds"]>budget
+    with pytest.raises(PolicyError,match="Time budget exhausted"):
+        engine.check_active(restarted)
+    restarted.update(status="running",stage="blackbox")
+    engine.policy.case_gate(restarted)
+    with pytest.raises(PolicyError,match="Run time budget exhausted"):
+        engine.policy.authorize(restarted,restarted["cases"][0],asyncio.Event())
+
+
 async def test_capability_rejects_changed_case_and_manifest(engine):
     run=await finished_demo(engine)
     run.update(status="running",stage="blackbox")

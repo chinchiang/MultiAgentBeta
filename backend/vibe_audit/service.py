@@ -6,7 +6,7 @@ import json
 import html
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import TypedDict
 
 from langgraph.graph import StateGraph, START, END
@@ -14,7 +14,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 
 from .catalog import CatalogError
 from .domain import RunInput, digest, new_run, now
-from .policy import Policy, PolicyError, sealed
+from .policy import Policy, PolicyError, elapsed_seconds, sealed
 from .store import Store
 from .contracts import (CORE_REVIEW_QUESTIONS, CommanderProposal, ArchitectureProposal,
                         ReviewProposal, ThreatModelProposal, ReportOrderProposal, complete_requirements, verify_source_references)
@@ -43,6 +43,11 @@ class Engine:
             if run["status"] in {"running","cancelling"}:
                 run["status"]="cancelling" if run.get("workers_pending_cleanup") else "incomplete"
                 run["error"]="Controller restarted; execution journal must be reconciled before resume"
+                if run.get("attempt_started_at"):
+                    # The interrupted attempt was active until its last save at the latest.
+                    attempt=(datetime.fromisoformat(run["updated_at"])-datetime.fromisoformat(run["attempt_started_at"])).total_seconds()
+                    run["active_seconds"]=run.get("active_seconds",0)+max(0,attempt)
+                    run["attempt_started_at"]=None
                 if run.get("reserved_tokens",0)>0:
                     run["usage_unknown"]=True
                     run["usage"]["tokens_known"]=False
@@ -84,6 +89,7 @@ class Engine:
         run["status"]="running"
         run["error"]=None
         run["started_at"]=run.get("started_at") or now()
+        run["attempt_started_at"]=now()
         self.event(run,"Resuming journaled workflow" if resume else "Starting evidence-gated workflow")
         self.tasks[run_id]=asyncio.create_task(self._run(run))
         return copy.deepcopy(run)
@@ -119,7 +125,7 @@ class Engine:
     def check_active(self,run):
         if self.cancel_flags[run["id"]].is_set():
             raise asyncio.CancelledError()
-        if run.get("started_at") and (datetime.now(timezone.utc)-datetime.fromisoformat(run["started_at"])).total_seconds()>run["manifest"]["budget"]["max_seconds"]:
+        if elapsed_seconds(run)>run["manifest"]["budget"]["max_seconds"]:
             raise PolicyError("Time budget exhausted; remaining work is incomplete")
 
     async def _run(self,run):
@@ -175,6 +181,8 @@ class Engine:
             self.event(run,run["error"],"error")
         finally:
             self.policy.revoke(run["id"])
+            run["active_seconds"]=elapsed_seconds(run)
+            run["attempt_started_at"]=None
             self.store.save(run)
 
     def model_policy(self,run,profile,payload):
@@ -299,7 +307,11 @@ class Engine:
         if current!=run["tool_manifest"]:
             raise PolicyError("Scanner versions, rules or offline data changed after preflight")
         manifest={**run["manifest"],"run_id":run["id"],"source_digest":run["source_digest"]}
+        recorded={r.get("scanner_id") for r in run.get("tool_results",[])}
         for tool in run["manifest"].get("static_tools",[]):
+            if tool in recorded:
+                # A result is sealed with its evidence and gaps; a second scan would duplicate every finding.
+                continue
             self.check_active(run)
             async def lease_hook(*args,**kwargs):
                 self.check_active(run)
@@ -318,11 +330,16 @@ class Engine:
         return self.store.evidence(next(a for a in run["artifacts"] if a["id"]==run["snapshot_id"]),run["id"])["content"]
 
     async def _whitebox(self,run):
+        # Resume reruns this stage: keep the plan and the reviews an earlier attempt already paid for.
+        done={r["agent_id"]:r for r in run.get("reviews",[]) if r["status"]=="completed" and r["input_hash"]==run["source_digest"]}
         run["reviews"]=[]
         profiles=[p for p in run["manifest"]["models"] if p["role"]=="reviewer"]
         commander=next(p for p in run["manifest"]["models"] if p["role"]=="commander")
         source=self.source(run)
-        if run["mode"]=="live":
+        if run["mode"]=="live" and run.get("commander_plan"):
+            by_id={p["id"]:p for p in profiles}
+            profiles=[by_id[agent_id] for agent_id in run["commander_plan"]["reviewer_order"]]
+        elif run["mode"]=="live":
             plan=await self.model(run,commander,'Plan an independent review. All provided reviewer IDs exactly once; all reviewers cover the SAME core scope. Add focus questions, never delete required coverage.',{"reviewers":[p["id"] for p in profiles],"source_inventory":[f["path"] for f in source["files"]],"user_requirements":run["manifest"]["notes"],"core_questions":CORE_REVIEW_QUESTIONS},CommanderProposal)
             if set(plan.get("reviewer_order",[]))!={p["id"] for p in profiles} or len(plan["reviewer_order"])!=3:
                 raise PolicyError("Commander proposal does not preserve three independent reviews")
@@ -357,8 +374,10 @@ class Engine:
             return dict(agent_id=profile["id"],provider=profile["provider"],model_id=profile["model_id"],family=profile["family"],status="completed",findings=findings,gaps=data["gaps"],input_hash=run["source_digest"],simulated=run["mode"]=="demo")
         # Independent contexts; publish the sealed batch only after all reviewers finish.
         scanner_task=asyncio.create_task(self._scan_source(run))
-        results=await asyncio.gather(*(review(p) for p in profiles),return_exceptions=True)
-        for p,result in zip(profiles,results):
+        pending=[p for p in profiles if p["id"] not in done]
+        results=dict(zip([p["id"] for p in pending],await asyncio.gather(*(review(p) for p in pending),return_exceptions=True)))
+        for p in profiles:
+            result=done[p["id"]] if p["id"] in done else results[p["id"]]
             if isinstance(result,BaseException):
                 run["reviews"].append(dict(agent_id=p["id"],provider=p["provider"],model_id=p["model_id"],family=p["family"],status="incomplete",findings=[],gaps=[type(result).__name__],input_hash=run["source_digest"],simulated=False))
             else:
