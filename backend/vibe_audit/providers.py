@@ -80,6 +80,12 @@ def _validate_profile(profile: dict, policy: dict) -> tuple[str, str, str]:
         raise ProviderError("model_id must be the provider's model identifier, without a routing prefix", code="invalid_model")
     endpoint = profile.get("endpoint", "")
     origin, host = _origin(endpoint)
+    mode = policy.get("data_policy")
+    if mode not in {"local_only", "cloud_allowed"}:
+        raise ProviderError("An explicit data policy is required", code="data_policy_denied")
+    local = _is_loopback(host)
+    if mode == "local_only" and not local:
+        raise ProviderError("local_only permits only literal loopback model endpoints", code="data_policy_denied")
     allowed = policy.get("allowed_model_origins", [])
     if not isinstance(allowed, list):
         raise ProviderError("allowed_model_origins must be an explicit list", code="origin_denied")
@@ -89,14 +95,9 @@ def _validate_profile(profile: dict, policy: dict) -> tuple[str, str, str]:
         if parsed.path not in {"", "/"}:
             raise ProviderError("Allowlist entries must be origins, without paths", code="origin_denied")
         origins.add(_origin(entry)[0])
-    if origin not in origins:
+    # local_only: a literal loopback endpoint is the allowlist (the UI sends none); a nonempty list still narrows it.
+    if origin not in origins and (mode == "cloud_allowed" or origins):
         raise ProviderError("Model endpoint origin is not explicitly allowed", code="origin_denied")
-    mode = policy.get("data_policy")
-    if mode not in {"local_only", "cloud_allowed"}:
-        raise ProviderError("An explicit data policy is required", code="data_policy_denied")
-    local = _is_loopback(host)
-    if mode == "local_only" and not local:
-        raise ProviderError("local_only permits only literal loopback model endpoints", code="data_policy_denied")
     if not local and not endpoint.startswith("https://"):
         raise ProviderError("Non-loopback model endpoints require HTTPS", code="invalid_endpoint")
     credential_env = profile.get("credential_env", "")

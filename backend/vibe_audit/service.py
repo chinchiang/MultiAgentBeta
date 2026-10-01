@@ -12,6 +12,7 @@ from typing import TypedDict
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import InMemorySaver
 
+from .catalog import CatalogError
 from .domain import RunInput, digest, new_run, now
 from .policy import Policy, PolicyError, sealed
 from .store import Store
@@ -144,7 +145,8 @@ class Engine:
                 return
             run["status"]="cancelling" if run.get("workers_pending_cleanup") else "blocked" if isinstance(exc,PolicyError) else "failed"
             # Exception bodies from provider/targets can include sensitive data: never expose them.
-            run["error"]=str(exc) if isinstance(exc,PolicyError) else f"{type(exc).__name__}: operation failed; no successful verification claimed"
+            # Policy and catalog messages are fixed local text, so they stay diagnosable.
+            run["error"]=str(exc) if isinstance(exc,(PolicyError,CatalogError)) else f"{type(exc).__name__}: operation failed; no successful verification claimed"
             self.event(run,run["error"],"error")
         finally:
             self.policy.revoke(run["id"])

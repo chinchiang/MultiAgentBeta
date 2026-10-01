@@ -51,7 +51,7 @@ async def test_generation_uses_explicit_agent_and_metering(profile, policy, fake
     assert calls[0][-1] == 30
 
 
-@pytest.mark.parametrize("endpoint,allow", [("https://api.example.com/v1", ["https://api.example.com"]), ("http://localhost:11434/v1", ["http://localhost:11434"]), ("http://192.168.1.5/v1", ["http://192.168.1.5"])])
+@pytest.mark.parametrize("endpoint,allow", [("https://api.example.com/v1", ["https://api.example.com"]), ("http://localhost:11434/v1", ["http://localhost:11434"]), ("http://192.168.1.5/v1", ["http://192.168.1.5"]), ("http://localhost:11434/v1", []), ("http://0.0.0.0:11434/v1", [])])
 @pytest.mark.asyncio
 async def test_local_only_denies_nonliteral_loopback(profile, policy, fake_provider, endpoint, allow):
     profile["endpoint"] = endpoint
@@ -72,10 +72,16 @@ async def test_endpoint_ambiguity_rejected(profile, policy, fake_provider, endpo
 
 @pytest.mark.asyncio
 async def test_explicit_origin_and_credential_references(profile, policy, fake_provider, monkeypatch):
+    policy["allowed_model_origins"] = ["http://127.0.0.1:9999"]
+    with pytest.raises(providers.ProviderError) as err:
+        await providers.generate_json(profile, "Review", {}, policy)
+    assert err.value.code == "origin_denied"
+    policy["data_policy"] = "cloud_allowed"
     policy["allowed_model_origins"] = []
     with pytest.raises(providers.ProviderError) as err:
         await providers.generate_json(profile, "Review", {}, policy)
     assert err.value.code == "origin_denied"
+    policy["data_policy"] = "local_only"
     policy["allowed_model_origins"] = ["http://127.0.0.1:11434"]
     profile["credential_env"] = "OPENAI_API_KEY"
     with pytest.raises(providers.ProviderError) as err:
@@ -85,6 +91,27 @@ async def test_explicit_origin_and_credential_references(profile, policy, fake_p
     monkeypatch.setenv("VIBEAUDIT_TEST_KEY", "synthetic-test-key")
     await providers.generate_json(profile, "Review", {}, policy)
     assert fake_provider[0][0][4] == "synthetic-test-key"
+
+
+@pytest.mark.parametrize("endpoint", ["http://127.0.0.1:11434/v1", "http://[::1]:11434/v1"])
+@pytest.mark.asyncio
+async def test_local_only_loopback_needs_no_origin_list(profile, policy, fake_provider, endpoint):
+    # The workbench disables the origins field under local_only and sends [].
+    profile["endpoint"] = endpoint
+    policy["allowed_model_origins"] = []
+    await providers.generate_json(profile, "Review", {}, policy)
+    assert fake_provider[0]
+
+
+@pytest.mark.parametrize("allow", [[], ["http://127.0.0.1:11434"]])
+@pytest.mark.asyncio
+async def test_missing_data_policy_is_denied(profile, policy, fake_provider, allow):
+    del policy["data_policy"]
+    policy["allowed_model_origins"] = allow
+    with pytest.raises(providers.ProviderError) as err:
+        await providers.generate_json(profile, "Review", {}, policy)
+    assert err.value.code == "data_policy_denied"
+    assert not fake_provider[0]
 
 
 @pytest.mark.asyncio

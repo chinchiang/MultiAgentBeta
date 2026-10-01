@@ -32,6 +32,8 @@ def _read_checked(root: Path, relative: str, expected: str) -> bytes:
     except OSError as exc:
         raise CatalogError(f"Catalog file unavailable: {relative}") from exc
     if len(data) > 30_000_000 or hashlib.sha256(data).hexdigest() != expected:
+        if hashlib.sha256(data.replace(b"\r\n", b"\n")).hexdigest() == expected:
+            raise CatalogError(f"Catalog integrity mismatch: {relative} has converted line endings; check it out again with the repository .gitattributes")
         raise CatalogError(f"Catalog integrity mismatch: {relative}")
     return data
 
