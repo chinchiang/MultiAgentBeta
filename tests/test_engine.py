@@ -401,7 +401,8 @@ def test_local_api_session_csrf_origin_host_and_source_boundary(tmp_path):
         assert client.get("/api/runs",headers={"X-CSRF-Token":renewed}).status_code==200
 
 
-def test_unconfirmed_worker_cleanup_closes_by_attestation_and_never_resumes(tmp_path):
+def test_unconfirmed_worker_cleanup_closes_by_attestation_and_never_resumes(tmp_path,monkeypatch):
+    monkeypatch.delenv("VIBEAUDIT_DATABASE_URL",raising=False)
     store=Store(tmp_path)
     run=Engine(store).create(RunInput(name="Stuck cleanup"))
     run.update(status="running",workers_pending_cleanup=True)
@@ -568,7 +569,8 @@ def test_artifact_cannot_be_reassigned_to_other_run(tmp_path):
     store.close()
 
 
-def test_chunked_api_body_limit_does_not_trust_content_length(tmp_path):
+def test_chunked_api_body_limit_does_not_trust_content_length(tmp_path,monkeypatch):
+    monkeypatch.delenv("VIBEAUDIT_DATABASE_URL",raising=False)
     with TestClient(create_app(tmp_path,testing=True)) as client:
         csrf=authorize(client)
         def chunks():
@@ -584,7 +586,8 @@ def test_chunked_api_body_limit_does_not_trust_content_length(tmp_path):
 
 
 @pytest.mark.parametrize("length",["not-a-number","-1"])
-def test_invalid_content_length_is_rejected_without_creating_run(tmp_path,length):
+def test_invalid_content_length_is_rejected_without_creating_run(tmp_path,monkeypatch,length):
+    monkeypatch.delenv("VIBEAUDIT_DATABASE_URL",raising=False)
     with TestClient(create_app(tmp_path,testing=True)) as client:
         csrf=authorize(client)
         response=client.post("/api/runs",content=b'{"mode":"demo"}',headers={
