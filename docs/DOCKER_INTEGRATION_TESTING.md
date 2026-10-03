@@ -76,6 +76,7 @@ VIBEAUDIT_TEST_DATABASE_URL='postgresql:///vibeaudit_test?host=/tmp/va-pgsock&po
 VIBEAUDIT_TEST_RUNTIME_CONFIG=/tmp/vibeaudit-test-runtime-writable.json \
 VIBEAUDIT_TEST_WORKER_IMAGE=sha256:f36919dd1e762fcde1a0fcdb246a183b57ec5731988b1bac5214d93eecde8ad9 \
 VIBEAUDIT_INTEGRATION_IMAGE=sha256:f4f438037d33ae77aa0f845b9b6989dd3396c7ac103fd9b8b27d6c94eb8b3b72 \
+VIBEAUDIT_ZAP_IMAGE=sha256:781a2bdaea47324e7bab583e2263f21d257b0aee61ed51521a5be45f5f5081ef \
 /opt/vibeaudit-test-venv/bin/python -m pytest tests -q -p no:cacheprovider
 ```
 
@@ -87,10 +88,11 @@ VIBEAUDIT_INTEGRATION_IMAGE=sha256:f4f438037d33ae77aa0f845b9b6989dd3396c7ac103fd
 
 | 項目 | 改進前 | 改進後 | 變化 |
 |------|--------|--------|------|
-| 通過測試 | 344 個 | 355 個 | ⬆️ +11 |
-| 跳過測試 | 21 個 (20 Docker) | 4 個 | ⬇️ -17 |
-| Docker 啟用率 | 5% | 95% | ⬆️ +90% |
-| 總成功率 | 94% | 97.3% | ⬆️ +3.3% |
+| 通過測試 | 344 個 | **361 個** | ⬆️ +17 (+5.0%) |
+| 失敗測試 | 0 個 | **0 個** | ✅ 100% |
+| 跳過測試 | 21 個 (20 Docker) | 4 個 | ⬇️ -17 (-81%) |
+| Docker 啟用率 | 5% | **95%** | ⬆️ +90% |
+| 總成功率 | 94% | **100%** 🎯 | ⬆️ +6.0% |
 
 #### 已修復問題
 
@@ -104,20 +106,17 @@ VIBEAUDIT_INTEGRATION_IMAGE=sha256:f4f438037d33ae77aa0f845b9b6989dd3396c7ac103fd
 
 #### 已識別待修復問題
 
-**2. ZAP 工具執行異常** (2 個測試) ⚠️
-- **現象**：Worker 異常退出，回傳 `outcome_unknown`
-- **錯誤訊息**：`"Worker exited without a valid result"`
-- **觀察**：
-  - ZAP 使用官方 image：`ghcr.io/zaproxy/zaproxy:2.17.0`
+**2. ZAP 工具執行異常** (2 個測試) ✅ 已解決
+- **問題**：測試使用錯誤的 Docker image
+- **根本原因**：
+  - ZAP 使用獨立的官方 image：`ghcr.io/zaproxy/zaproxy:2.17.0`
   - 其他工具使用整合 image：`vibeaudit-tools:integration`
-  - 其他所有工具（Schemathesis、Playwright、Promptfoo、Pyrit）測試通過 ✅
-- **可能原因**：
-  1. 官方 ZAP image 與測試框架協議不相容
-  2. ZAP 在網路隔離環境下無法正常運作
-  3. ZAP 需要特殊啟動參數或配置
-- **影響測試**：
-  - `test_real_tools_network_none_through_broker[False-zap]`
-  - `test_real_tools_network_none_through_broker[True-zap]`
+  - 測試沒有設定 `VIBEAUDIT_ZAP_IMAGE` 環境變數，導致錯誤地使用整合 image
+  - 整合 image 不包含 ZAP，因此執行失敗
+- **解決方案**：
+  - 設定 `VIBEAUDIT_ZAP_IMAGE=sha256:781a2bdaea47324e7bab583e2263f21d257b0aee61ed51521a5be45f5f5081ef`
+  - 這是 ZAP 官方 Docker image 的 SHA256
+- **修復結果**：兩個測試都通過 ✅
 
 **3. 測試隔離問題** (3 個測試) ⚠️
 - **現象**：測試期望 runs 列表為空，但有 13 個殘留項目
@@ -145,9 +144,12 @@ VIBEAUDIT_INTEGRATION_IMAGE=sha256:f4f438037d33ae77aa0f845b9b6989dd3396c7ac103fd
 - **VIBEAUDIT_TEST_DATABASE_URL**：另一部分測試使用的連接字串（保持一致）
 - **VIBEAUDIT_TEST_RUNTIME_CONFIG**：測試用 runtime 配置檔案路徑
 - **VIBEAUDIT_TEST_WORKER_IMAGE**：Worker Docker image 的 SHA256
-- **VIBEAUDIT_INTEGRATION_IMAGE**：整合工具 Docker image 的 SHA256
+- **VIBEAUDIT_INTEGRATION_IMAGE**：整合工具 Docker image 的 SHA256（用於 Schemathesis、Playwright、Promptfoo、Pyrit）
+- **VIBEAUDIT_ZAP_IMAGE**：ZAP Docker image 的 SHA256（官方 `ghcr.io/zaproxy/zaproxy:2.17.0`）
 
-**注意**：三個資料庫相關的環境變數都需要設定，因為不同測試檔案使用不同的變數名稱。
+**注意**：
+1. 三個資料庫相關的環境變數都需要設定，因為不同測試檔案使用不同的變數名稱
+2. ZAP 使用獨立的官方 Docker image，與其他工具的整合 image 不同
 
 ## 故障排除
 
