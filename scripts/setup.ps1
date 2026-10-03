@@ -6,7 +6,7 @@ Set-Location -LiteralPath $projectRoot
 if ($LASTEXITCODE -ne 0) { throw 'Use Python 3.12 or newer; Python 3.12 is the validated release runtime.' }
 & $PythonExecutable -m venv .venv
 if ($LASTEXITCODE -ne 0) { throw 'Python environment creation failed.' }
-& '.\.venv\Scripts\python.exe' -m pip install -r requirements.lock.txt
+& '.\.venv\Scripts\python.exe' -m pip install --require-hashes -r requirements.lock.txt
 if ($LASTEXITCODE -ne 0) { throw 'Python dependency installation failed.' }
 Push-Location -LiteralPath (Join-Path $projectRoot 'frontend')
 try {

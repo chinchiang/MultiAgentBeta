@@ -22,7 +22,7 @@
 | 前端型別檢查及 production build（2026-10-03） | 通過，32 modules；以鎖定依賴重建兩次，產物與 frontend/dist 逐位元組相同 | frontend/dist |
 | Edge 真實瀏覽器 | 三種匯出、保存專案、追溯、建立複測；0 page errors | browser-validation.json |
 | 真 FastAPI + React SSR/API | 三份合成審查、fail/pass/inconclusive、七份證據、五分頁、三種匯出及 HTML 跳脫；2026-10-03 以現行程式碼重跑通過，另確認只帶 session cookie 時 /api/session 與 /api/runs 拒絕且不洩漏 CSRF token，並以 Node 驗證 fetch 版 SSE 與下載 | api-ssr-validation.json |
-| Python 相依一致性 | pip check 通過 | requirements.lock.txt |
+| Python 相依一致性 | pip check 通過；鎖定檔附 hash 後（2026-10-03），以 `--require-hashes` 在全新 venv 安裝通過：Linux Python 3.14.4 與 Windows Python 3.13.15 實際裝上的套件與鎖定檔逐項相同，Linux 那個 venv 不含 Docker 的測試為 344 passed、21 skipped。發行驗證用的 Windows Python 3.12 不在本機，未以 hash 模式重裝 | requirements.lock.txt |
 
 兩份 Linux 全套回歸（含與不含 Docker 整合）、前端建置與 SSR/API 契約代表 2026-10-03 的現行程式碼；Windows 全套回歸是 2026-10-02 的結果。其餘各列是 2026-09-24 的結果。隔離 worker、掃描器與動態工具整合在 10-03 的修正（session 協定、supervisor 失敗分類、staging 生命週期等）之後，已由 linux-docker-integration.xml 重新驗證，表中 09-24 的分項收據保留作為當時的紀錄。取得這份收據前的幾次執行有失敗：四項是測試本身依賴外部環境變數（已修正，見下方第 11 項），其餘來自測試主機的環境變數與 runtime profile 設定不完整，詳見 DOCKER_INTEGRATION_TESTING.md。Edge 真實瀏覽器檢查在 10-03 的修正之後尚未重跑，不代表目前的程式碼。Windows 的 skips 包含需要 Linux/Docker/PostgreSQL、POSIX 程序或平台 symlink 能力的案例；已另在 Linux 執行的部分以上述 Linux 報告為準。Fixture 那組的三個 skips 包含未設定的 PostgreSQL 測試條件及 Windows 專屬路徑；PostgreSQL 情境由另一組補驗。最終政策檢查中的十四項 Docker 整合另行執行，沒有把 skip 當成 pass。
 

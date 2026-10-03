@@ -12,7 +12,7 @@ Python 3.12+、Node 24（建置 UI／TS fixture）、PostgreSQL、支援 recursi
 
 ```sh
 python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements.lock.txt
+.venv/bin/python -m pip install --require-hashes -r requirements.lock.txt
 cd frontend
 npm ci
 npm run build
@@ -20,6 +20,8 @@ cd ..
 ```
 
 已交付 frontend/dist 可直接提供本地 UI。Linux 啟動器也允許用 VIBEAUDIT_PYTHON 指定既有受測 venv。
+
+requirements.lock.txt 為每個鎖定版本列出 PyPI 上所有發布檔的 sha256，pip 以 hash 檢查模式安裝：下載的檔案不符，或有依賴沒有鎖定，安裝都會中止，不會自動改抓其他版本。調整版本後執行 `python scripts/hash-lock.py --write` 重新產生 hash。
 
 ## 2. 資料庫與工作目錄
 
