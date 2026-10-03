@@ -17,6 +17,12 @@ from vibe_audit.staging import discard_staging, stage_source, verify_staging
 from vibe_audit.store import Store
 
 
+@pytest.fixture(autouse=True)
+def private_store(monkeypatch):
+    # create_app falls back to this variable, and integration runs point it at the shared test database.
+    monkeypatch.delenv("VIBEAUDIT_DATABASE_URL",raising=False)
+
+
 async def demo(store):
     engine=Engine(store)
     run=engine.create(RunInput(name="Contract and graph integration"))
