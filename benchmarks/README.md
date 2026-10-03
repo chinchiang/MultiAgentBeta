@@ -37,7 +37,7 @@ python -m vibe_audit.benchmark --mode local_tools --output benchmarks/results-lo
 - Completion 分開記錄 completed/incomplete/blocked；耗盡預算或缺回應不得算完整。
 - 每組記錄 tokens、requests、model calls、宣告 latency、實測 runner wall time 與 cost。未知價格為 null，合成 token/latency 不冒充實際模型用量。
 
-彙總的品質指標只取 completed 紀錄中有定義樣本的 macro mean；incomplete 紀錄的部分結果仍逐筆保留，但不進入平均，只計入 completion。原始 TP/FP/FN 仍逐筆保留。以 project/sample/repetition 配對 single A 產生差值，任一方未完成時只比較 completion，沒有自動做顯著性或降低偏誤的推論。正式比較應先註冊主要指標，以專案為 cluster 做配對重抽樣／信賴區間，不能將同一專案的多次重跑視為獨立樣本。效果研究尚未執行，因此本程式沒有假造 p 值或模型優勢。
+彙總的品質指標只取 completed 紀錄中有定義樣本的 macro mean；incomplete 紀錄的部分結果仍逐筆保留，但不進入平均，只計入 completion。completion 以每組全部排程計算，blocked 與 incomplete 都算未完成（arms 下另有 `completion` 欄）；配對的 completion 差值也直接比較兩方狀態，blocked 的一方不會讓比較消失。原始 TP/FP/FN 仍逐筆保留。以 project/sample/repetition 配對 single A 產生差值，任一方未完成時只比較 completion，沒有自動做顯著性或降低偏誤的推論。正式比較應先註冊主要指標，以專案為 cluster 做配對重抽樣／信賴區間，不能將同一專案的多次重跑視為獨立樣本。效果研究尚未執行，因此本程式沒有假造 p 值或模型優勢。
 
 ## 真模型效果驗證前仍需提供
 

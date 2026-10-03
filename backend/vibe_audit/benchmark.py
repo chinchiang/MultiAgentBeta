@@ -200,6 +200,8 @@ def summarize(records):
     arms = {}
     for arm in ARMS:
         rows = [r for r in records if r["arm"] == arm]
+        # Completion counts every scheduled run: a blocked or unfinished one is not completed, not absent.
+        completion = statistics.mean(int(r["status"] == "completed") for r in rows) if rows else None
         def mean_metrics(field):
             scored = [r for r in rows if r[field] is not None]
             if not scored:
@@ -208,9 +210,9 @@ def summarize(records):
             finished = [r[field] for r in scored if r["status"] == "completed"]
             means = {key: statistics.mean(values) if (values := [i[key] for i in finished if i[key] is not None]) else None
                      for key in ["precision", "recall", "common_miss_rate", "minority_retention", "reproduce_rate"]}
-            return means | {"completion": statistics.mean(r[field]["completion"] for r in scored)}
+            return means | {"completion": completion}
         arms[arm] = {"scheduled": len(rows), "completed": sum(r["status"] == "completed" for r in rows),
-                     "blocked": sum(r["status"] == "blocked" for r in rows),
+                     "blocked": sum(r["status"] == "blocked" for r in rows), "completion": completion,
                      "metrics": mean_metrics("metrics"),
                      "preview_metrics": mean_metrics("preview_metrics"),
                      "tokens": sum(r["usage"]["tokens"] for r in rows),
@@ -232,8 +234,10 @@ def summarize(records):
             efficacy = row["metrics"] is not None and reference["metrics"] is not None
             left, right = row["metrics"] or row["preview_metrics"], reference["metrics"] or reference["preview_metrics"]
             finished = row["status"] == reference["status"] == "completed"
-            delta = {k: left[k] - right[k] if left and right and (finished or k == "completion") and left[k] is not None and right[k] is not None else None
-                     for k in ["precision", "recall", "reproduce_rate", "completion"]}
+            delta = {k: left[k] - right[k] if left and right and finished and left[k] is not None and right[k] is not None else None
+                     for k in ["precision", "recall", "reproduce_rate"]}
+            # Completion compares statuses, so a blocked side still counts instead of erasing the comparison.
+            delta["completion"] = int(row["status"] == "completed") - int(reference["status"] == "completed")
             paired.append({"pair_id": pair_id, "arm": arm, "reference": "single_a", "efficacy_eligible": efficacy,
                            "paired_differences": delta})
     return {"arms": arms, "paired_comparisons": paired,
@@ -381,7 +385,8 @@ async def run_live_benchmark(dataset_path=DEFAULT_DATASET, output_dir=None, *, r
             elif profile is not None and caps["max_model_calls"] < MAX_ATTEMPTS:
                 response = _blocked("Shared tool context left fewer model calls per step than the equal retry allowance")
             validate(response, BENCHMARK_OBSERVATION_SCHEMA)
-            if response["tokens"] > caps["max_tokens"] or response["model_calls"] > caps["max_model_calls"] or response["latency_seconds"] > caps["max_seconds"]:
+            # A step that already failed keeps its own reason; a timeout always ends just past its cap.
+            if response["status"] == "completed" and (response["tokens"] > caps["max_tokens"] or response["model_calls"] > caps["max_model_calls"] or response["latency_seconds"] > caps["max_seconds"]):
                 response = response | {"status": "incomplete", "finding_ids": [], "reason": "Observed usage exceeded step budget; result withheld, usage preserved"}
             for key in usage:
                 usage[key] += response[key]

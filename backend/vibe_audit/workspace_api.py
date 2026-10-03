@@ -31,6 +31,8 @@ class FindingDecision(BaseModel):
     decision: str = Field(pattern=r"^(refuted|inconclusive)$")
     rationale: str = Field(min_length=1, max_length=4000)
     evidence_ids: list[str] = Field(min_length=1, max_length=100)
+    # A finding without threat links names the threats its counterevidence tests; the decision records them.
+    threat_ids: list[str] = Field(default_factory=list, max_length=100)
 
 
 class CleanupAttestation(BaseModel):
@@ -103,6 +105,9 @@ def workspace_router(store, engine, source_roots):
         finding = next((f for f in run["findings"] if f["id"] == finding_id), None)
         if finding is None:
             raise HTTPException(404, "Finding not found")
+        # A pass of another case, or a later pass of the same one, does not undo an observed violation.
+        if finding["state"] == "validated_dynamic":
+            raise PolicyError("An observed violation stands; verify the fix in a linked retest run")
         records = {a["id"]: a for a in run["artifacts"]}
         if not set(data.evidence_ids) <= records.keys():
             raise PolicyError("Counterevidence must belong to this run")
@@ -112,10 +117,25 @@ def workspace_router(store, engine, source_roots):
         # only an observed black-box execution is independent of it.
         if any(records[key]["producer"] != "blackbox-worker" for key in data.evidence_ids):
             raise PolicyError("Counterevidence must be a black-box execution record")
+        linked = set(finding.get("threat_ids") or [])
+        if linked and not set(data.threat_ids) <= linked:
+            raise PolicyError("The finding's own threat links decide which executions can be cited")
+        threats = linked or set(data.threat_ids)
+        known = {t["id"] for t in (run.get("threat_model") or {}).get("threats", [])}
+        if not threats or not threats <= known:
+            raise PolicyError("Name the threats from this run's threat model that the counterevidence tests")
+        cases = {c["id"]: c for c in run.get("cases", []) if isinstance(c, dict) and c.get("id")}
+        def tests_threats(execution):
+            return bool(threats & set(cases.get(execution.get("case_id"), {}).get("threat_ids", [])))
+        executions = {e.get("evidence_id"): e for e in run["executions"]}
+        if not all(tests_threats(executions.get(key, {})) for key in data.evidence_ids):
+            raise PolicyError("Counterevidence must come from a case that tests the finding's threats")
         statuses = [store.evidence(records[key], run_id)["content"]["result"]["status"] for key in data.evidence_ids]
         if data.decision == "refuted" and "pass" not in statuses:
             raise PolicyError("Refuting a finding needs an execution in which the security property held")
-        entry = {**data.model_dump(), "at": now(), "actor": "local_operator", "previous_state": finding["state"]}
+        if data.decision == "refuted" and any(e["status"] == "fail" for e in run["executions"] if tests_threats(e)):
+            raise PolicyError("A case testing these threats observed a violation in this run; the finding cannot be refuted")
+        entry = {**data.model_dump(), "threat_ids": sorted(threats), "at": now(), "actor": "local_operator", "previous_state": finding["state"]}
         finding.setdefault("decisions", []).append(entry)
         finding["state"] = data.decision
         finding["counterevidence"] = data.evidence_ids

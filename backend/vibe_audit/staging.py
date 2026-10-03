@@ -44,10 +44,26 @@ def stage_source(source_path: str, private_root: str | Path, *, expected_snapsho
     os.chmod(private, 0o700)
     target = private / uuid.uuid4().hex
     target.mkdir(mode=0o755)
+    try:
+        return _copy_source(source, target, expected_snapshot, max_files, max_bytes)
+    except BaseException:
+        # A partial copy can already hold secret files; it must not outlive the failed intake.
+        remove_private_tree(target)
+        raise
+
+
+def _copy_source(source: Path, target: Path, expected_snapshot: dict | None, max_files: int, max_bytes: int) -> dict:
     entries, total = [], 0
     omitted = []
     for base, dirs, files in os.walk(source, followlinks=False):
-        dirs[:] = sorted(d for d in dirs if d not in _SKIP and not _linklike(Path(base) / d))
+        kept = []
+        for name in sorted(dirs):
+            # Neither scanners nor models see a skipped directory, so the record has to say so.
+            if name in _SKIP or _linklike(Path(base) / name):
+                omitted.append((Path(base) / name).relative_to(source).as_posix() + "/")
+            else:
+                kept.append(name)
+        dirs[:] = kept
         for name in sorted(files):
             item = Path(base) / name
             relative = item.relative_to(source).as_posix()
@@ -93,7 +109,10 @@ def stage_source(source_path: str, private_root: str | Path, *, expected_snapsho
 
 def remove_private_tree(path: str | Path) -> bool:
     """Delete a private working copy, including its read-only files; report rather than raise on failure."""
-    def writable(function, target, _):
+    def writable(function, target, error):
+        # Already gone is the outcome we want.
+        if isinstance(error, FileNotFoundError):
+            return
         os.chmod(target, stat.S_IWRITE)
         function(target)
     try:

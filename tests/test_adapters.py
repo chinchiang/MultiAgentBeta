@@ -1,5 +1,6 @@
 """Local fixture tests: no cloud credentials and no external target traffic."""
 import asyncio
+import hashlib
 import json
 import os
 import socket
@@ -30,7 +31,9 @@ def observation(kind, **fields):
 class OracleTests(unittest.TestCase):
     def setUp(self):
         self.case = case_template()
-        self.control = observation("precondition", name="fixture_exists", value=True)
+        # The positive control showed the canary exists, so its absence from the response means something.
+        self.control = observation("precondition", name="fixture_exists", value=True,
+                                   matched_text_sha256=[hashlib.sha256(b"TENANT_B_CANARY").hexdigest()])
         self.response = observation("http_response", status_code=200, body="safe fixture", complete=True)
 
     def test_verified_negative_and_leak(self):
@@ -42,6 +45,13 @@ class OracleTests(unittest.TestCase):
         self.assertEqual(adapters.evaluate_oracle(self.case, [self.response])["status"], "inconclusive")
         self.case["preconditions"] = []
         self.assertEqual(adapters.evaluate_oracle(self.case, [self.response])["status"], "inconclusive")
+
+    def test_every_executor_needs_a_control_that_showed_the_canary(self):
+        # Fixture and tool runs label controls fixture.local; they get no exemption from the canary proof.
+        for control in [{**self.control, "matched_text_sha256": []},
+                        {**self.control, "matched_text_sha256": [hashlib.sha256(b"order-a").hexdigest()]},
+                        {**self.control, "value": False}]:
+            self.assertEqual(adapters.evaluate_oracle(self.case, [control, self.response])["status"], "inconclusive")
 
     def test_target_claims_are_not_trusted(self):
         self.control["provenance"] = "target.json"
@@ -262,6 +272,13 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
         result = await self.run_case()
         self.assertEqual(result["status"], "blocked")
         self.assertEqual(result["requests"], 0)
+        # The tool's own settings are never sent to a target, under their own name or an alias.
+        for name, environ in [("VIBEAUDIT_DATABASE_URL", {"VIBEAUDIT_DATABASE_URL": "postgresql://u:p@db/x"}),
+                              ("VIBEAUDIT_FIXTURE_TOKEN", {"VIBEAUDIT_FIXTURE_TOKEN": "s" * 40, "VIBEAUDIT_SESSION_TOKEN": "s" * 40})]:
+            self.manifest["auth_profiles"][0]["credential_env"] = name
+            with patch.dict(os.environ, environ):
+                result = await self.run_case()
+            self.assertEqual((result["status"], result["requests"]), ("blocked", 0))
 
     async def test_ai_http_does_not_promote_response_claims_to_ledger(self):
         self.case.update({"adapter": "ai_http", "path": "/fake-tool", "method": "POST", "body": {"message": "fixture"}, "preconditions": []})

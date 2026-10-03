@@ -21,5 +21,6 @@ result = {"generated_at":datetime.datetime.now(datetime.timezone.utc).isoformat(
     "model_endpoints_tested":False,"efficacy_established":False,
     "note":"Suites overlap; do not add counts as distinct tests. JUnit successful records include subtests where emitted. Docker, database and synthetic model contracts are separate evidence.",
     "reports":reports}
-(root/"docs/validation-summary.json").write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding="utf-8")
+# Fixed CRLF, so a summary regenerated on Linux or Windows has the same bytes.
+(root/"docs/validation-summary.json").write_bytes(json.dumps(result,ensure_ascii=False,indent=2).replace("\n","\r\n").encode("utf-8"))
 print(json.dumps(result,ensure_ascii=False,indent=2))

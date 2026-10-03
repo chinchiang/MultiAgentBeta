@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-01T22:25:43.583182+00:00",
+  "generated_at": "2026-10-03T11:12:01.437050+00:00",
   "model_endpoints_tested": false,
   "efficacy_established": false,
   "note": "Suites overlap; do not add counts as distinct tests. JUnit successful records include subtests where emitted. Docker, database and synthetic model contracts are separate evidence.",
@@ -18,6 +18,43 @@
       "skip_reasons": [
         "Explicit pinned Docker tool image required",
         "Pinned Docker tool image required"
+      ],
+      "failures_detail": []
+    },
+    {
+      "file": "docs/linux-docker-integration.xml",
+      "tests": 369,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 1,
+      "passed": 368,
+      "seconds": 458.597,
+      "timestamp": [
+        "2026-10-03T19:02:17.547985+08:00"
+      ],
+      "skip_reasons": [
+        "Windows redirector process-tree fallback"
+      ],
+      "failures_detail": []
+    },
+    {
+      "file": "docs/linux-regression.xml",
+      "tests": 369,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 21,
+      "passed": 348,
+      "seconds": 111.287,
+      "timestamp": [
+        "2026-10-03T11:27:21.951565+08:00"
+      ],
+      "skip_reasons": [
+        "Explicit pinned Docker tool image required",
+        "Pinned Docker tool image required",
+        "Provisioned Linux scanner images and PostgreSQL required",
+        "Real Docker/PostgreSQL runtime required",
+        "Real Linux Docker image/PostgreSQL not provisioned",
+        "Windows redirector process-tree fallback"
       ],
       "failures_detail": []
     },

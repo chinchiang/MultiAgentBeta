@@ -156,6 +156,25 @@ def test_live_every_model_step_gets_equal_retry_attempts():
                       budget={"max_tokens": 12000, "max_seconds": 60, "max_requests": 12, "max_model_calls": 6})
 
 
+def test_completion_counts_blocked_runs_and_paired_blocked_sides():
+    from vibe_audit.benchmark import summarize
+    scored = {"precision": 1.0, "recall": 1.0, "common_miss_rate": 0.0, "minority_retention": 1.0, "reproduce_rate": None, "completion": 1}
+    usage = {"tokens": 0, "requests": 0, "model_calls": 0, "latency_seconds": 0}
+    def record(arm, pair, status):
+        done = status == "completed"
+        return {"arm": arm, "pair_id": pair, "status": status, "metrics": None, "preview_metrics": scored if done else None,
+                "usage": usage, "cost_usd": None}
+    records = [record("single_a", "p1", "completed"), record("single_a", "p2", "completed"),
+               record("single_b", "p1", "completed"), record("single_b", "p2", "blocked")]
+    summary = summarize(records)
+    # Half the single_b schedule never ran; that must lower completion, not disappear from it.
+    assert summary["arms"]["single_b"]["completion"] == 0.5
+    assert summary["arms"]["single_b"]["preview_metrics"]["completion"] == 0.5
+    assert summary["arms"]["single_b"]["metrics"] is None
+    deltas = {p["pair_id"]: p["paired_differences"] for p in summary["paired_comparisons"] if p["arm"] == "single_b"}
+    assert deltas["p1"]["completion"] == 0 and deltas["p2"] == {"precision": None, "recall": None, "reproduce_rate": None, "completion": -1}
+
+
 def test_unfinished_arm_does_not_enter_quality_averages():
     async def models(profile, system, payload, policy):
         if payload["peer_reviews"]:

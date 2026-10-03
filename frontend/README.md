@@ -21,15 +21,15 @@ npm run build
 
 ## 實際連線行為
 
-- 啟動時從網址 fragment 取出啟動權杖（只存在記憶體並自網址移除），以 `X-VibeAudit-Token` 呼叫 `/api/session` 取得 HttpOnly session cookie；所有 POST 加上回傳的 `X-CSRF-Token`。
+- 啟動時從網址 fragment 取出啟動權杖（只存在記憶體並自網址移除），以 `X-VibeAudit-Token` 呼叫 `/api/session` 取得 HttpOnly session cookie 與 CSRF token。cookie 不分 port，所以所有 API 請求（含 GET）都加上 `X-CSRF-Token`；token 存在此分頁的 sessionStorage，重新整理時以它向 `/api/session` 證明 session，新分頁需重新開啟啟動網址。
 - 建立評估依序呼叫 `POST /api/runs`、`POST /api/runs/{id}/start`。
-- SSE `progress` / `done` 更新進度，執行中每 2.5 秒再同步一次狀態。執行結束後停止更新。
+- 以 fetch 讀取 SSE（EventSource 無法帶 header）的 `progress` / `done` 更新進度，執行中每 2.5 秒再同步一次狀態。執行結束後停止更新。
 - 可啟動、取消及嘗試恢復。是否允許恢復由後端重新驗證閘門決定。
-- 匯出 Markdown、JSON、SARIF；開啟證據使用受 session 保護的 `/api/runs/{id}/evidence/{artifactId}`。後端負責完整性檢查。
+- 匯出 Markdown、JSON、SARIF（以帶 header 的 fetch 下載，失敗時在選單顯示原因）；開啟證據使用受 session 保護的 `/api/runs/{id}/evidence/{artifactId}`。後端負責完整性檢查。
 
 ## 資料與安全
 
-- 不使用 CDN、外部字型、分析追蹤或 localStorage 存金鑰。
+- 不使用 CDN、外部字型、分析追蹤或 localStorage；sessionStorage 只保存本機 session 的 CSRF token，不保存金鑰。
 - 金鑰欄位只接收 `VIBEAUDIT_*` 環境變數名稱。實際金鑰需在後端環境提供。
 - 所有證據、工具結果與目標文字皆用 React 純文字節點呈現；不使用 `dangerouslySetInnerHTML` 或執行 HTML/Markdown。
 - 實際評估預設 `local_only`；雲端需明確切換政策與列出模型 origin allowlist。提供每位 Agent 的端點、精確模型 ID、模型家族及輸出預算。

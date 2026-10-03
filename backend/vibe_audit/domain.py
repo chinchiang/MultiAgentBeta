@@ -8,7 +8,8 @@ from typing import Any, Literal
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-from .contracts import SecurityRequirement
+from .adapters import RESERVED_ENV
+from .contracts import OperatorCase, SecurityRequirement
 
 
 def now() -> str:
@@ -46,7 +47,8 @@ class ModelProfile(StrictModel):
     family: str = Field(min_length=1, max_length=100)
     endpoint: str = ""
     credential_env: str = ""
-    temperature: float = Field(default=0, ge=0, le=2)
+    # None leaves the model's own default, which some reasoning models require.
+    temperature: float | None = Field(default=0, ge=0, le=2)
     max_output_tokens: int = Field(default=3000, ge=256, le=16000)
     timeout_seconds: int = Field(default=60, ge=5, le=300)
     prompt_version: str = Field(default="v2", min_length=1, max_length=80)
@@ -56,6 +58,8 @@ class ModelProfile(StrictModel):
     def credential(cls, value):
         if value and not re.fullmatch(r"VIBEAUDIT_[A-Z0-9_]+", value):
             raise ValueError("Credentials must reference a VIBEAUDIT_* environment variable")
+        if value in RESERVED_ENV:
+            raise ValueError("Credentials cannot reference a Vibe Audit setting such as the database URL or session token")
         return value
 
 
@@ -95,6 +99,15 @@ class RunInput(StrictModel):
     fixture_profile: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9_-]{1,80}$")
     deployment_header: str | None = Field(default=None, pattern=r"^[A-Za-z0-9-]{1,100}$")
     cases: list[dict] = Field(default_factory=list, max_length=100)
+
+    @field_validator("cases")
+    @classmethod
+    def supplied_cases(cls, value):
+        # Checked before any paid stage, so a malformed case cannot fail the run after a request is sent.
+        for case in value:
+            # Strict JSON validation: a "5" is not a repetition count and a list is not a header map.
+            OperatorCase.model_validate_json(json.dumps(case, allow_nan=False), strict=True)
+        return value
 
     @field_validator("requirements")
     @classmethod

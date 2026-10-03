@@ -105,6 +105,52 @@ def test_generic_profiles_validate_and_add_scope_before_sealing():
         register_target_adapter("bad", {**profile, "setup": [{"method": "GET", "path": "https://outside.invalid/"}]})
     with pytest.raises(ValueError):
         register_target_adapter("bad", {**profile, "cleanup": []})
+    # A cleanup or reset answered with an error must never count as confirmed.
+    for status in [None, 500, "200"]:
+        step = {"id": "cleanup", "method": "POST", "path": "/test/cleanup", "body": {}}
+        if status is not None:
+            step["expected_status"] = status
+        with pytest.raises(ValueError, match="2xx"):
+            register_target_adapter("bad", {**profile, "cleanup": [step]})
+
+
+def rag_case(profile):
+    c = {"id":"generic-rag", "method":"POST", "path":"/retrieve", "identity":"tenant-a", "headers":{},
+         "body":{"document_id":"doc-b"}, "threat_model_hash":"sealed-threat", "side_effects":True,
+         "preconditions":[{"name":"b-can-read", "method":"GET", "path":"/documents/doc-b", "identity":"tenant-b",
+                           "expected_status":200, "required_text":["TENANT_B_RAG_CANARY"]}],
+         "oracle":{"kind":"canary_absent", "forbidden_text":["TENANT_B_RAG_CANARY"], "allowed_statuses":[403],
+                   "required_observations":["http_response"]}}
+    c["allowed_requests"] = fixture_requests(profile, c)
+    c["fixture_profile_hash"] = fixture_profile_hash(profile)
+    c["hash"] = canonical_hash(c)
+    return c
+
+
+@pytest.mark.asyncio
+async def test_observed_violation_survives_an_unconfirmed_cleanup(tmp_path, monkeypatch):
+    monkeypatch.setenv("VIBEAUDIT_FIXTURE_A", "fixture-ai-a")
+    monkeypatch.setenv("VIBEAUDIT_FIXTURE_B", "fixture-ai-b")
+    reset = {"id":"reset", "method":"POST", "path":"/__fixture/reset", "body":{},
+             "headers":{"X-Fixture-Control":"local-synthetic-control"}, "expected_status":200, "required_text":['"reset"']}
+    # The reset answers 200, so a cleanup step expecting 201 can never be confirmed.
+    register_target_adapter("local-rag-unconfirmed", {"reset":[reset], "cleanup":[{**reset,"id":"cleanup","expected_status":201}], "repetitions":3})
+    c = rag_case("local-rag-unconfirmed")
+    runtime = fixture_runtime(tmp_path)
+    async def hook(**ctx): pass
+    try:
+        with RunningFixture([sys.executable, str(FIXTURES/"ai-agent/server.py"), "--mode", "vulnerable", "--port", "0"]) as target:
+            scope = manifest(target.origin, c)
+            scope["auth_profiles"].append({"id":"tenant-b", "credential_env":"VIBEAUDIT_FIXTURE_B", "header":"Authorization", "scheme":"Bearer"})
+            result = await run_fixture_case(runtime, scope, c, fixture_profile="local-rag-unconfirmed",
+                cancel_event=asyncio.Event(), request_hook=hook)
+        # The leak is still reported as a failure; the unknown target state stops further trials and replay.
+        assert result["status"] == "fail", result
+        assert result["target_state_confirmed"] is False and result["cleanup_confirmed"] is True
+        assert [t["status"] for t in result["repetitions"]] == ["fail"]
+        assert "canary" in result["reason"]
+    finally:
+        runtime.leases.close()
 
 
 @pytest.mark.parametrize("mode,expected", [("vulnerable", "fail"), ("fixed", "pass")])

@@ -17,9 +17,9 @@
 
 ## 更新及驗證
 
-從專案根目錄執行 `python scripts/refresh-catalog.py` 可在完全離線狀態檢查原始內容摘要、重新擷取與交叉比對。`--fetch` 才會下載腳本內固定版本的官方來源；不自動追蹤 main。若需要新版本，先審核並修改明確 commit，再對變更做版本審查。
+從專案根目錄執行 `python scripts/refresh-catalog.py` 可在完全離線狀態檢查原始內容摘要、重新擷取與交叉比對；它只在記憶體中重建並回報差異，不寫入任何檔案（有差異時 exit 1）。審核後以 `--write` 改寫 canonical 檔案與 manifest；內容沒變時輸出逐位元組相同，`generated_at` 也不變。輸出固定使用 CRLF，Windows 與 Linux 產生相同雜湊。`--fetch` 才會下載腳本內固定版本的官方來源；不自動追蹤 main。若需要新版本，先審核並修改明確 commit，再對變更做版本審查。
 
-Hash 只能檢測相對於可信 manifest 的變動，不是 OWASP 簽章；整個目錄需和應用程式發行物一起可信交付。`VIBEAUDIT_CATALOG_ROOT` 可供安裝套件時指向這份外部資料目錄。
+Hash 只能檢測相對於可信 manifest 的變動，不是 OWASP 簽章；整個目錄需和應用程式發行物一起可信交付。`VIBEAUDIT_CATALOG_ROOT` 可讓從原始碼目錄啟動的服務改用另一份經審核的 catalog 目錄（例如測試）；本工具只從原始碼目錄啟動，複製出去的 wheel 會拒絕啟動，這個變數不改變這一點。
 
 ## 已記錄的來源差異
 

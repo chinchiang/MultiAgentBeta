@@ -83,6 +83,29 @@ def test_tool_body_trust_claim_never_becomes_effect_evidence():
     assert result["observations"][0]["kind"] == "tool_http_response"
 
 
+@pytest.mark.parametrize("tool,name,raw", [
+    ("zap", "zap.json", b"[]"), ("zap", "zap.json", b'{"site":[1]}'), ("zap", "zap.json", b'{"site":[{"alerts":"x"}]}'),
+    ("playwright", "playwright.json", b"[1]"), ("pyrit", "pyrit.json", b'"text"'),
+])
+def test_malformed_artifacts_are_execution_errors_not_crashes(tool, name, raw):
+    result = parse_tool_result(tool, {"status":"completed","exit_code":0,"cleanup_confirmed":True,"artifacts":{name:raw}}, case_id="case-one")
+    assert result["status"] == "execution_error" and result["security_status"] == "inconclusive"
+
+
+async def test_uncompilable_case_is_blocked_before_any_positive_control():
+    from vibe_audit.tool_runners import run_tool
+    calls = []
+    class Runtime:
+        async def execute_tool(self, spec, **kwargs):
+            calls.append(spec)
+            return {"status":"completed","cleanup_confirmed":True,"observations":[],"broker_observations":[]}
+    bad = {**case(), "id":"bad id", "preconditions":[{"name":"fixture","method":"GET","path":"/orders/order-b",
+           "expected_status":200,"required_text":["TENANT_B_ORDER_CANARY"]}]}
+    async def allow(**kwargs): return None
+    result = await run_tool(Runtime(), "playwright", {"run_id":"r"}, bad, cancel_event=asyncio.Event(), request_hook=allow)
+    assert (result["status"], result["security_status"]) == ("blocked", "blocked") and calls == []
+
+
 def test_no_schemathesis_cases_or_external_xml_entities_rejected():
     for raw in (b'<testsuite tests="0"/>', b'<!DOCTYPE x [<!ENTITY a SYSTEM "file:///secret">]><testsuite/>'):
         result=parse_tool_result("schemathesis",{"status":"completed","exit_code":0,"cleanup_confirmed":True,

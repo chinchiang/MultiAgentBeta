@@ -331,7 +331,7 @@
         "model_calls": 1,
         "latency_seconds": 0.4
       },
-      "measured_wall_seconds": 0.034261399996466935,
+      "measured_wall_seconds": 0.0037783070001751184,
       "cost_usd": null,
       "observations": [
         {
@@ -408,7 +408,7 @@
         "model_calls": 1,
         "latency_seconds": 0.4
       },
-      "measured_wall_seconds": 0.036131499997281935,
+      "measured_wall_seconds": 0.005705536999812466,
       "cost_usd": null,
       "observations": [
         {
@@ -487,7 +487,7 @@
         "model_calls": 1,
         "latency_seconds": 0.4
       },
-      "measured_wall_seconds": 0.01765210000303341,
+      "measured_wall_seconds": 0.004060575998664717,
       "cost_usd": null,
       "observations": [
         {
@@ -556,7 +556,7 @@
         "model_calls": 4,
         "latency_seconds": 1.6
       },
-      "measured_wall_seconds": 0.09185920000163605,
+      "measured_wall_seconds": 0.01720041499902436,
       "cost_usd": null,
       "observations": [
         {
@@ -717,7 +717,7 @@
         "model_calls": 3,
         "latency_seconds": 1.2000000000000002
       },
-      "measured_wall_seconds": 0.07043369999882998,
+      "measured_wall_seconds": 0.011952590000873897,
       "cost_usd": null,
       "observations": [
         {
@@ -854,7 +854,7 @@
         "model_calls": 0,
         "latency_seconds": 0.01
       },
-      "measured_wall_seconds": 0.022869599997648038,
+      "measured_wall_seconds": 0.0047208739997586235,
       "cost_usd": null,
       "observations": [
         {
@@ -927,7 +927,7 @@
         "model_calls": 3,
         "latency_seconds": 1.2000000000000002
       },
-      "measured_wall_seconds": 0.0601193999973475,
+      "measured_wall_seconds": 0.011876439000843675,
       "cost_usd": null,
       "observations": [
         {
@@ -1063,7 +1063,7 @@
         "model_calls": 3,
         "latency_seconds": 1.2000000000000002
       },
-      "measured_wall_seconds": 0.13305859999672975,
+      "measured_wall_seconds": 0.011797445000411244,
       "cost_usd": null,
       "observations": [
         {
@@ -1200,7 +1200,7 @@
         "model_calls": 1,
         "latency_seconds": 0.4
       },
-      "measured_wall_seconds": 0.05019330000504851,
+      "measured_wall_seconds": 0.0034293460012122523,
       "cost_usd": null,
       "observations": [
         {
@@ -1277,7 +1277,7 @@
         "model_calls": 1,
         "latency_seconds": 0.4
       },
-      "measured_wall_seconds": 0.031287599995266646,
+      "measured_wall_seconds": 0.0042021009994641645,
       "cost_usd": null,
       "observations": [
         {
@@ -1354,7 +1354,7 @@
         "model_calls": 4,
         "latency_seconds": 1.6
       },
-      "measured_wall_seconds": 0.0916739999956917,
+      "measured_wall_seconds": 0.014330664000226534,
       "cost_usd": null,
       "observations": [
         {
@@ -1521,7 +1521,7 @@
         "model_calls": 3,
         "latency_seconds": 1.2000000000000002
       },
-      "measured_wall_seconds": 0.0704291000001831,
+      "measured_wall_seconds": 0.011914329001228907,
       "cost_usd": null,
       "observations": [
         {
@@ -1658,7 +1658,7 @@
         "model_calls": 0,
         "latency_seconds": 0.01
       },
-      "measured_wall_seconds": 0.021548899996560067,
+      "measured_wall_seconds": 0.0037842589990759734,
       "cost_usd": null,
       "observations": [
         {
@@ -1731,7 +1731,7 @@
         "model_calls": 1,
         "latency_seconds": 0.4
       },
-      "measured_wall_seconds": 0.03554270000313409,
+      "measured_wall_seconds": 0.003684741999677499,
       "cost_usd": null,
       "observations": [
         {
@@ -1808,7 +1808,7 @@
         "model_calls": 1,
         "latency_seconds": 0.4
       },
-      "measured_wall_seconds": 0.03088160000334028,
+      "measured_wall_seconds": 0.004381151000416139,
       "cost_usd": null,
       "observations": [
         {
@@ -1885,7 +1885,7 @@
         "model_calls": 1,
         "latency_seconds": 0.4
       },
-      "measured_wall_seconds": 0.027699099999153987,
+      "measured_wall_seconds": 0.003912721000233432,
       "cost_usd": null,
       "observations": [
         {
@@ -1962,7 +1962,7 @@
         "model_calls": 0,
         "latency_seconds": 0.01
       },
-      "measured_wall_seconds": 0.02328249999845866,
+      "measured_wall_seconds": 0.004074057000252651,
       "cost_usd": null,
       "observations": [
         {
@@ -2035,7 +2035,7 @@
         "model_calls": 3,
         "latency_seconds": 1.2000000000000002
       },
-      "measured_wall_seconds": 0.050648399999772664,
+      "measured_wall_seconds": 0.011359195999830263,
       "cost_usd": null,
       "observations": [
         {
@@ -2169,7 +2169,7 @@
         "model_calls": 1,
         "latency_seconds": 0.4
       },
-      "measured_wall_seconds": 0.01249880000250414,
+      "measured_wall_seconds": 0.0038974899998720502,
       "cost_usd": null,
       "observations": [
         {
@@ -2238,7 +2238,7 @@
         "model_calls": 4,
         "latency_seconds": 1.6
       },
-      "measured_wall_seconds": 0.0669458999982453,
+      "measured_wall_seconds": 0.014069946999370586,
       "cost_usd": null,
       "observations": [
         {
@@ -2394,7 +2394,7 @@
         "model_calls": 3,
         "latency_seconds": 1.2000000000000002
       },
-      "measured_wall_seconds": 0.09458119999908376,
+      "measured_wall_seconds": 0.01197627100009413,
       "cost_usd": null,
       "observations": [
         {
@@ -2531,7 +2531,7 @@
         "model_calls": 4,
         "latency_seconds": 1.6
       },
-      "measured_wall_seconds": 0.23341319999599364,
+      "measured_wall_seconds": 0.019247521999204764,
       "cost_usd": null,
       "observations": [
         {
@@ -2692,7 +2692,7 @@
         "model_calls": 3,
         "latency_seconds": 1.2000000000000002
       },
-      "measured_wall_seconds": 0.08747690000018338,
+      "measured_wall_seconds": 0.012213640000481973,
       "cost_usd": null,
       "observations": [
         {
@@ -2828,7 +2828,7 @@
         "model_calls": 3,
         "latency_seconds": 1.2000000000000002
       },
-      "measured_wall_seconds": 0.06060360000265064,
+      "measured_wall_seconds": 0.011304288998871925,
       "cost_usd": null,
       "observations": [
         {
@@ -2965,7 +2965,7 @@
         "model_calls": 1,
         "latency_seconds": 0.4
       },
-      "measured_wall_seconds": 0.013551000003644731,
+      "measured_wall_seconds": 0.003500037999401684,
       "cost_usd": null,
       "observations": [
         {
@@ -3042,7 +3042,7 @@
         "model_calls": 1,
         "latency_seconds": 0.4
       },
-      "measured_wall_seconds": 0.01464010000199778,
+      "measured_wall_seconds": 0.005786101000921917,
       "cost_usd": null,
       "observations": [
         {
@@ -3121,7 +3121,7 @@
         "model_calls": 1,
         "latency_seconds": 0.4
       },
-      "measured_wall_seconds": 0.020808599998417776,
+      "measured_wall_seconds": 0.0037442660013766726,
       "cost_usd": null,
       "observations": [
         {
@@ -3190,7 +3190,7 @@
         "model_calls": 0,
         "latency_seconds": 0.01
       },
-      "measured_wall_seconds": 0.02478799999516923,
+      "measured_wall_seconds": 0.003530154999680235,
       "cost_usd": null,
       "observations": [
         {
@@ -3263,7 +3263,7 @@
         "model_calls": 1,
         "latency_seconds": 0.4
       },
-      "measured_wall_seconds": 0.05230139999912353,
+      "measured_wall_seconds": 0.0033846570004243404,
       "cost_usd": null,
       "observations": [
         {
@@ -3340,7 +3340,7 @@
         "model_calls": 0,
         "latency_seconds": 0.01
       },
-      "measured_wall_seconds": 0.02076900000247406,
+      "measured_wall_seconds": 0.004137617999731447,
       "cost_usd": null,
       "observations": [
         {
@@ -3413,7 +3413,7 @@
         "model_calls": 3,
         "latency_seconds": 1.2000000000000002
       },
-      "measured_wall_seconds": 0.0661448000028031,
+      "measured_wall_seconds": 0.010421109000162687,
       "cost_usd": null,
       "observations": [
         {
@@ -3550,7 +3550,7 @@
         "model_calls": 1,
         "latency_seconds": 0.4
       },
-      "measured_wall_seconds": 0.022499799997603986,
+      "measured_wall_seconds": 0.004365488999610534,
       "cost_usd": null,
       "observations": [
         {
@@ -3627,7 +3627,7 @@
         "model_calls": 1,
         "latency_seconds": 0.4
       },
-      "measured_wall_seconds": 0.03072740000061458,
+      "measured_wall_seconds": 0.004986854999515344,
       "cost_usd": null,
       "observations": [
         {
@@ -3704,7 +3704,7 @@
         "model_calls": 3,
         "latency_seconds": 1.2000000000000002
       },
-      "measured_wall_seconds": 0.12150859999383101,
+      "measured_wall_seconds": 0.012911428000734304,
       "cost_usd": null,
       "observations": [
         {
@@ -3841,7 +3841,7 @@
         "model_calls": 4,
         "latency_seconds": 1.6
       },
-      "measured_wall_seconds": 0.08635770000546472,
+      "measured_wall_seconds": 0.014606602999265306,
       "cost_usd": null,
       "observations": [
         {
@@ -4008,7 +4008,7 @@
         "model_calls": 3,
         "latency_seconds": 1.2000000000000002
       },
-      "measured_wall_seconds": 0.07290060000377707,
+      "measured_wall_seconds": 0.011527069998919615,
       "cost_usd": null,
       "observations": [
         {
@@ -4145,7 +4145,7 @@
         "model_calls": 0,
         "latency_seconds": 0.01
       },
-      "measured_wall_seconds": 0.02592210000148043,
+      "measured_wall_seconds": 0.0034949109995068284,
       "cost_usd": null,
       "observations": [
         {
@@ -4218,7 +4218,7 @@
         "model_calls": 1,
         "latency_seconds": 0.4
       },
-      "measured_wall_seconds": 0.021137700001418125,
+      "measured_wall_seconds": 0.0031989939998311456,
       "cost_usd": null,
       "observations": [
         {
@@ -4295,7 +4295,7 @@
         "model_calls": 1,
         "latency_seconds": 0.4
       },
-      "measured_wall_seconds": 0.03279630000179168,
+      "measured_wall_seconds": 0.0033457520003139507,
       "cost_usd": null,
       "observations": [
         {
@@ -4372,7 +4372,7 @@
         "model_calls": 3,
         "latency_seconds": 1.2000000000000002
       },
-      "measured_wall_seconds": 0.05714370000350755,
+      "measured_wall_seconds": 0.012201511999592185,
       "cost_usd": null,
       "observations": [
         {
@@ -4506,7 +4506,7 @@
         "model_calls": 4,
         "latency_seconds": 1.6
       },
-      "measured_wall_seconds": 0.1124056999979075,
+      "measured_wall_seconds": 0.01432012199984456,
       "cost_usd": null,
       "observations": [
         {
@@ -4662,7 +4662,7 @@
         "model_calls": 1,
         "latency_seconds": 0.4
       },
-      "measured_wall_seconds": 0.02249640000081854,
+      "measured_wall_seconds": 0.0031938569991325494,
       "cost_usd": null,
       "observations": [
         {
@@ -4719,6 +4719,7 @@
         "scheduled": 6,
         "completed": 6,
         "blocked": 0,
+        "completion": 1,
         "metrics": null,
         "preview_metrics": {
           "precision": 1.0,
@@ -4738,6 +4739,7 @@
         "scheduled": 6,
         "completed": 6,
         "blocked": 0,
+        "completion": 1,
         "metrics": null,
         "preview_metrics": {
           "precision": 0.8333333333333334,
@@ -4757,6 +4759,7 @@
         "scheduled": 6,
         "completed": 6,
         "blocked": 0,
+        "completion": 1,
         "metrics": null,
         "preview_metrics": {
           "precision": 1.0,
@@ -4776,6 +4779,7 @@
         "scheduled": 6,
         "completed": 6,
         "blocked": 0,
+        "completion": 1,
         "metrics": null,
         "preview_metrics": {
           "precision": 1.0,
@@ -4795,6 +4799,7 @@
         "scheduled": 6,
         "completed": 6,
         "blocked": 0,
+        "completion": 1,
         "metrics": null,
         "preview_metrics": {
           "precision": 0.5,
@@ -4814,6 +4819,7 @@
         "scheduled": 6,
         "completed": 6,
         "blocked": 0,
+        "completion": 1,
         "metrics": null,
         "preview_metrics": {
           "precision": 0.8888888888888888,
@@ -4833,6 +4839,7 @@
         "scheduled": 6,
         "completed": 6,
         "blocked": 0,
+        "completion": 1,
         "metrics": null,
         "preview_metrics": {
           "precision": 0.6666666666666666,

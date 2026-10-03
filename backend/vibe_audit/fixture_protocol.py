@@ -59,6 +59,9 @@ def register_target_adapter(name, profile):
                 raise ValueError("Target adapter requires exact relative method/path")
             if any(k.lower() in {"authorization", "cookie", "host", "proxy-authorization"} for k in step.get("headers", {})):
                 raise ValueError("Credentials belong in supervisor auth profiles")
+            # A lifecycle step is only confirmed by an expected success; an error answer must not count.
+            if group in {"reset", "session_reset", "setup", "cleanup"} and (type(step.get("expected_status")) is not int or not 200 <= step["expected_status"] < 300):
+                raise ValueError("Lifecycle steps need an explicit 2xx expected_status")
     if not profile.get("cleanup") or type(profile.get("repetitions", 5)) is not int or not 1 <= profile.get("repetitions", 5) <= 20:
         raise ValueError("A bounded repetition count and explicit cleanup are required")
     binding = profile.get("collector_binding")
@@ -166,7 +169,8 @@ def _observations(case, result, repetition):
             name = row["id"][8:]
             control = next((p for p in case.get("preconditions", []) if isinstance(p, dict) and p.get("name") == name), None)
             if control and _row_ok(row, control["expected_status"], control["required_text"]):
-                out.append({**common, "kind": "precondition", "name": name, "value": True})
+                out.append({**common, "kind": "precondition", "name": name, "value": True,
+                    "matched_text_sha256": [hashlib.sha256(text.encode()).hexdigest() for text in control["required_text"]]})
         elif row.get("id") == "case":
             out.append({**common, "kind": "http_response", "status_code": row.get("status_code"),
                 "body": row.get("body", ""), "complete": row.get("complete") is True})
@@ -192,6 +196,37 @@ async def _execute_main(runtime, manifest, case, setup, *, cancel_event, request
     return result
 
 
+class _CleanupTracker:
+    """Remember whether every worker task's own teardown was confirmed, apart from the target's reset."""
+
+    def __init__(self, runtime):
+        self.runtime, self.confirmed, self.deployment_changed = runtime, True, False
+
+    async def execute_tool(self, spec, **kwargs):
+        result = await self.runtime.execute_tool(spec, **kwargs)
+        self.confirmed = self.confirmed and result.get("cleanup_confirmed") is True
+        self.deployment_changed = self.deployment_changed or result.get("deployment_changed") is True
+        return result
+
+    def __getattr__(self, name):
+        return getattr(self.runtime, name)
+
+
+def _close_trial(result, cleanup_ok, unknown_reason):
+    # An observed violation stays a finding; an unconfirmed reset only stops further trials and any replay.
+    if cleanup_ok:
+        return result
+    if result.get("status") == "fail":
+        return {**result, "target_state_confirmed": False}
+    return {"status": "outcome_unknown", "reason": unknown_reason}
+
+
+def _summary(trials, count):
+    statuses = [trial["status"] for trial in trials]
+    return ("fail" if "fail" in statuses else "outcome_unknown" if "outcome_unknown" in statuses else
+            "pass" if len(trials) == count and all(s == "pass" for s in statuses) else "inconclusive")
+
+
 async def run_fixture_case(runtime, manifest, case, *, fixture_profile, cancel_event, request_hook,
                            lease_hook=None, collector=None, repetitions=None):
     """Execute reset → controls → case → cleanup with five fresh AI trials.
@@ -203,6 +238,8 @@ async def run_fixture_case(runtime, manifest, case, *, fixture_profile, cancel_e
     """
     if case.get("fixture_profile_hash") != fixture_profile_hash(fixture_profile):
         return {"status": "blocked", "reason": "Target adapter profile changed after case sealing", "cleanup_confirmed": True}
+    # cleanup_confirmed reports worker teardown; target_state_confirmed reports every trial's target reset.
+    runtime = _CleanupTracker(runtime)
     if fixture_profile not in PROFILES:
         profile = _profile(fixture_profile)
         if profile is None:
@@ -288,6 +325,9 @@ async def run_fixture_case(runtime, manifest, case, *, fixture_profile, cancel_e
                     result = {"status": "inconclusive", "reason": execution.get("reason", "Worker sequence incomplete")}
         except (ValueError, OSError) as exc:
             result = {"status": "inconclusive", "reason": str(exc)}
+        except Exception:
+            # Untrusted bodies or case fields of an unexpected shape end this trial, never the run.
+            result = {"status": "inconclusive", "reason": "Fixture lifecycle data had an unexpected shape"}
         finally:
             if gateway:
                 gateway.close()
@@ -300,19 +340,18 @@ async def run_fixture_case(runtime, manifest, case, *, fixture_profile, cancel_e
                     and json.loads(cleanup["observations"][0]["body"]).get("reset") is True)
             except Exception:
                 cleanup_ok = False
-        if not cleanup_ok:
-            result = {"status": "outcome_unknown", "reason": "Fixture cleanup was not independently confirmed; do not replay"}
+        result = _close_trial(result, cleanup_ok, "Fixture cleanup was not independently confirmed; do not replay")
         trials.append({"repetition": repetition, **result, "cleanup_confirmed": cleanup_ok})
         all_observations.extend(observations)
         if not cleanup_ok:
             break
-    statuses = [trial["status"] for trial in trials]
-    status = ("outcome_unknown" if "outcome_unknown" in statuses else "fail" if "fail" in statuses else
-              "pass" if len(trials) == count and all(s == "pass" for s in statuses) else "inconclusive")
+    status = _summary(trials, count)
     return {"status": status, "synthetic": True, "model": "deterministic-mock-no-llm",
             "repetitions": trials, "observations": all_observations, "effect_bundles": bundles, "tool_runs": tool_runs,
-            "cleanup_confirmed": bool(trials) and all(t["cleanup_confirmed"] for t in trials),
-            "reason": "Synthetic fixture integration; not evidence of real model resistance"}
+            "cleanup_confirmed": runtime.confirmed, "target_state_confirmed": all(t["cleanup_confirmed"] for t in trials),
+            "deployment_changed": runtime.deployment_changed,
+            "reason": next((t["reason"] for t in trials if t["status"] == status and t.get("reason")),
+                            "Synthetic fixture integration; not evidence of real model resistance")}
 
 
 async def _run_generic(runtime, manifest, case, profile, *, cancel_event, request_hook, lease_hook, repetitions):
@@ -347,6 +386,8 @@ async def _run_generic(runtime, manifest, case, profile, *, cancel_event, reques
                 result = evaluate_oracle(case, evidence)
         except (ValueError, OSError) as exc:
             result = {"status": "inconclusive", "reason": str(exc)}
+        except Exception:
+            result = {"status": "inconclusive", "reason": "Target lifecycle data had an unexpected shape"}
         finally:
             if adapter:
                 try:
@@ -359,14 +400,13 @@ async def _run_generic(runtime, manifest, case, profile, *, cancel_event, reques
                 cleanup_ok = _completed(cleanup)
             except Exception:
                 cleanup_ok = False
-        if not cleanup_ok:
-            result = {"status": "outcome_unknown", "reason": "Cleanup unconfirmed; do not replay"}
+        result = _close_trial(result, cleanup_ok, "Cleanup unconfirmed; do not replay")
         trials.append({"repetition": repetition, **result, "cleanup_confirmed": cleanup_ok})
         if not cleanup_ok:
             break
-    statuses = [trial["status"] for trial in trials]
-    status = ("outcome_unknown" if "outcome_unknown" in statuses else "fail" if "fail" in statuses else
-              "pass" if len(trials) == count and all(s == "pass" for s in statuses) else "inconclusive")
+    status = _summary(trials, count)
     return {"status": status, "synthetic": False, "repetitions": trials, "observations": observations, "tool_runs":tool_runs,
-            "cleanup_confirmed": bool(trials) and all(t["cleanup_confirmed"] for t in trials),
-            "reason": "Target lifecycle with scoped requests and explicit evidence requirements"}
+            "cleanup_confirmed": runtime.confirmed, "target_state_confirmed": all(t["cleanup_confirmed"] for t in trials),
+            "deployment_changed": runtime.deployment_changed,
+            "reason": next((t["reason"] for t in trials if t["status"] == status and t.get("reason")),
+                            "Target lifecycle with scoped requests and explicit evidence requirements")}

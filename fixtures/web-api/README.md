@@ -31,7 +31,7 @@ $env:VIBEAUDIT_FIXTURE_B = 'fixture-web-b'
 
 工具包 auth profiles 可分別引用這兩個環境變數。用 B 身份讀 `/orders/order-b` 是 positive control；再用 A 身份讀同一路徑，vulnerable 會回傳 B canary，fixed 回 403。這證明本地 fixture 的 BOLA 分支可辨識。
 
-登出測試先成功讀 `/me`，對 `/auth/logout` POST，再以相同 bearer token 重讀 `/me`；vulnerable 是 200，fixed 是 401。每一步使用新 HTTP 請求，排除畫面快取影響。登出案例目前由 `tests/test_fixtures.py` 執行，核心單一 request oracle 尚不是通用 session workflow runner。
+登出測試以 `alice` 登入並擷取 session，先成功讀 `/orders/order-a`（含 `TENANT_A_ORDER_CANARY`），對 `/auth/logout` POST，再以同一個 session 重讀 `/orders/order-a`；vulnerable 是 200 且仍含 canary，fixed 是 401。每一步使用新 HTTP 請求，session 只由 supervisor 保存。內建的 `synthetic-web-v1` fixture profile 以原生 HTTP sequence 執行此流程（`fixture_protocol.py`）；外部工具無法使用擷取的 session，指定它們時會 blocked。
 
 `fixed` 只修正以上兩個刻意缺陷，並非全面安全的應用模板。
 

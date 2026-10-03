@@ -2,6 +2,7 @@ import asyncio
 import copy
 import json
 import shutil
+import time
 from pathlib import Path
 
 import pytest
@@ -11,8 +12,14 @@ from vibe_audit.api import create_app
 from vibe_audit.catalog import default_catalog_root
 from vibe_audit.domain import RunInput, digest
 from vibe_audit.policy import PolicyError, sealed
-from vibe_audit.service import Engine, report_sarif
+from vibe_audit.service import Engine, report_markdown, report_sarif
 from vibe_audit.store import Store
+
+
+@pytest.fixture(autouse=True)
+def private_store(monkeypatch):
+    # create_app falls back to this variable, and integration runs point it at the shared test database.
+    monkeypatch.delenv("VIBEAUDIT_DATABASE_URL",raising=False)
 
 
 @pytest.fixture
@@ -63,6 +70,15 @@ async def test_sarif_level_follows_evidence_and_keeps_blackbox_findings(engine):
     result=next(r for r in report_sarif(refuted)["runs"][0]["results"] if r["properties"]["evidenceState"]=="refuted")
     assert result["level"]=="none" and result["suppressions"][0]["kind"]=="external"
     assert "E-pass" in result["suppressions"][0]["justification"]
+    # Lockfile and location-less findings are reported, and a scanner's rule ID names its result.
+    extra=copy.deepcopy(run)
+    extra["findings"]+=[{**finding,"id":"osv","state":"corroborated_static","file":"package-lock.json","line":None,"rule_id":"GHSA-xxxx","evidence_ids":[]},
+                        {**finding,"id":"loose","state":"hypothesis","file":None,"line":None,"cwe":None,"evidence_ids":[]}]
+    assert len(report_sarif(extra)["runs"][0]["results"])==len(extra["findings"])
+    osv=[r for r in report_sarif(extra)["runs"][0]["results"] if r["ruleId"]=="GHSA-xxxx"][0]
+    assert osv["locations"][0]["physicalLocation"]=={"artifactLocation":{"uri":"package-lock.json"}}
+    loose=[r for r in report_sarif(extra)["runs"][0]["results"] if "logicalLocations" in r["locations"][0] and "physicalLocation" not in r["locations"][0]]
+    assert loose and loose[0]["ruleId"]=="security-hypothesis"
 
 
 async def test_catalog_failure_names_the_file(engine,tmp_path,monkeypatch):
@@ -157,6 +173,87 @@ async def test_whitebox_resume_keeps_paid_reviews_and_sealed_scans(engine,monkey
     assert scans==["semgrep","osv"] and [r["scanner_id"] for r in run["tool_results"]]==["semgrep","osv"]
     assert [r["agent_id"] for r in run["reviews"]]==reviewers and all(r["status"]=="completed" for r in run["reviews"])
     assert run["commander_plan"]["focus"]==focus
+
+
+async def test_one_unverifiable_citation_does_not_void_a_review(engine,monkeypatch):
+    run=await finished_demo(engine)
+    run.update(mode="live",status="running",stage="whitebox",reviews=[],tool_results=[],commander_plan=None)
+    manifest=run["manifest"]
+    manifest.update(mode="live",static_tools=[])
+    for profile in manifest["models"]:
+        profile.update(provider="openai_compatible",endpoint="http://127.0.0.1:11434/v1")
+    run["manifest_hash"]=digest(manifest)
+    run.update(staging={"path":"unused"},tool_manifest={"tools":0},runtime_config_hash="h")
+    engine.runtime_configs["h"]={}
+    monkeypatch.setattr("vibe_audit.staging.verify_staging",lambda staging:True)
+    monkeypatch.setattr("vibe_audit.resource_manifest.resource_manifest",lambda config,tools:{"tools":0})
+    monkeypatch.setattr(engine,"runtime",lambda run:object())
+    good={"file":"synthetic/orders.py","line":1,"quote":"Synthetic fixture only"}
+    reviewers=[p["id"] for p in manifest["models"] if p["role"]=="reviewer"]
+    async def model(run,profile,instruction,payload,contract=None):
+        if profile["role"]=="commander":
+            return {"reviewer_order":reviewers,"focus":[],"rationale":"r"}
+        return {"findings":[
+            {"title":"Cited correctly","severity":"high","description":"d","source_refs":[good]},
+            {"title":"Misquoted","severity":"high","description":"d","source_refs":[good,{**good,"quote":"Synthetic  fixture only"}]},
+            {"title":"Too short","severity":"low","description":"d","source_refs":[{**good,"quote":"e"}]},
+            {"title":"Elsewhere","severity":"low","description":"d","file":"missing.py","line":3}],"gaps":[]}
+    monkeypatch.setattr(engine,"model",model)
+    engine.cancel_flags[run["id"]]=asyncio.Event()
+    await engine._whitebox(run)
+    review=run["reviews"][0]
+    assert review["status"]=="completed" and [f["title"] for f in review["findings"]]==["Cited correctly","Misquoted","Too short","Elsewhere"]
+    assert [len(f["source_refs"]) for f in review["findings"]]==[1,1,0,0]
+    assert review["findings"][3]["file"] is None
+    assert sum("dropped 1 source reference" in gap for gap in review["gaps"])==2 and any("outside the frozen source" in gap for gap in review["gaps"])
+
+
+async def test_oversized_model_payload_keeps_cited_files_or_blocks(engine,monkeypatch):
+    from vibe_audit import providers
+    run=await finished_demo(engine)
+    cited={"path":"synthetic/orders.py","content":"x"*400}
+    other={"path":"vendor/big.js","content":"y"*4000}
+    monkeypatch.setattr(engine,"source",lambda run:{"digest":"d","files":[cited,other]})
+    monkeypatch.setattr(providers,"MAX_PAYLOAD_BYTES",100000)
+    assert engine.fitted_source(run,{"candidates":[]},"Challenger")["files"]==[cited,other]
+    # Past the limit only the files findings cite keep their text, and the omission is a recorded gap.
+    monkeypatch.setattr(providers,"MAX_PAYLOAD_BYTES",3000)
+    fitted=engine.fitted_source(run,{"candidates":[]},"Challenger")
+    assert [f["content"] for f in fitted["files"]]==[cited["content"],""] and fitted["files"][1]["omitted"]
+    assert any(gap.startswith("Challenger received full text only") for gap in run["gaps"])
+    monkeypatch.setattr(providers,"MAX_PAYLOAD_BYTES",200)
+    with pytest.raises(PolicyError,match="payload limit"):
+        engine.fitted_source(run,{"candidates":[]},"Challenger")
+
+
+async def test_provided_cases_leave_uncovered_threats_as_gaps(engine):
+    run=await finished_demo(engine)
+    case=next(c for c in run["cases"] if c["id"]=="C-001")
+    run["cases"]=[case]
+    # Model-designed cases must cover every automated threat.
+    with pytest.raises(PolicyError,match="Automated threats without cases"):
+        engine.policy.case_gate(run)
+    # Cases the operator (or a retest's parent) supplied are the chosen scope; the rest is a visible gap.
+    run["manifest"]["cases"]=[{k:v for k,v in case.items() if k!="hash"}]
+    run["manifest_hash"]=digest(run["manifest"])
+    engine.policy.case_gate(run)
+    engine.policy.case_gate(run)
+    assert [g for g in run["gaps"] if "without a provided case" in g]==["Automated threats without a provided case were not tested: T-002"]
+
+
+async def test_threat_model_that_drops_a_provided_case_threat_blocks_early(engine,monkeypatch):
+    run=await finished_demo(engine)
+    proposal={k:v for k,v in run["threat_model"].items() if k not in {"hash","source_digest","deployment_id"}}
+    run.update(mode="live",status="running",stage="threat_model")
+    case={k:v for k,v in run["cases"][0].items() if k!="hash"}
+    run["manifest"].update(mode="live",cases=[{**case,"threat_ids":["T-RENAMED"]}])
+    run["manifest_hash"]=digest(run["manifest"])
+    async def model(run,profile,instruction,payload,contract=None):
+        return proposal
+    monkeypatch.setattr(engine,"model",model)
+    monkeypatch.setattr(engine,"fitted_source",lambda run,payload,label:{"files":[]})
+    with pytest.raises(PolicyError,match="T-RENAMED"):
+        await engine._threat_model(run)
 
 
 async def test_time_budget_counts_active_time_across_resume_and_restart(engine,tmp_path):
@@ -258,6 +355,13 @@ def open_session(client):
     return client.get("/api/session",headers={"X-VibeAudit-Token":client.app.state.session_token})
 
 
+def authorize(client):
+    """Open a session and send its CSRF token on every later request, as the workbench does."""
+    csrf=open_session(client).json()["csrf_token"]
+    client.headers["X-CSRF-Token"]=csrf
+    return csrf
+
+
 def test_local_api_session_csrf_origin_host_and_source_boundary(tmp_path):
     with TestClient(create_app(tmp_path,testing=True)) as client:
         assert client.get("/api/runs").status_code==401
@@ -272,22 +376,35 @@ def test_local_api_session_csrf_origin_host_and_source_boundary(tmp_path):
         response=open_session(client)
         csrf=response.json()["csrf_token"]
         assert "HttpOnly" in response.headers["set-cookie"]
-        # The cookie alone resumes the existing session, so reloading the workbench needs no token.
-        assert client.get("/api/session").json()["csrf_token"]==csrf
-        assert client.post("/api/runs",json={"mode":"demo"}).status_code==403
         headers={"X-CSRF-Token":csrf}
+        # Cookies reach every port on this host. The cookie alone must not yield the CSRF token or any data.
+        response=client.get("/api/session")
+        assert response.status_code==401 and "csrf_token" not in response.json()
+        assert client.get("/api/session",headers={"X-CSRF-Token":"x"*43}).status_code==401
+        for path in ["/api/runs","/api/projects","/api/openapi.json"]:
+            response=client.get(path)
+            assert response.status_code==403
+            assert response.headers["content-security-policy"].startswith("default-src 'self'")
+        # A reloaded workbench proves the session with the CSRF token it stored.
+        assert client.get("/api/session",headers=headers).json()["csrf_token"]==csrf
+        assert client.post("/api/runs",json={"mode":"demo"}).status_code==403
         assert client.post("/api/runs",json={"mode":"demo"},headers={**headers,"Origin":"https://evil.example"}).status_code==403
         assert client.get("/api/session",headers={"Host":"evil.example"}).status_code==403
         assert client.get("/api/session",headers={"Sec-Fetch-Site":"cross-site"}).status_code==403
         response=client.post("/api/runs",json={"mode":"demo","name":"<script>alert(1)</script>"},headers=headers)
         assert response.status_code==201
         assert response.json()["mode"]=="demo"
-        assert client.get("/api/runs").json()["runs"]
-        for path in ["/api","/api/nope","/api/runs/x/nope"]:
-            response=client.get(path)
+        assert client.get("/api/runs",headers=headers).json()["runs"]
+        for path in ["/api","/api/nope","/api/runs/x/nope","/api/docs"]:
+            response=client.get(path,headers=headers)
             assert (response.status_code,response.headers["content-type"])==(404,"application/json")
-        assert client.get("/api/docs").status_code==200
+        assert client.get("/api/openapi.json",headers=headers).json()["info"]["title"]=="Vibe Audit"
         assert "redoc" not in client.get("/redoc").text.lower()
+        # A new startup-token exchange replaces this browser's session instead of adding to it.
+        renewed=open_session(client).json()["csrf_token"]
+        assert renewed!=csrf
+        assert client.get("/api/runs",headers=headers).status_code==403
+        assert client.get("/api/runs",headers={"X-CSRF-Token":renewed}).status_code==200
 
 
 def test_unconfirmed_worker_cleanup_closes_by_attestation_and_never_resumes(tmp_path):
@@ -297,7 +414,7 @@ def test_unconfirmed_worker_cleanup_closes_by_attestation_and_never_resumes(tmp_
     store.save(run)
     store.close()
     with TestClient(create_app(tmp_path,testing=True)) as client:
-        headers={"X-CSRF-Token":open_session(client).json()["csrf_token"]}
+        headers={"X-CSRF-Token":authorize(client)}
         base=f"/api/runs/{run['id']}"
         assert client.get(base).json()["status"]=="cancelling"
         # No task is left to move the run, so the stream ends instead of polling forever.
@@ -327,6 +444,34 @@ async def test_reconcile_waits_for_the_task_and_keeps_an_operator_cancel_cancell
     assert engine.reconcile(run["id"],"done")["status"]=="cancelled"
 
 
+def test_api_errors_stay_structured_instead_of_500(tmp_path,monkeypatch):
+    config=tmp_path/"runtime.json"
+    # A lease database that refuses connections must not turn the inventory into a server error.
+    config.write_text(json.dumps({"profiles":{"default":{"work_root":str(tmp_path/"w"),"backend":"docker","database_url":"postgresql://nobody@127.0.0.1:1/none?connect_timeout=1"}}}))
+    monkeypatch.setenv("VIBEAUDIT_RUNTIME_CONFIG",str(config))
+    with TestClient(create_app(tmp_path,testing=True),raise_server_exceptions=False) as client:
+        authorize(client)
+        response=client.get("/api/capabilities")
+        assert response.status_code==200 and response.json()["runtime"]["available"] is False
+        for body in [b"[]",b'"x"',b"not json",b'{"profile":{}}']:
+            response=client.post("/api/models/probe",content=body,headers={"Content-Type":"application/json"})
+            assert response.status_code==422 and "detail" in response.json(),body
+        run=client.post("/api/runs",json={"mode":"demo"}).json()
+        # A retest of an assessment that never ran is refused, by either route.
+        assert client.post("/api/runs",json={"mode":"demo","parent_run_id":run["id"]}).status_code==409
+        assert client.post(f"/api/runs/{run['id']}/retest",json={"name":"r","source_path":"","deployment_id":"d","finding_ids":["x"]}).status_code==409
+        client.post(f"/api/runs/{run['id']}/start")
+        for _ in range(100):
+            current=client.get(f"/api/runs/{run['id']}").json()
+            if current["status"] not in {"created","running"}:break
+            time.sleep(.05)
+        artifact=current["artifacts"][0]
+        (tmp_path/"artifacts"/artifact["filename"]).unlink()
+        response=client.get(f"/api/runs/{run['id']}/evidence/{artifact['id']}")
+        assert response.status_code==409 and response.json()["detail"]=="Evidence integrity check failed"
+        assert client.get("/api/runs/no-such-run").status_code==404
+
+
 @pytest.mark.parametrize("token",["x"*31,"x"*32+" ","x"*32+"#"])
 def test_weak_startup_token_is_refused(tmp_path,monkeypatch,token):
     monkeypatch.setenv("VIBEAUDIT_SESSION_TOKEN",token)
@@ -338,6 +483,84 @@ def test_configured_startup_token_opens_session(tmp_path,monkeypatch):
     monkeypatch.setenv("VIBEAUDIT_SESSION_TOKEN","s"*40)
     with TestClient(create_app(tmp_path,testing=True)) as client:
         assert client.get("/api/session",headers={"X-VibeAudit-Token":"s"*40}).status_code==200
+
+
+def test_restart_records_a_sent_request_as_outcome_unknown(tmp_path):
+    store=Store(tmp_path)
+    run=Engine(store).create(RunInput(name="Crash after dispatch"))
+    run.update(status="running",stage="blackbox",cases=[{"id":"C-001","title":"Tenant boundary","hash":"sealed"}])
+    store.save(run)
+    job=store.job(run["id"],run["cases"][0])
+    store.update_job(job,"sent",{"case_hash":"sealed","side_effects":False,"sent_at":"2026-10-03T00:00:00+00:00","repetition":0})
+    restarted=Engine(store)
+    stored=store.get(run["id"])
+    # The dispatch may have reached the target: every export must show it, and nothing may replay it.
+    assert stored["status"]=="incomplete" and "after a request was sent" in stored["error"]
+    assert [(e["id"],e["case_id"],e["status"],e["repetition"]) for e in stored["executions"]]==[(job,"C-001","outcome_unknown",0)]
+    assert any("Tenant boundary" in gap and "never recorded" in gap for gap in stored["gaps"])
+    assert [j["status"] for j in store.jobs(run["id"])]==["finished"]
+    markdown=report_markdown(stored)
+    assert "C-001: outcome\\_unknown" in markdown and "Error: Controller restarted after a request was sent" in markdown
+    with pytest.raises(PolicyError,match="outcome_unknown"):
+        restarted.start(run["id"],resume=True)
+    store.close()
+
+
+async def test_failure_after_dispatch_leaves_no_silent_sent_job(engine,monkeypatch):
+    run=engine.create(RunInput(name="Bug after dispatch"))
+    async def crashing_blackbox(run):
+        case=run["cases"][0]
+        job=engine.store.job(run["id"],case)
+        engine.store.update_job(job,"sent",{"case_hash":case["hash"],"side_effects":False,"sent_at":"now","repetition":0})
+        raise KeyError("title")
+    monkeypatch.setattr(engine,"_blackbox",crashing_blackbox)
+    engine.start(run["id"])
+    await engine.tasks[run["id"]]
+    stored=engine.store.get(run["id"])
+    assert stored["status"]=="failed"
+    assert [e["status"] for e in stored["executions"]]==["outcome_unknown"]
+    with pytest.raises(PolicyError,match="outcome_unknown"):
+        engine.start(run["id"],resume=True)
+
+
+@pytest.mark.parametrize("change",[{"title":None},{"repetitions":"5"},{"headers":["X-Tenant: b"]},{"oracle":{"kind":"deny_sensitive"}},{"preconditions":[{"name":"p","path":"/x"}]}])
+def test_malformed_operator_case_is_rejected_before_any_stage(change):
+    case=json.loads(Path(__file__).resolve().parents[1].joinpath("fixtures/web-api/bola-case.json").read_text())
+    RunInput(cases=[case])
+    case.update(change)
+    if change.get("title",0) is None:
+        del case["title"]
+    with pytest.raises(ValueError):
+        RunInput(cases=[case])
+
+
+def test_model_designed_cases_follow_a_strict_contract():
+    from vibe_audit.contracts import CaseDesignProposal
+    case=json.loads(Path(__file__).resolve().parents[1].joinpath("fixtures/web-api/bola-case.json").read_text())
+    assert CaseDesignProposal.model_validate({"cases":[case]}).cases[0].title==case["title"]
+    # A model cannot pick a tool adapter, an unsafe control or keys of its own.
+    for change in [{"adapter":"zap"},{"preconditions":[{**case["preconditions"][0],"method":"POST"}]},{"designed_by":"operator"},{"method":"DELETE"}]:
+        with pytest.raises(ValueError):
+            CaseDesignProposal.model_validate({"cases":[{**case,**change}]})
+
+
+async def test_invalid_unicode_escapes_from_untrusted_json_never_stop_saving(engine):
+    run=await finished_demo(engine)
+    lone=json.loads('"leak \\ud800 title"')
+    run["findings"][0]["title"]=lone
+    engine.store.save(run)
+    assert engine.store.get(run["id"])["findings"][0]["title"]=="leak \ufffd title"
+    artifact=engine.store.put_evidence(run["id"],"blackbox-worker",{"result":{"status":"fail","reason":lone}})
+    assert engine.store.evidence(artifact,run["id"])["content"]["result"]["reason"]=="leak \ufffd title"
+
+
+async def test_trace_marks_the_current_version_of_each_entity(engine):
+    run=await finished_demo(engine)
+    finding=next(f for f in run["findings"] if f["state"]=="hypothesis")
+    finding["state"]="inconclusive"
+    engine.store.save(run)
+    versions=[e for e in engine.store.trace(run["id"])["entities"] if e["kind"]=="finding" and e["id"]==finding["id"]]
+    assert [(e["current"],e["value"]["state"]) for e in versions]==[(True,"inconclusive"),(False,"hypothesis")]
 
 
 def test_live_requires_diversity_and_no_demo():
@@ -353,7 +576,7 @@ def test_artifact_cannot_be_reassigned_to_other_run(tmp_path):
 
 def test_chunked_api_body_limit_does_not_trust_content_length(tmp_path):
     with TestClient(create_app(tmp_path,testing=True)) as client:
-        csrf=open_session(client).json()["csrf_token"]
+        csrf=authorize(client)
         def chunks():
             yield b'{"mode":"demo","notes":"'
             for _ in range(9):
@@ -369,7 +592,7 @@ def test_chunked_api_body_limit_does_not_trust_content_length(tmp_path):
 @pytest.mark.parametrize("length",["not-a-number","-1"])
 def test_invalid_content_length_is_rejected_without_creating_run(tmp_path,length):
     with TestClient(create_app(tmp_path,testing=True)) as client:
-        csrf=open_session(client).json()["csrf_token"]
+        csrf=authorize(client)
         response=client.post("/api/runs",content=b'{"mode":"demo"}',headers={
             "X-CSRF-Token":csrf,"Content-Type":"application/json","Content-Length":length})
         assert response.status_code==400
@@ -561,6 +784,85 @@ async def test_model_designed_post_cannot_declare_itself_read_only(engine,monkey
         assert dispatched==[]
         assert run["executions"][0]["status"]=="blocked"
         assert run["usage"]["requests"]==0
+
+
+def as_get_case(run,headers=None):
+    """Make the live POST case a read-only GET, with optional case headers, and reseal it."""
+    run["manifest"]["allowed_requests"]=[{"method":"GET","path":"/orders/private"}]
+    case=run["cases"][0]
+    case.update(method="GET",body=None,headers=headers or {})
+    for item in run["manifest"]["cases"]:
+        item.update(method="GET",body=None,headers=headers or {})
+    run["manifest_hash"]=digest(run["manifest"])
+    case["hash"]=sealed(case)
+    return case
+
+
+@pytest.mark.parametrize("provenance,headers,allowed",[
+    ("operator",{"X-HTTP-Method-Override":"DELETE"},False),
+    ("operator",{"X-Original-URL":"/admin/users/1"},False),
+    ("operator",{"X-Vibe-Identity":"admin"},False),
+    ("model",{"X-Tenant":"tenant-b"},False),
+    ("operator",{"X-Tenant":"tenant-b"},True),
+    ("model",{"Accept":"application/json"},True),
+])
+async def test_case_headers_cannot_override_method_path_or_relay(engine,monkeypatch,provenance,headers,allowed):
+    run=await live_post_case(engine,adapter="http",provenance=provenance)
+    as_get_case(run,headers)
+    dispatched=[]
+    class Runtime:
+        async def run_case(self,manifest,case,**kwargs):
+            dispatched.append(case["headers"])
+            return {"status":"pass","reason":"synthetic","observations":[],"evidence":[],"cleanup_confirmed":True}
+    monkeypatch.setattr(engine,"runtime",lambda _:Runtime())
+    if allowed:
+        await engine._blackbox(run)
+        assert dispatched==[headers]
+    else:
+        with pytest.raises(PolicyError,match="method/path overrides"):
+            await engine._blackbox(run)
+        assert dispatched==[] and run["executions"]==[]
+
+
+async def test_violation_with_unconfirmed_target_state_stops_and_never_resumes(engine,monkeypatch):
+    run=await live_post_case(engine,adapter="http",provenance="operator")
+    as_get_case(run)
+    class Runtime:
+        async def run_case(self,manifest,case,**kwargs):
+            return {"status":"fail","reason":"A forbidden test canary was observed in the response.","observations":[],"evidence":[],
+                    "cleanup_confirmed":True,"target_state_confirmed":False}
+    monkeypatch.setattr(engine,"runtime",lambda _:Runtime())
+    with pytest.raises(PolicyError,match="outcome is unknown"):
+        await engine._blackbox(run)
+    # The observed violation is kept as a finding even though the target could not be reset.
+    assert run["executions"][0]["status"]=="fail"
+    assert any(f["state"]=="validated_dynamic" for f in run["findings"])
+    run["status"]="blocked"
+    engine.store.save(run)
+    with pytest.raises(PolicyError,match="outcome_unknown"):
+        engine.start(run["id"],resume=True)
+
+
+async def test_changed_deployment_stops_the_run_and_never_resumes(engine,monkeypatch):
+    run=await live_post_case(engine,adapter="http",provenance="operator")
+    as_get_case(run)
+    run["cases"].append({**run["cases"][0],"id":"C-later"})
+    run["cases"][1]["hash"]=sealed(run["cases"][1])
+    calls=[]
+    class Runtime:
+        async def run_case(self,manifest,case,**kwargs):
+            calls.append(case["id"])
+            return {"status":"blocked","reason":"Deployment identity changed or was not present","observations":[],"evidence":[],
+                    "cleanup_confirmed":True,"deployment_changed":True}
+    monkeypatch.setattr(engine,"runtime",lambda _:Runtime())
+    with pytest.raises(PolicyError,match="deployment identity"):
+        await engine._blackbox(run)
+    # Nothing else is sent to a deployment other than the declared one.
+    assert calls==[run["cases"][0]["id"]] and run["deployment_changed"] is True
+    run["status"]="blocked"
+    engine.store.save(run)
+    with pytest.raises(PolicyError,match="deployment identity changed"):
+        engine.start(run["id"],resume=True)
 
 
 @pytest.mark.parametrize("provenance",["model","operator"])

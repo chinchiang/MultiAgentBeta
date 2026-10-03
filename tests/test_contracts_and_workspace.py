@@ -17,6 +17,12 @@ from vibe_audit.staging import discard_staging, stage_source, verify_staging
 from vibe_audit.store import Store
 
 
+@pytest.fixture(autouse=True)
+def private_store(monkeypatch):
+    # create_app falls back to this variable, and integration runs point it at the shared test database.
+    monkeypatch.delenv("VIBEAUDIT_DATABASE_URL",raising=False)
+
+
 async def demo(store):
     engine=Engine(store)
     run=engine.create(RunInput(name="Contract and graph integration"))
@@ -32,7 +38,9 @@ def test_source_claims_need_exact_frozen_evidence():
     verify_source_references([{"file":"app.py","line":2,"quote":"return tenant_id"}],source)
     for ref in ({"file":"other.py","line":2,"quote":"return tenant_id"},
                 {"file":"app.py","line":1,"quote":"return tenant_id"},
-                {"file":"../app.py","line":2,"quote":"return tenant_id"}):
+                {"file":"../app.py","line":2,"quote":"return tenant_id"},
+                # A couple of characters occur on almost any line and locate nothing.
+                {"file":"app.py","line":2,"quote":"t"},{"file":"app.py","line":2,"quote":"ret  "}):
         with pytest.raises(ValueError):
             verify_source_references([ref],source)
 
@@ -114,6 +122,87 @@ async def test_staged_copy_is_discarded_once_whitebox_stage_completes(tmp_path):
         store.close()
 
 
+def test_failed_staging_leaves_no_partial_copy_and_records_skipped_directories(tmp_path):
+    source=tmp_path/"source"
+    for name in ["app.py","build/deploy.py","dist/bundle.js","node_modules/pkg/index.js",".git/config"]:
+        (source/name).parent.mkdir(parents=True,exist_ok=True)
+        (source/name).write_text("AKIA-synthetic\n")
+    if os.name=="posix":
+        (source/"linked").symlink_to(source/"build",target_is_directory=True)
+    private=tmp_path/"private"
+    record=stage_source(str(source),private)
+    # No scanner or model sees these directories, so the record names each of them.
+    assert {"build/","dist/","node_modules/",".git/"}<=set(record["omitted"])
+    assert os.name!="posix" or "linked/" in record["omitted"]
+    assert [f["path"] for f in record["files"]]==["app.py"]
+    discard_staging(record,private)
+    with pytest.raises(ValueError,match="bounded snapshot limits"):
+        stage_source(str(source),private,max_bytes=4)
+    assert list(private.iterdir())==[]
+
+
+async def test_staged_copy_never_outlives_a_failed_attempt_or_a_restart(tmp_path,monkeypatch):
+    store=Store(tmp_path)
+    try:
+        engine=Engine(store)
+        source=tmp_path/"source"
+        source.mkdir()
+        (source/".env").write_text("SYNTHETIC_SECRET=sentinel-local-fixture\n")
+        # A blocked attempt drops its copy as well, not only a whitebox stage that completed.
+        run=engine.create(RunInput(name="Blocked with a staged copy"))
+        run["staging"]=stage_source(str(source),store.root/"scanner-inputs")
+        store.save(run)
+        async def blocked(run):
+            raise PolicyError("Required model capability probe failed")
+        monkeypatch.setattr(engine,"_preflight",blocked)
+        engine.start(run["id"])
+        await engine.tasks[run["id"]]
+        result=store.get(run["id"])
+        assert result["status"]=="blocked" and result["staging"]["discarded"] is True
+        assert not Path(run["staging"]["path"]).exists()
+        # At startup no attempt runs, so every copy still on disk, recorded or stray, is removed.
+        orphan=engine.create(RunInput(name="Controller died while staged"))
+        orphan["staging"]=stage_source(str(source),store.root/"scanner-inputs")
+        store.save(orphan)
+        stray=stage_source(str(source),store.root/"scanner-inputs")
+        Engine(store)
+        assert store.get(orphan["id"])["staging"]["discarded"] is True
+        assert not Path(orphan["staging"]["path"]).exists() and not Path(stray["path"]).exists()
+    finally:
+        store.close()
+
+
+async def test_resumed_scan_restages_only_an_unchanged_source(tmp_path,monkeypatch):
+    store=Store(tmp_path)
+    try:
+        engine=Engine(store)
+        source=tmp_path/"source"
+        source.mkdir()
+        (source/"app.py").write_text("value = input()\n")
+        run=engine.create(RunInput(name="Resume after the copy was dropped"))
+        run.update(mode="live",staging=stage_source(str(source),store.root/"scanner-inputs"),tool_results=[],tool_manifest={"tools":1},runtime_config_hash="h")
+        run["manifest"].update(source_path=str(source),static_tools=["semgrep"])
+        engine.discard_staging_copy(run)
+        engine.runtime_configs["h"]={}
+        engine.cancel_flags[run["id"]]=asyncio.Event()
+        monkeypatch.setattr("vibe_audit.resource_manifest.resource_manifest",lambda config,tools:{"tools":1})
+        scanned=[]
+        class Runtime:
+            async def run_scanner(self,tool,path,**kwargs):
+                scanned.append(Path(path).joinpath("app.py").read_text())
+                return {"status":"completed","findings":[],"gaps":[],"limitations":[]}
+        monkeypatch.setattr(engine,"runtime",lambda run:Runtime())
+        await engine._scan_source(run)
+        assert scanned==["value = input()\n"] and run["staging"].get("discarded") is None
+        engine.discard_staging_copy(run)
+        run["tool_results"]=[]
+        (source/"app.py").write_text("value = 'changed'\n")
+        with pytest.raises(PolicyError,match="Source changed"):
+            await engine._scan_source(run)
+    finally:
+        store.close()
+
+
 async def test_trace_graph_and_requirement_gate(tmp_path):
     store=Store(tmp_path)
     engine,run=await demo(store)
@@ -161,6 +250,7 @@ def test_workspace_settings_catalog_and_linked_retest(tmp_path):
     app=create_app(tmp_path,testing=True)
     with TestClient(app) as client:
         csrf=client.get("/api/session",headers={"X-VibeAudit-Token":app.state.session_token}).json()["csrf_token"]
+        client.headers["X-CSRF-Token"]=csrf
         headers={"x-csrf-token":csrf}
         profile={"id":"commander","role":"commander","provider":"openai","model_id":"operator-selects-model","family":"openai","endpoint":"https://api.openai.com/v1","credential_env":"VIBEAUDIT_OPENAI_KEY"}
         assert client.put("/api/models/commander",json=profile,headers=headers).status_code==200
@@ -196,33 +286,53 @@ def test_finding_decision_needs_independent_execution_evidence(tmp_path):
     app=create_app(tmp_path,testing=True)
     with TestClient(app) as client:
         csrf=client.get("/api/session",headers={"X-VibeAudit-Token":app.state.session_token}).json()["csrf_token"]
+        client.headers["X-CSRF-Token"]=csrf
         headers={"x-csrf-token":csrf}
         _,run=client.portal.call(demo,app.state.store)
-        finding=next(f for f in run["findings"] if f["agent_ids"]==["blackbox-worker"])
-        execution={x["status"]:x["evidence_id"] for x in run["executions"]}
+        observed=next(f for f in run["findings"] if f["agent_ids"]==["blackbox-worker"])
+        execution={x["case_id"]:x["evidence_id"] for x in run["executions"]}
         producers={a["id"]:a["producer"] for a in run["artifacts"]}
         snapshot=next(key for key,producer in producers.items() if producer=="source-snapshot")
-        review=next(key for key,producer in producers.items() if producer=="reviewer-a")
-        url=f"/api/runs/{run['id']}/findings/{finding['id']}/decision"
-        def decide(decision,*evidence):
-            return client.post(url,json={"decision":decision,"rationale":"Operator retest","evidence_ids":list(evidence)},headers=headers)
-        for decision,evidence,reason in [
-                ("refuted",finding["evidence_ids"],"own evidence"),
-                ("refuted",[snapshot],"black-box execution"),
-                ("inconclusive",[review],"black-box execution"),
-                ("refuted",[execution["pass"],snapshot],"black-box execution"),
-                ("refuted",[execution["inconclusive"]],"security property held"),
-                ("refuted",[str(uuid.uuid4())],"belong to this run")]:
-            response=decide(decision,*evidence)
+        reviews=[key for key,producer in producers.items() if producer.startswith("reviewer-")]
+        # A hypothesis some review did not raise, so that review is not its own evidence.
+        hypothesis=next(f for f in run["findings"] if f["state"]=="hypothesis" and set(reviews)-set(f["evidence_ids"]))
+        review=next(key for key in reviews if key not in hypothesis["evidence_ids"])
+        def decide(finding,decision,*evidence,threats=()):
+            url=f"/api/runs/{run['id']}/findings/{finding['id']}/decision"
+            body={"decision":decision,"rationale":"Operator retest","evidence_ids":list(evidence),"threat_ids":list(threats)}
+            return client.post(url,json=body,headers=headers)
+        # An observed violation is cleared by a linked retest, never by another pass in the same run.
+        for decision in ["refuted","inconclusive"]:
+            response=decide(observed,decision,execution["C-002"])
+            assert response.status_code==409 and "retest" in response.json()["detail"],response.text
+        for decision,evidence,threats,reason in [
+                ("refuted",[snapshot],["T-001"],"black-box execution"),
+                ("inconclusive",[review],["T-001"],"black-box execution"),
+                ("refuted",[execution["C-002"],snapshot],["T-001"],"black-box execution"),
+                ("refuted",[execution["C-002"]],[],"Name the threats"),
+                ("refuted",[execution["C-002"]],["T-404"],"Name the threats"),
+                # C-003 tests T-002, so it says nothing about T-001.
+                ("inconclusive",[execution["C-003"]],["T-001"],"tests the finding's threats"),
+                ("refuted",[execution["C-003"]],["T-002"],"security property held"),
+                # C-002 passed, but C-001 observed a T-001 violation in the same run.
+                ("refuted",[execution["C-002"]],["T-001"],"observed a violation"),
+                ("refuted",[str(uuid.uuid4())],["T-001"],"belong to this run")]:
+            response=decide(hypothesis,decision,*evidence,threats=threats)
             assert response.status_code==409 and reason in response.json()["detail"],response.text
         assert app.state.store.get(run["id"])["findings"]==run["findings"]
-        response=decide("inconclusive",execution["inconclusive"])
+        response=decide(hypothesis,"inconclusive",execution["C-003"],threats=["T-002"])
         assert response.status_code==200,response.text
-        response=decide("refuted",execution["pass"],execution["inconclusive"])
+        # A run whose only T-001 execution passed lets that pass refute the hypothesis.
+        stored=app.state.store.get(run["id"])
+        stored["executions"]=[e for e in stored["executions"] if e["case_id"]!="C-001"]
+        stored["findings"]=[f for f in stored["findings"] if f["id"]!=observed["id"]]
+        app.state.store.save(stored)
+        response=decide(hypothesis,"refuted",execution["C-002"],threats=["T-001"])
         assert response.status_code==200,response.text
-        decided=next(f for f in response.json()["findings"] if f["id"]==finding["id"])
+        decided=next(f for f in response.json()["findings"] if f["id"]==hypothesis["id"])
         assert decided["state"]=="refuted"
-        assert [d["previous_state"] for d in decided["decisions"]]==["validated_dynamic","inconclusive"]
+        assert [d["previous_state"] for d in decided["decisions"]]==["hypothesis","inconclusive"]
+        assert [d["threat_ids"] for d in decided["decisions"]]==[["T-002"],["T-001"]]
 
 
 async def test_postgres_checkpoints_and_resume_do_not_duplicate_executions(tmp_path):
