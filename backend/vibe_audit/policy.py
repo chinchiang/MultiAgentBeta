@@ -4,6 +4,7 @@ import time
 from urllib.parse import urlsplit, unquote
 from datetime import datetime, timezone
 
+from .adapters import case_headers_allowed
 from .domain import digest, now
 
 
@@ -128,6 +129,9 @@ class Policy:
                 raise PolicyError("Observation mode is required")
             if not 1<=case.get("repetitions",1)<=20:
                 raise PolicyError("Invalid repetition count")
+            model_designed=case.get("designed_by")=="model"
+            if not all(case_headers_allowed(r.get("headers"),model_designed=model_designed) for r in [case,*[p for p in case.get("preconditions",[]) if isinstance(p,dict)]]):
+                raise PolicyError("Case headers cannot carry credentials, relay controls or method/path overrides")
             if run["mode"]=="live":
                 scope={(r["method"],r["path"]) for r in run["manifest"]["allowed_requests"]}
                 requests=[case]+[p for p in case.get("preconditions",[]) if isinstance(p,dict)]+case.get("allowed_requests",[])
@@ -140,8 +144,13 @@ class Policy:
                         raise PolicyError("Trusted fixture configuration changed after case sealing")
             covered|=tids
         missing={t for t,v in threats.items() if v["testability"]=="automated"}-covered
-        if missing:
+        if missing and not run["manifest"].get("cases"):
             raise PolicyError("Automated threats without cases: "+", ".join(sorted(missing)))
+        if missing:
+            # The operator, or the run a retest copies, chose these cases; threats they leave out stay visible as untested.
+            gap="Automated threats without a provided case were not tested: "+", ".join(sorted(missing))
+            if gap not in run["gaps"]:
+                run["gaps"].append(gap)
         receipt=digest([c["hash"] for c in run["cases"]])
         run["gate_receipts"]["cases"]=receipt
         self.receipts[run["id"]]=(run["manifest_hash"],tm["hash"],receipt, time.monotonic()+run["manifest"]["budget"]["max_seconds"])

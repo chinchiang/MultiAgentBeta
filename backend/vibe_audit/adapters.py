@@ -29,13 +29,65 @@ MAX_REPETITIONS = 20
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 _TRUSTED = {"adapter.http", "fixture.local", "collector.local"}
 _CREDENTIAL_ENV = re.compile(r"^VIBEAUDIT_[A-Z0-9_]+$")
+# The tool's own settings share the prefix. A profile naming one would send it to a model or target.
+RESERVED_ENV = frozenset({
+    "VIBEAUDIT_DATABASE_URL", "VIBEAUDIT_SESSION_TOKEN", "VIBEAUDIT_DATA_DIR", "VIBEAUDIT_SOURCE_ROOTS",
+    "VIBEAUDIT_UI_ORIGINS", "VIBEAUDIT_RUNTIME_CONFIG", "VIBEAUDIT_FIXTURE_CONFIG", "VIBEAUDIT_CATALOG_ROOT",
+    "VIBEAUDIT_PYTHON", "VIBEAUDIT_RELAY_ORIGIN", "VIBEAUDIT_POSTGRES_PASSWORD", "VIBEAUDIT_POSTGRES_IMAGE",
+    "VIBEAUDIT_TEST_DATABASE_URL", "VIBEAUDIT_TEST_POSTGRES", "VIBEAUDIT_TEST_RUNTIME_CONFIG",
+})
+
+
+def secret_forms(value):
+    """The raw secret and the escaped forms a target may reflect it in (JSON, JSON with \\/, URL encoding)."""
+    from urllib.parse import quote
+    escaped = json.dumps(value)[1:-1]
+    return {value, escaped, escaped.replace("/", "\\/"), quote(value, safe="")} - {""}
+
+
+def credential_env_allowed(name, environ=None):
+    """A credential reference names an operator secret, never this tool's own configuration."""
+    environ = os.environ if environ is None else environ
+    if not isinstance(name, str) or not _CREDENTIAL_ENV.fullmatch(name) or name in RESERVED_ENV:
+        return False
+    value = environ.get(name)
+    if not value:
+        return True
+    # A URL is never an API key or bearer token; database URLs are read under operator-chosen names.
+    if "://" in value:
+        return False
+    return not any(environ.get(key) == value for key in RESERVED_ENV)
 _HEADER_NAME = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
 _FORBIDDEN_HEADERS = {
     "host", "authorization", "cookie", "proxy-authorization", "connection",
     "transfer-encoding", "content-length", "upgrade", "expect", "trailer",
-    "proxy-connection", "x-forwarded-host", "forwarded",
+    "proxy-connection", "x-forwarded-host", "forwarded", "te", "keep-alive",
     "x-api-key", "api-key", "x-auth-token", "x-access-token",
+    # A target honouring these acts on another method or path than the sealed, scoped one.
+    "x-http-method-override", "x-http-method", "x-method-override", "x-original-method",
+    "x-original-url", "x-original-uri", "x-rewrite-url", "x-forwarded-prefix", "x-forwarded-path",
+    "x-forwarded-uri", "x-envoy-original-path",
 }
+# The worker adds these to reach its relay; a sealed case cannot carry them.
+RELAY_HEADERS = frozenset({"x-vibe-case", "x-vibe-identity", "x-schemathesis-testcaseid"})
+# Model-designed cases need no custom routing, tenant or identity signal; operators write those cases.
+MODEL_CASE_HEADERS = frozenset({"accept", "accept-language", "content-type", "if-match", "if-none-match", "x-requested-with"})
+
+
+def case_headers_allowed(headers, *, model_designed=False, relay=False):
+    """relay=True only inside the worker, which adds its own case and identity routing headers."""
+    if headers is None:
+        return True
+    if not isinstance(headers, dict) or len(headers) > 24:
+        return False
+    def allowed(name):
+        lower = name.lower()
+        if lower in RELAY_HEADERS:
+            return relay
+        return lower not in _FORBIDDEN_HEADERS and (not model_designed or lower in MODEL_CASE_HEADERS)
+    return all(isinstance(name, str) and _HEADER_NAME.fullmatch(name) and allowed(name)
+               and isinstance(value, str) and len(value) <= 4096 and all(32 <= ord(c) <= 126 for c in value)
+               for name, value in headers.items())
 
 
 class AdapterBlocked(ValueError):
@@ -162,14 +214,9 @@ def _prepare_request(manifest, case):
         raise AdapterBlocked("Case path must use ASCII URL encoding.") from None
     headers = {"Accept": "application/json", "Accept-Encoding": "identity", "Connection": "close"}
     supplied = case.get("headers") or {}
-    if not isinstance(supplied, dict) or len(supplied) > 24:
-        raise AdapterBlocked("Invalid or excessive request headers.")
-    for name, value in supplied.items():
-        if (not isinstance(name, str) or not _HEADER_NAME.fullmatch(name)
-                or name.lower() in _FORBIDDEN_HEADERS or not isinstance(value, str)
-                or len(value) > 4096 or any(ord(c) < 32 or ord(c) > 126 for c in value)):
-            raise AdapterBlocked("Case contains an unsupported or credential-bearing request header.")
-        headers[name] = value
+    if not case_headers_allowed(supplied, model_designed=case.get("designed_by") == "model", relay=manifest.get("relay") is True):
+        raise AdapterBlocked("Case contains an unsupported, routing or credential-bearing request header.")
+    headers.update(supplied)
     secrets = []
     identity = case.get("identity")
     if identity is not None:
@@ -178,8 +225,8 @@ def _prepare_request(manifest, case):
             raise AdapterBlocked("Case identity must reference exactly one configured authentication profile.")
         profile = profiles[0]
         env_name = profile.get("credential_env", "")
-        if not isinstance(env_name, str) or not _CREDENTIAL_ENV.fullmatch(env_name):
-            raise AdapterBlocked("Credentials must reference a VIBEAUDIT_ environment variable.")
+        if not credential_env_allowed(env_name):
+            raise AdapterBlocked("Credentials must reference a VIBEAUDIT_ environment variable that is not a Vibe Audit setting.")
         secret = os.environ.get(env_name)
         if not secret or len(secret) > 8192 or any(ord(c) < 33 or ord(c) > 126 for c in secret):
             raise AdapterBlocked("Authentication credential is missing or invalid.")
@@ -318,11 +365,12 @@ def evaluate_oracle(case: dict, observations: list) -> dict:
             return {"status": "inconclusive", "reason": "Unexpected response status; absence of a canary is insufficient evidence."}
         if not case.get("preconditions"):
             return {"status": "inconclusive", "reason": "A positive-control precondition is required to establish the sensitive fixture exists."}
-        live_controls = [o for o in trusted if o.get("kind") == "precondition" and o.get("provenance") == "adapter.http"]
-        if live_controls:
-            verified_canaries = {item for control in live_controls for item in control.get("matched_text_sha256", [])}
-            if any(hashlib.sha256(needle.encode()).hexdigest() not in verified_canaries for needle in needles):
-                return {"status": "inconclusive", "reason": "Positive controls did not establish that each forbidden test canary exists."}
+        # Whichever executor ran the case, a missing canary only means something once a verified positive
+        # control showed that canary exists; otherwise a wrong or absent fixture would read as a pass.
+        verified_canaries = {item for o in trusted if o.get("kind") == "precondition" and o.get("value") is True
+                             for item in o.get("matched_text_sha256", [])}
+        if any(hashlib.sha256(needle.encode()).hexdigest() not in verified_canaries for needle in needles):
+            return {"status": "inconclusive", "reason": "Positive controls did not establish that each forbidden test canary exists."}
         return {"status": "pass", "reason": "The specified response invariant held with verified prerequisites."}
     if kind == "no_unauthorized_commit":
         if not any(o.get("kind") == "trace_complete" and o.get("value") is True for o in trusted):
@@ -434,7 +482,7 @@ async def execute_case(manifest: dict, case: dict, *, cancel_event, request_hook
                     value = os.environ.get(env_name)
                     if value:
                         secrets.append(value)
-            for secret in secrets:
+            for secret in sorted({form for value in secrets for form in secret_forms(value)}, key=len, reverse=True):
                 response["body"] = response["body"].replace(secret, "[REDACTED_CREDENTIAL]")
             response.update({"kind": "http_response", "provenance": "adapter.http", "case_id": case.get("id"),
                              "run_id": manifest.get("run_id"), "repetition": repeat + 1})

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 import threading
 import uuid
@@ -9,6 +10,24 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from .domain import digest, now
+
+
+_SURROGATE = re.compile("[\ud800-\udfff]")
+
+
+def scrub(value):
+    """Replace lone surrogates, which untrusted \\udXXX escapes can create and UTF-8 storage cannot hold."""
+    if isinstance(value, str):
+        return _SURROGATE.sub("\ufffd", value)
+    if isinstance(value, list):
+        return [scrub(item) for item in value]
+    if isinstance(value, dict):
+        return {scrub(key) if isinstance(key, str) else key: scrub(item) for key, item in value.items()}
+    return value
+
+
+class RunNotFound(KeyError):
+    """Only an unknown run is a 404; any other KeyError is a bug and must not read as one."""
 
 
 class Store:
@@ -55,6 +74,12 @@ class Store:
     def save(self, run: dict):
         run["updated_at"] = now()
         payload = json.dumps(run, ensure_ascii=False)
+        if _SURROGATE.search(payload):
+            # Model or target JSON carried an invalid escape; keep the run saveable rather than stuck as running.
+            clean = scrub(run)
+            run.clear()
+            run.update(clean)
+            payload = json.dumps(run, ensure_ascii=False)
         with self.transaction():
             self._execute("INSERT INTO runs (id,payload,updated) VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,updated=excluded.updated", (run["id"], payload, run["updated_at"]))
             from .traceability import entities_and_links
@@ -65,10 +90,13 @@ class Store:
                 self._execute("INSERT INTO relations VALUES (?,?,?) ON CONFLICT DO NOTHING", (run["id"],digest(item),json.dumps(item,ensure_ascii=False)))
 
     def trace(self, run_id: str):
-        self.get(run_id)
+        from .traceability import entities_and_links
+        # Versions are content digests with no order of their own; the run as it is now marks the current one.
+        current={(item["kind"],item["id"],item["version"]) for item in entities_and_links(self.get(run_id))[0]}
         with self.lock:
-            entities=[{"kind":r[0],"id":r[1],"version":r[2],"value":json.loads(r[3])} for r in self._execute("SELECT kind,entity_id,version,payload FROM entity_versions WHERE run_id=? ORDER BY kind,entity_id",(run_id,)).fetchall()]
+            entities=[{"kind":r[0],"id":r[1],"version":r[2],"current":(r[0],r[1],r[2]) in current,"value":json.loads(r[3])} for r in self._execute("SELECT kind,entity_id,version,payload FROM entity_versions WHERE run_id=? ORDER BY kind,entity_id",(run_id,)).fetchall()]
             links=[json.loads(r[0]) for r in self._execute("SELECT payload FROM relations WHERE run_id=?",(run_id,)).fetchall()]
+        entities.sort(key=lambda item:(item["kind"],item["id"],not item["current"]))
         return {"run_id":run_id,"entities":entities,"links":links}
 
     def save_setting(self, kind: str, key: str, value: dict):
@@ -83,7 +111,7 @@ class Store:
         with self.lock:
             row = self._execute("SELECT payload FROM runs WHERE id=?", (run_id,)).fetchone()
         if not row:
-            raise KeyError(run_id)
+            raise RunNotFound(run_id)
         return json.loads(row[0])
 
     def list(self) -> list[dict]:
@@ -119,7 +147,7 @@ class Store:
 
     def put_evidence(self, run_id: str, producer: str, content: dict) -> dict:
         artifact_id = str(uuid.uuid4())
-        body = {"run_id":run_id,"id":artifact_id,"producer":producer,"at":now(),"content":content}
+        body = scrub({"run_id":run_id,"id":artifact_id,"producer":producer,"at":now(),"content":content})
         checksum = digest(body)
         path = self.artifacts / f"{artifact_id}.json"
         with path.open("x", encoding="utf-8") as f:

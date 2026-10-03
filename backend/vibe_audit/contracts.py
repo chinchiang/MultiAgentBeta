@@ -131,6 +131,63 @@ class ArchitectureProposal(Contract):
     gaps: list[str] = Field(default_factory=list, max_length=200)
 
 
+class CaseOracle(Contract):
+    kind: Literal["deny_sensitive", "canary_absent", "no_unauthorized_commit"]
+    forbidden_text: list[str] = Field(default_factory=list, max_length=20)
+    allowed_statuses: list[int] = Field(default_factory=list, max_length=20)
+    required_observations: list[str] = Field(min_length=1, max_length=20)
+    expected_role: str | None = Field(default=None, max_length=100)
+
+
+class CaseControl(Contract):
+    """A positive control only reads the fixture it proves."""
+    name: str = Field(min_length=1, max_length=100)
+    method: Literal["GET", "HEAD"] = "GET"
+    path: str = Field(pattern=r"^/", max_length=2000)
+    identity: str | None = Field(default=None, max_length=100)
+    expected_status: int = Field(ge=100, le=599)
+    required_text: list[str] = Field(default_factory=list, max_length=20)
+    headers: dict[str, str] = Field(default_factory=dict, max_length=24)
+
+
+class CaseProposal(Contract):
+    """A model-designed case. The engine adds provenance, fixture scope and hashes before sealing."""
+    id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,100}$")
+    title: str = Field(min_length=1, max_length=500)
+    threat_ids: list[str] = Field(min_length=1, max_length=20)
+    requirement_id: str = Field(min_length=1, max_length=100)
+    adapter: Literal["http", "ai_http"]
+    method: Literal["GET", "POST"] = "GET"
+    path: str = Field(pattern=r"^/", max_length=2000)
+    headers: dict[str, str] = Field(default_factory=dict, max_length=24)
+    body: dict | list | str | int | float | bool | None = None
+    identity: str | None = Field(default=None, max_length=100)
+    preconditions: list[CaseControl] = Field(default_factory=list, max_length=10)
+    oracle: CaseOracle
+    cleanup: dict | None = None
+    side_effects: bool = False
+    repetitions: int = Field(default=1, ge=1, le=20)
+    observation_mode: Literal["external_observation", "instrumented_observation"] = "external_observation"
+
+
+class CaseDesignProposal(Contract):
+    cases: list[CaseProposal] = Field(default_factory=list, max_length=100)
+    gaps: list[str] = Field(default_factory=list, max_length=200)
+
+
+class OperatorControl(CaseControl):
+    model_config = ConfigDict(extra="allow")
+    method: Literal["GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"] = "GET"
+
+
+class OperatorCase(CaseProposal):
+    """Operator and retest cases may use any adapter or method and keep the sealed fields they were copied with."""
+    model_config = ConfigDict(extra="allow")
+    adapter: Literal["http", "ai_http", "demo", "fixture", "zap", "schemathesis", "playwright", "promptfoo", "pyrit"]
+    method: Literal["GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"] = "GET"
+    preconditions: list[str | OperatorControl] = Field(default_factory=list, max_length=10)
+
+
 class ReportOrderProposal(Contract):
     finding_ids: list[str] = Field(default_factory=list, max_length=5000)
 
@@ -141,17 +198,40 @@ class CommanderProposal(Contract):
     rationale: str = Field(min_length=1, max_length=3000)
 
 
+MIN_QUOTE_CHARACTERS = 6
+
+
+def _verified_reference(raw: dict, files: dict) -> SourceReference:
+    ref = SourceReference.model_validate(raw)
+    if ref.file not in files:
+        raise ValueError("Evidence cites a file outside the frozen snapshot")
+    # A few characters occur on almost any line, so a quote must carry enough text to locate its claim.
+    if len("".join(ref.quote.split())) < MIN_QUOTE_CHARACTERS:
+        raise ValueError("Evidence quote is too short to locate its claim")
+    lines = files[ref.file].splitlines()
+    quoted_lines = ref.quote.splitlines()
+    start = ref.line - 1
+    if start >= len(lines) or "\n".join(lines[start:start + len(quoted_lines)]).find(ref.quote) == -1:
+        raise ValueError("Evidence quote does not match its snapshot location")
+    return ref
+
+
 def verify_source_references(references: list[dict], source: dict) -> None:
     files = {item["path"]: item["content"] for item in source["files"]}
     for raw in references:
-        ref = SourceReference.model_validate(raw)
-        if ref.file not in files:
-            raise ValueError("Evidence cites a file outside the frozen snapshot")
-        lines = files[ref.file].splitlines()
-        quoted_lines = ref.quote.splitlines()
-        start = ref.line - 1
-        if start >= len(lines) or "\n".join(lines[start:start + len(quoted_lines)]).find(ref.quote) == -1:
-            raise ValueError("Evidence quote does not match its snapshot location")
+        _verified_reference(raw, files)
+
+
+def partition_source_references(references: list[dict], source: dict) -> tuple[list[dict], list[str]]:
+    """Keep the references that match the frozen snapshot and say why each other one was dropped."""
+    files = {item["path"]: item["content"] for item in source["files"]}
+    kept, dropped = [], []
+    for raw in references:
+        try:
+            kept.append(_verified_reference(raw, files).model_dump())
+        except ValueError as exc:
+            dropped.append(str(exc).splitlines()[0])
+    return kept, dropped
 
 
 def complete_requirements(model: dict, supplied: list[dict]) -> list[dict]:

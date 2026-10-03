@@ -16,7 +16,7 @@ from pydantic import ValidationError
 from .domain import Budget, ModelProfile, RunInput, origin
 from .policy import PolicyError
 from .service import Engine, report_markdown, report_sarif
-from .store import Store
+from .store import RunNotFound, Store
 
 ROOT=Path(__file__).resolve().parents[2]
 LIMITATIONS=[
@@ -26,6 +26,8 @@ LIMITATIONS=[
     "Only observable executed cases are assessed; missing fixtures, identity proof or effect collectors are inconclusive.",
     "Local-only model mode currently requires loopback IP endpoints; a local proxy's upstream behavior is outside this process's control.",
 ]
+SESSION_SECONDS=28800
+SECURITY_HEADERS={"X-Content-Type-Options":"nosniff","Referrer-Policy":"no-referrer","X-Frame-Options":"DENY","Cache-Control":"no-store","Content-Security-Policy":"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'"}
 
 
 def create_app(data_dir=None, database_url=None, testing=False, session_token=None):
@@ -56,15 +58,26 @@ def create_app(data_dir=None, database_url=None, testing=False, session_token=No
             await asyncio.gather(*pending,return_exceptions=True)
         store.close()
 
-    app=FastAPI(title="Vibe Audit",version="0.2.0",lifespan=lifespan,docs_url="/api/docs",redoc_url=None,openapi_url="/api/openapi.json")
+    # The schema is served behind the session; a Swagger page could not load its assets under this CSP.
+    app=FastAPI(title="Vibe Audit",version="0.2.0",lifespan=lifespan,docs_url=None,redoc_url=None,openapi_url="/api/openapi.json")
     app.state.store=store
     app.state.engine=engine
     app.state.session_token=session_token
     from .workspace_api import workspace_router
     app.include_router(workspace_router(store,engine,source_roots))
 
-    @app.middleware("http")
-    async def security(request:Request,call_next):
+    def current_session(request):
+        # Cookies are not isolated by port, so any service on this host that the browser visits receives
+        # this one. The CSRF token stays in the page's port-scoped storage: every request needs both.
+        session=sessions.get(request.cookies.get("vibeaudit_session",""))
+        if not session or session["expires"]<time.monotonic():
+            return None
+        return session
+
+    def csrf_matches(request,session):
+        return secrets.compare_digest(request.headers.get("x-csrf-token","").encode(),session["csrf"].encode())
+
+    async def guard(request):
         if request.headers.get("host","") not in allowed_hosts:
             return JSONResponse({"detail":"Untrusted Host"},status_code=403)
         req_origin=request.headers.get("origin")
@@ -88,35 +101,54 @@ def create_app(data_dir=None, database_url=None, testing=False, session_token=No
                 body.extend(chunk)
             request._body=bytes(body)
         if request.url.path.startswith("/api/") and request.url.path!="/api/session":
-            sid=request.cookies.get("vibeaudit_session","")
-            session=sessions.get(sid)
-            if not session or session["expires"]<time.monotonic():
+            session=current_session(request)
+            if not session:
                 return JSONResponse({"detail":"Local session required"},status_code=401)
-            if request.method not in {"GET","HEAD","OPTIONS"}:
-                if not secrets.compare_digest(request.headers.get("x-csrf-token",""),session["csrf"]):
-                    return JSONResponse({"detail":"CSRF token required"},status_code=403)
-        response=await call_next(request)
-        response.headers.update({"X-Content-Type-Options":"nosniff","Referrer-Policy":"no-referrer","X-Frame-Options":"DENY","Cache-Control":"no-store","Content-Security-Policy":"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'"})
+            # Reads need the token too: the cookie alone would expose evidence, reports and settings.
+            if not csrf_matches(request,session):
+                return JSONResponse({"detail":"CSRF token required"},status_code=403)
+        return None
+
+    @app.middleware("http")
+    async def security(request:Request,call_next):
+        response=await guard(request)
+        if response is None:
+            response=await call_next(request)
+        # Rejections carry the same headers as the responses they replace.
+        response.headers.update(SECURITY_HEADERS)
         return response
 
     @app.exception_handler(PolicyError)
     async def policy_error(request,exc):
         return JSONResponse({"detail":str(exc)},status_code=409)
 
-    @app.exception_handler(KeyError)
+    @app.exception_handler(RunNotFound)
     async def not_found(request,exc):
         return JSONResponse({"detail":"Run or artifact not found"},status_code=404)
 
+    @app.exception_handler(ValidationError)
+    async def invalid(request,exc):
+        # A derived manifest (such as a retest's) can fail validation; that is the caller's input, not a crash.
+        return JSONResponse({"detail":"Invalid run configuration: "+"; ".join(str(e.get("msg",""))[:200] for e in exc.errors()[:5])},status_code=422)
+
     @app.get("/api/session")
     async def session(request:Request):
-        sid=request.cookies.get("vibeaudit_session")
-        if sid not in sessions or sessions[sid]["expires"]<time.monotonic():
-            if not secrets.compare_digest(request.headers.get("x-vibeaudit-token","").encode(),session_token.encode()):
-                return JSONResponse({"detail":"Startup token required: open the URL printed when the local service started"},status_code=401)
-            sid=secrets.token_urlsafe(32)
-            sessions[sid]={"csrf":secrets.token_urlsafe(32),"expires":time.monotonic()+28800}
+        startup=request.headers.get("x-vibeaudit-token","")
+        if not startup:
+            # A reloaded page proves the session with its stored CSRF token; the cookie alone never yields it.
+            session=current_session(request)
+            if session and csrf_matches(request,session):
+                return {"csrf_token":session["csrf"],"mode":"local","limitations":LIMITATIONS}
+        if not secrets.compare_digest(startup.encode(),session_token.encode()):
+            return JSONResponse({"detail":"Startup token required: open the URL printed when the local service started"},status_code=401)
+        moment=time.monotonic()
+        for sid in [sid for sid,entry in sessions.items() if entry["expires"]<moment]:
+            del sessions[sid]
+        sessions.pop(request.cookies.get("vibeaudit_session",""),None)
+        sid=secrets.token_urlsafe(32)
+        sessions[sid]={"csrf":secrets.token_urlsafe(32),"expires":moment+SESSION_SECONDS}
         response=JSONResponse({"csrf_token":sessions[sid]["csrf"],"mode":"local","limitations":LIMITATIONS})
-        response.set_cookie("vibeaudit_session",sid,httponly=True,samesite="strict",max_age=28800)
+        response.set_cookie("vibeaudit_session",sid,httponly=True,samesite="strict",max_age=SESSION_SECONDS)
         return response
 
     @app.get("/api/capabilities")
@@ -130,7 +162,8 @@ def create_app(data_dir=None, database_url=None, testing=False, session_token=No
             worker=WorkerRuntime(load_config("default"))
             runtime.update(await worker.capabilities())
             tools=await worker.tool_inventory()
-        except (ValueError,RuntimeError,OSError):
+        except Exception:
+            # Includes an unreachable lease database: the inventory reports it instead of failing.
             runtime.update(available=False,isolation="unavailable",reason="Configure the Linux isolated worker profile")
         finally:
             if worker:
@@ -197,7 +230,7 @@ def create_app(data_dir=None, database_url=None, testing=False, session_token=No
             raise HTTPException(404,"Evidence not found in this run")
         try:
             return store.evidence(record,run_id)
-        except ValueError:
+        except (ValueError,OSError):
             raise HTTPException(409,"Evidence integrity check failed") from None
 
     @app.get("/api/runs/{run_id}/report")
@@ -219,11 +252,13 @@ def create_app(data_dir=None, database_url=None, testing=False, session_token=No
     @app.post("/api/models/probe")
     async def model_probe(request:Request):
         from .providers import probe_model,ProviderError
-        body=await request.json()
         try:
+            body=await request.json()
+            if not isinstance(body,dict):
+                raise ValueError
             profile=ModelProfile.model_validate(body["profile"]).model_dump()
             budget=Budget.model_validate(body["budget"]).model_dump()
-        except (KeyError,ValidationError):
+        except (KeyError,TypeError,ValueError):
             raise HTTPException(422,"A valid profile and explicit probe budget are required") from None
         calls=0
         async def request_hook():
@@ -235,7 +270,7 @@ def create_app(data_dir=None, database_url=None, testing=False, session_token=No
         try:
             return await probe_model(profile,policy)
         except ProviderError as exc:
-            return JSONResponse({"available":False,"status":"blocked","detail":str(exc),"usage":exc.usage},status_code=409)
+            return JSONResponse({"available":False,"status":"blocked","code":exc.code,"detail":str(exc),"usage":exc.usage},status_code=409)
 
     @app.get("/{path:path}")
     async def frontend(path:str):

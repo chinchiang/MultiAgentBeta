@@ -4,7 +4,7 @@ Authoritative validation: backend/vibe_audit/domain.py, contracts.py, policy.py 
 
 ## API
 
-All routes start with /api; with a session, an unknown /api path is a JSON 404. GET /session exchanges the startup token (X-VibeAudit-Token; printed as `#token=…` in the launch URL, or fixed with VIBEAUDIT_SESSION_TOKEN) for an 8-hour HttpOnly SameSite=Strict session cookie and the CSRF token; mutations require X-CSRF-Token. Host/Origin checks include workspace routes. Errors: {detail: ...}.
+All routes start with /api; with a session, an unknown /api path is a JSON 404. GET /session exchanges the startup token (X-VibeAudit-Token; printed as `#token=…` in the launch URL, or fixed with VIBEAUDIT_SESSION_TOKEN) for an 8-hour HttpOnly SameSite=Strict session cookie and the CSRF token. Every other /api request, reads included, needs both the cookie and X-CSRF-Token: cookies reach every port on the host, so the cookie alone opens nothing, and GET /session returns the token only to a caller that already presents it. Host/Origin checks include workspace routes. Errors: {detail: ...}.
 
 | Method | Route | Purpose |
 |---|---|---|
@@ -22,13 +22,13 @@ All routes start with /api; with a session, an unknown /api path is a JSON 404. 
 | GET | /runs/{id}/report?format=json or markdown or sarif | Verified export |
 | POST | /runs/{id}/retest | New run linked to original findings (trace `retests` links, Markdown and SARIF note the parent) |
 | POST | /runs/{id}/reconcile | Operator attestation of worker cleanup; closes a cancelling run, which stays unresumable |
-| POST | /runs/{id}/findings/{finding_id}/decision | Evidence-backed refuted/inconclusive decision |
-| GET | /docs, /openapi.json | Interactive API docs and OpenAPI schema (session required) |
+| POST | /runs/{id}/findings/{finding_id}/decision | Evidence-backed refuted/inconclusive decision: cited black-box executions must test the finding's threats (the operator names them for a finding without threat links); refuting needs a pass and no failure of those threats in the run; a validated_dynamic finding is cleared only by a linked retest |
+| GET | /openapi.json | OpenAPI schema (session and CSRF token required; no interactive docs page) |
 
 Stages: intake → preflight → whitebox → adjudication → threat_model → case_design → blackbox → report → complete.
 Run status: created/running/cancelling/cancelled/completed/incomplete/blocked/failed.
 Finding state: hypothesis/corroborated_static/validated_dynamic/refuted/inconclusive.
-Execution state: pass/fail/inconclusive/blocked/execution_error/outcome_unknown. Tool completion does not imply security pass.
+Execution state: pass/fail/inconclusive/blocked/execution_error/outcome_unknown. Tool completion does not imply security pass. A fail whose target reset, or a later dispatch, is unconfirmed keeps its finding and carries target_state_confirmed=false; like outcome_unknown it stops the run and blocks resume. A deployment-identity change stops the run (deployment_changed=true) and blocks resume; each scheduled repetition sends the case once. Model-designed cases must match a strict case contract, and supplied cases are type-checked when the run is created. Runs with supplied or retest cases record automated threats those cases leave out as gaps; the threat model must keep every threat ID such a case tests. Worker results are rebuilt from supervisor fields and records, so extra keys a worker returns cannot set a verdict, observations or step labels; every content oracle needs a verified positive control that showed each forbidden canary, whatever executor ran the case.
 
 ## Modules
 
@@ -39,7 +39,7 @@ Execution state: pass/fail/inconclusive/blocked/execution_error/outcome_unknown.
 - lease: persistent capability binding, reservation ledger, renewal/expiry, unknown outcomes. Controller EOF or expiry revokes sockets before termination.
 - tool_runners: fixed input/argv compilation → isolated execution → bounded artifact collection → normalized observations → oracle over broker evidence. No arbitrary shell/scripts.
 - fixture_protocol: hashed reviewed reset/setup/cleanup, session capture, administrator-registered generic profiles; built-ins are synthetic.
-- effect_collector: independent sequenced/HMAC-bound events and sink receipts; target JSON cannot confer provenance.
+- effect_collector: independent sequenced events and sink receipts, HMAC-bound under a per-call key that exists only while the collector verifies them (stored bundles are evidence records, not re-verifiable signatures); target JSON cannot confer provenance.
 - store/traceability: PostgreSQL production, SQLite demo, atomic job/run commits, versioned entities/evidence links.
 - catalog: pinned canonical IDs, version/source checks; category membership is not test coverage or certification.
 - benchmark: seven comparative arms, common budgets/tool evidence, independent ground truth and incomplete accounting. Synthetic runs verify plumbing only.

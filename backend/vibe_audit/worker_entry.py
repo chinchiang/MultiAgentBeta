@@ -29,7 +29,10 @@ from urllib.parse import urlsplit
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0,str(HERE))
-MAX_FRAME = 4*1024*1024
+# Two copies (the worker's claim and the supervisor's record) of a task's bounded responses must fit.
+MAX_FRAME = 64*1024*1024
+# A broker request carries at most a 64 KiB body; nothing larger is buffered before the token check.
+BROKER_FRAME = 256*1024
 MAX_BODY = 256*1024
 
 
@@ -50,9 +53,9 @@ def packed(value):
     return (json.dumps(value,separators=(",",":"),ensure_ascii=False,allow_nan=False)+"\n").encode()
 
 
-def read_frame(stream):
-    raw=stream.readline(MAX_FRAME+1)
-    if not raw or len(raw)>MAX_FRAME or not raw.endswith(b"\n"):
+def read_frame(stream,limit=MAX_FRAME):
+    raw=stream.readline(limit+1)
+    if not raw or len(raw)>limit or not raw.endswith(b"\n"):
         raise ValueError("Missing or oversized IPC frame")
     value=json.loads(raw)
     if not isinstance(value,dict):
@@ -120,6 +123,17 @@ def spawn(argv,**kwargs):
     return proc
 
 
+class NotSent(ValueError):
+    """The request never reached the target, so there is no effect to reconcile."""
+
+
+class Unusable(ValueError):
+    """The target answered, but in a form the broker never relays (redirect, encoding, size, deployment)."""
+    def __init__(self,reason,status_code=None):
+        super().__init__(reason)
+        self.status_code=status_code
+
+
 class Supervisor:
     def __init__(self,task):
         from lease import LeaseStore,canonical_hash
@@ -136,6 +150,9 @@ class Supervisor:
         self.controller_alive=True
         self.reason=""
         self.policy_blocked=None
+        self.deployment_changed=False
+        self.sequence_stopped=False
+        self.unknown_dispatch=False
         self.output_lock=threading.Lock()
         self.grants={}
         self.grant_lock=threading.Lock()
@@ -219,6 +236,7 @@ class Supervisor:
         step=None
         if self.spec.get("operation")=="request_sequence":
             steps=self.spec.get("requests",[])
+            if self.sequence_stopped: raise ValueError("Sequence stopped at an unmet prerequisite")
             if self.sequence>=len(steps): raise ValueError("Sequence exhausted")
             step=steps[self.sequence]
             if (step.get("method","GET"),step.get("path"),step.get("identity"))!=(method,path,identity):
@@ -270,7 +288,8 @@ class Supervisor:
     def forward(self,method,path,headers,body):
         from adapters import _origin,_pinned_address
         scheme,host,port=_origin(self.manifest)
-        pinned=_pinned_address(host,port,self.manifest.get("allowed_target_ips",[]))
+        try: pinned=_pinned_address(host,port,self.manifest.get("allowed_target_ips",[]))
+        except Exception: raise NotSent("Target address could not be resolved within the allowed IPs") from None
         self.lease.validate(self.cap,self.worker_id)
         address=ipaddress.ip_address(pinned)
         sock=socket.socket(socket.AF_INET6 if address.version==6 else socket.AF_INET,socket.SOCK_STREAM)
@@ -280,14 +299,17 @@ class Supervisor:
             self.sockets.add(sock)
         conn=None
         try:
-            sock.connect((pinned,port))
-            if scheme=="https":
-                secure=ssl.create_default_context().wrap_socket(sock,server_hostname=host,do_handshake_on_connect=False)
-                with self.socket_lock:
-                    self.sockets.discard(sock);sock=secure
-                    if self.revoked.is_set(): sock.close();raise ValueError("Egress revoked")
-                    self.sockets.add(sock)
-                secure.do_handshake()
+            try:
+                sock.connect((pinned,port))
+                if scheme=="https":
+                    secure=ssl.create_default_context().wrap_socket(sock,server_hostname=host,do_handshake_on_connect=False)
+                    with self.socket_lock:
+                        self.sockets.discard(sock);sock=secure
+                        if self.revoked.is_set(): sock.close();raise ValueError("Egress revoked")
+                        self.sockets.add(sock)
+                    secure.do_handshake()
+            except OSError:
+                raise NotSent("Target connection failed before the request was sent") from None
             conn=http.client.HTTPConnection(host,port,timeout=5)
             conn.sock=sock
             conn.request(method,path,body=body or None,headers=headers)
@@ -295,14 +317,19 @@ class Supervisor:
             deployment_header=self.manifest.get("deployment_header")
             if deployment_header and response.getheader(deployment_header)!=self.manifest.get("deployment_id"):
                 self.policy_blocked="Deployment identity changed or was not present"
-                raise ValueError(self.policy_blocked)
-            if 300<=response.status<400: raise ValueError("Redirect denied")
-            if response.getheader("Content-Encoding","identity").lower() not in {"","identity"}: raise ValueError("Compressed response denied")
+                self.deployment_changed=True
+                raise Unusable(self.policy_blocked,response.status)
+            if 300<=response.status<400: raise Unusable("Target answered with a redirect; redirects are never followed",response.status)
+            if response.getheader("Content-Encoding","identity").lower() not in {"","identity"}: raise Unusable("Compressed response denied",response.status)
             length=response.getheader("Content-Length")
-            if length is not None and (not length.isdigit() or int(length)>MAX_BODY): raise ValueError("Response size denied")
-            data=response.read(MAX_BODY+1)
-            if len(data)>MAX_BODY or (length is not None and len(data)!=int(length)): raise ValueError("Incomplete or oversized response")
-            return {"status_code":response.status,"body":data.decode("utf-8"),"complete":True,"peer_ip":pinned,
+            if length is not None and (not length.isdigit() or int(length)>MAX_BODY): raise Unusable("Response size denied",response.status)
+            # A HEAD answer and these statuses carry no body, whatever Content-Length announces.
+            bodiless=method=="HEAD" or response.status in {204,304}
+            data=b"" if bodiless else response.read(MAX_BODY+1)
+            if len(data)>MAX_BODY or (not bodiless and length is not None and len(data)!=int(length)): raise Unusable("Incomplete or oversized response",response.status)
+            try: text=data.decode("utf-8")
+            except UnicodeDecodeError: raise Unusable("Response body is not UTF-8",response.status) from None
+            return {"status_code":response.status,"body":text,"complete":True,"peer_ip":pinned,
                     "headers":{"Content-Type":response.getheader("Content-Type","application/json")}}
         finally:
             if conn: conn.close()
@@ -323,43 +350,68 @@ class Supervisor:
             with self.grant_lock: self.grants.pop(rid,None)
             if not approved or self.revoked.is_set(): raise ValueError("Controller denied request")
             self.lease.reserve_dispatch(self.cap,self.worker_id,rid,{"method":method,"path":path,"case_id":case_id,"body_sha256":hashlib.sha256(body).hexdigest()})
+            record={"case_id":case_id,"method":method,"path":path,"identity":request.get("identity"),"purpose":step.get("purpose","test")}
+            # Only a read-only step that reached the target has a known outcome when its answer cannot be
+            # relayed; any other failure after reservation may have changed the target.
+            unsafe=method not in {"GET","HEAD","OPTIONS"} or step.get("side_effects") is True
             try:
                 result=self.forward(method,path,headers,body)
+            except Exception as exc:
+                known=isinstance(exc,NotSent) or not unsafe and isinstance(exc,(Unusable,OSError,http.client.HTTPException))
+                if not known:
+                    self.unknown_dispatch=True
+                    self.revoke_network(self.policy_blocked or "Dispatched request has an unknown or invalid result")
+                    raise
+                reason=str(exc) if isinstance(exc,(NotSent,Unusable)) else "Target response was incomplete"
+                self.lease.finish_dispatch(self.cap,self.worker_id,rid,{"delivered":not isinstance(exc,NotSent),"reason":reason})
+                self.broker_observations.append({**record,"status_code":getattr(exc,"status_code",None),"body":"","peer_ip":None,"complete":False,"denied":reason})
+                if self.policy_blocked:
+                    # Nothing more of this task goes to a deployment other than the declared one.
+                    self.revoke_network(self.policy_blocked,revoke_lease=False)
+                if self.spec.get("operation")=="request_sequence": self.sequence_stopped=True
+                raise
+            try:
                 capture=step.get("capture_session")
                 if capture:
-                    slot=capture.get("slot","")
-                    field=capture.get("json_field","")
-                    value=json.loads(result["body"])
-                    for part in field.split("."): value=value[part]
-                    if not slot or not isinstance(value,str) or not value or len(value)>8192 or any(ord(c)<33 or ord(c)>126 for c in value): raise ValueError("Invalid captured session")
-                    self.sessions[(case_id,slot)]=value
-                    secrets.append(value)
-                    result["capture_success"]=True
+                    # A failed capture ends the sequence below; the response itself is known.
+                    try:
+                        value=json.loads(result["body"])
+                        for part in capture.get("json_field","").split("."): value=value[part]
+                    except (ValueError,KeyError,TypeError,IndexError): value=None
+                    if capture.get("slot") and isinstance(value,str) and value and len(value)<=8192 and all(33<=ord(c)<=126 for c in value):
+                        self.sessions[(case_id,capture["slot"])]=value
+                        secrets.append(value)
+                        result["capture_success"]=True
                 secrets.extend(self.sessions.values())
                 # A target may reflect another identity's credential; the sandboxed tool must not see that either.
-                from adapters import _CREDENTIAL_ENV
+                from adapters import credential_env_allowed,secret_forms
                 for profile in self.manifest.get("auth_profiles",[]):
                     key=profile.get("credential_env","")
-                    if isinstance(key,str) and _CREDENTIAL_ENV.fullmatch(key) and os.environ.get(key):
+                    if credential_env_allowed(key) and os.environ.get(key):
                         secrets.append(os.environ[key])
-                for secret in sorted(set(secrets),key=len,reverse=True):
+                for secret in sorted({form for value in secrets for form in secret_forms(value)},key=len,reverse=True):
                     result["body"]=result["body"].replace(secret,"[REDACTED_CREDENTIAL]")
                 self.lease.finish_dispatch(self.cap,self.worker_id,rid,result)
-                self.broker_observations.append({"case_id":case_id,"method":method,"path":path,"identity":request.get("identity"),"purpose":step.get("purpose","test"),"status_code":result["status_code"],"body":result["body"],"peer_ip":result["peer_ip"],"complete":True,"body_sha256":hashlib.sha256(result["body"].encode()).hexdigest()})
-                if self.spec.get("operation")=="request_sequence" and ((step.get("expected_status") is not None and result["status_code"]!=step["expected_status"]) or any(text not in result["body"] for text in step.get("required_text",[]))):
-                    raise ValueError("Sequence prerequisite was not satisfied")
-                if self.spec.get("operation")=="request_sequence": self.sequence+=1
-                return result
+                self.broker_observations.append({**record,"status_code":result["status_code"],"body":result["body"],"peer_ip":result["peer_ip"],"complete":True,"capture_success":result.get("capture_success") is True,"body_sha256":hashlib.sha256(result["body"].encode()).hexdigest()})
             except Exception:
+                self.unknown_dispatch=True
                 self.revoke_network("Dispatched request has an unknown or invalid result")
                 raise
+            if self.spec.get("operation")=="request_sequence":
+                unmet=((step.get("expected_status") is not None and result["status_code"]!=step["expected_status"])
+                       or any(text not in result["body"] for text in step.get("required_text",[]))
+                       or (step.get("capture_session") and not result.get("capture_success")))
+                # Later steps depend on this one, so an unmet prerequisite ends the sequence with a known answer.
+                if unmet: self.sequence_stopped=True
+                else: self.sequence+=1
+            return result
 
     def start_broker(self):
         owner=self
         class Handler(socketserver.StreamRequestHandler):
             def handle(self):
                 self.request.settimeout(6)
-                try: result={"ok":True,"response":owner.broker_request(read_frame(self.rfile))}
+                try: result={"ok":True,"response":owner.broker_request(read_frame(self.rfile,BROKER_FRAME))}
                 except Exception: result={"ok":False,"reason":"Broker denied request or result is unknown"}
                 try: self.wfile.write(packed(result))
                 except OSError: pass
@@ -390,10 +442,17 @@ class Supervisor:
     def run(self):
         threading.Thread(target=self.read_controller,daemon=True).start()
         threading.Thread(target=self.guardian,daemon=True).start()
-        endpoint=self.start_broker()
-        child_task={"spec":self.spec,"broker":endpoint,"broker_token":self.task["broker_token"],"backend":self.task["backend"],"hard_deadline_unix":time.time()+self.spec["timeout_seconds"]}
-        child_file=Path(self.task["inputs_dir"])/"_worker_task.json"
-        child_file.write_text(json.dumps(child_task),encoding="utf-8");os.chmod(child_file,0o444)
+        try:
+            endpoint=self.start_broker()
+            child_task={"spec":self.spec,"broker":endpoint,"broker_token":self.task["broker_token"],"backend":self.task["backend"],"hard_deadline_unix":time.time()+self.spec["timeout_seconds"]}
+            child_file=Path(self.task["inputs_dir"])/"_worker_task.json"
+            child_file.write_text(json.dumps(child_task),encoding="utf-8");os.chmod(child_file,0o444)
+        except Exception:
+            # No worker or container exists yet, so cleanup is trivially confirmed and nothing was sent.
+            try: self.lease.revoke(self.cap["id"],"Supervisor could not prepare the worker")
+            except Exception: pass
+            self.emit({"kind":"result","result":not_started("Supervisor could not prepare the worker")})
+            return
         argv=self.task["argv"]
         outputs=[bytearray(),bytearray()]
         overflow=threading.Event()
@@ -448,7 +507,8 @@ class Supervisor:
             for reader in readers: reader.join(timeout=2)
             self.lifecycle.append("worker_terminated" if cleanup else "cleanup_unknown")
             if not completed or not cleanup:
-                result={"status":"blocked" if self.policy_blocked else "outcome_unknown","reason":self.policy_blocked or self.reason or "Worker cleanup could not be confirmed","cleanup_confirmed":cleanup,"broker_observations":self.broker_observations}
+                # A policy stop is only 'blocked' when every dispatch it interrupted has a known outcome.
+                result={"status":"blocked" if self.policy_blocked and not self.unknown_dispatch else "outcome_unknown","reason":self.policy_blocked or self.reason or "Worker cleanup could not be confirmed","cleanup_confirmed":cleanup,"broker_observations":self.broker_observations,"deployment_changed":self.deployment_changed}
                 self.lease.revoke(self.cap["id"],result["reason"])
             else:
                 result=json.loads(bytes(outputs[0]))
@@ -540,6 +600,8 @@ def container_worker(task):
         import adapters
         case=copy.deepcopy(spec["cases"][0])
         cid=case["id"]
+        # The controller schedules each repetition as its own task; one task sends the case once.
+        case["repetitions"]=1
         def remap(value):
             identity=value.pop("identity",None)
             headers=value.setdefault("headers",{});headers["X-Vibe-Case"]=cid
@@ -548,7 +610,7 @@ def container_worker(task):
         for control in case.get("preconditions",[]):
             if isinstance(control,dict): remap(control)
         async def allowed(**_): return None
-        result=asyncio.run(adapters.execute_case({"mode":"live","target_url":relay,"allowed_target_ips":["127.0.0.1"],"auth_profiles":[],"run_id":spec.get("run_id")},case,cancel_event=asyncio.Event(),request_hook=allowed))
+        result=asyncio.run(adapters.execute_case({"mode":"live","target_url":relay,"relay":True,"allowed_target_ips":["127.0.0.1"],"auth_profiles":[],"run_id":spec.get("run_id")},case,cancel_event=asyncio.Event(),request_hook=allowed))
     elif operation=="request_sequence":
         results=[];sequence_ok=True
         for step in spec.get("requests",[]):
@@ -605,9 +667,21 @@ def container_worker(task):
     sys.stdout.buffer.write(packed(result));sys.stdout.buffer.flush()
 
 
+def not_started(reason):
+    return {"status":"blocked","reason":reason+"; no worker was started","cleanup_confirmed":True,"broker_observations":[],"not_started":True}
+
+
 if __name__=="__main__":
     if sys.argv[1]=="supervise":
-        Supervisor(read_frame(sys.stdin.buffer)).run()
+        task=read_frame(sys.stdin.buffer)
+        try:
+            supervisor=Supervisor(task)
+        except Exception:
+            # A failed claim, lease-store connection or spec check leaves nothing to clean up; say so, so the
+            # controller does not wait for an operator attestation about a worker that never existed.
+            sys.stdout.buffer.write(packed({"kind":"result","result":not_started("Supervisor could not claim its capability")}));sys.stdout.buffer.flush()
+            raise SystemExit(2)
+        supervisor.run()
     elif sys.argv[1]=="worker":
         container_worker(json.loads(Path(sys.argv[2]).read_text(encoding="utf-8")))
     else:

@@ -55,12 +55,17 @@ def _safe_relative(value):
     return path
 
 
+# Matches worker_entry.MAX_FRAME: one supervisor result line may carry every bounded response twice.
+SUPERVISOR_FRAME=64*1024*1024
+
+
 def _client_env(manifest):
+    from .adapters import credential_env_allowed
     from .worker_entry import clean_env
     result=clean_env()
     for profile in manifest.get("auth_profiles",[]):
         key=profile.get("credential_env","")
-        if isinstance(key,str) and re.fullmatch(r"VIBEAUDIT_[A-Z0-9_]+",key) and key in os.environ:
+        if credential_env_allowed(key) and key in os.environ:
             result[key]=os.environ[key]
     return result
 
@@ -71,7 +76,8 @@ def redact_credentials(value,manifest):
     for profile in [*manifest.get("auth_profiles",[]),*manifest.get("models",[])]:
         key=profile.get("credential_env","")
         if isinstance(key,str) and re.fullmatch(r"VIBEAUDIT_[A-Z0-9_]+",key) and os.environ.get(key):
-            found.update({os.environ[key],json.dumps(os.environ[key])[1:-1]})
+            from .adapters import secret_forms
+            found.update(secret_forms(os.environ[key]))
     # Longest first, so a credential that contains another is not left half visible.
     values=sorted(found,key=len,reverse=True)
     def redact(item):
@@ -85,11 +91,18 @@ def redact_credentials(value,manifest):
     return redact(value) if values else value
 
 
+# Set by the supervisor or controller. Any other key in a worker result is only the worker's claim,
+# so a worker cannot add a security_status, fixture observations or a step label of its own.
+SUPERVISED_FIELDS=("broker_observations","cleanup_confirmed","deployment_changed","isolation","lifecycle","task_id","simulated","work_dir_removed")
+
+
+def _supervised(result):
+    return {key:result[key] for key in SUPERVISED_FIELDS if key in result}
+
+
 def supervised_verdict(case,result):
     """Re-evaluate an HTTP case from the supervisor's records; the worker's own verdict is only a claim."""
     from .adapters import evaluate_oracle
-    if result.get("status") not in {"pass","fail","inconclusive"}:
-        return result
     def same(step,row):
         return (step.get("method","GET"),step.get("path"),step.get("identity"))==(row.get("method"),row.get("path"),row.get("identity"))
     controls=[p for p in case.get("preconditions",[]) if isinstance(p,dict)]
@@ -107,18 +120,32 @@ def supervised_verdict(case,result):
             observations.append({**common,"kind":"precondition","name":control.get("name"),"value":matched,
                                  "matched_text_sha256":[hashlib.sha256(text.encode()).hexdigest() for text in control.get("required_text",[])] if matched else []})
     verdict=evaluate_oracle(case,observations)
-    worker=result["status"]
-    # A leak the supervisor recorded stands on its own; a pass needs both sides to agree.
-    status=verdict["status"] if verdict["status"] in {worker,"fail"} else "inconclusive"
-    reason=verdict["reason"] if status==verdict["status"] else "The worker's verdict and the supervisor's records disagree; no pass is reported."
-    return {**result,"status":status,"reason":reason,"worker_status":worker,"worker_reason":result.get("reason"),
-            "worker_observations":result.get("observations",[]),"observations":observations}
+    worker=result.get("status")
+    if verdict["status"]=="fail":
+        # A leak the supervisor recorded stands on its own, whatever the worker or the task's end state claims.
+        status,reason=verdict["status"],verdict["reason"]
+    elif worker not in {"pass","fail","inconclusive"}:
+        # An unfinished task, or a worker without a verdict, can only make the result less conclusive.
+        status=worker if worker in {"blocked","execution_error","outcome_unknown"} else "execution_error"
+        reason=result.get("reason") or "The worker returned no verdict"
+    else:
+        # A pass needs both sides to agree.
+        status=verdict["status"] if verdict["status"]==worker else "inconclusive"
+        reason=verdict["reason"] if status==verdict["status"] else "The worker's verdict and the supervisor's records disagree; no pass is reported."
+    supervised={**_supervised(result),"status":status,"reason":reason,"observations":observations,"evidence":[],
+                "requests":sum(1 for row in result.get("broker_observations",[]) if row.get("case_id")==case["id"]),
+                "worker_status":worker,"worker_reason":result.get("reason"),"worker_observations":result.get("observations",[])}
+    if status=="fail" and worker=="outcome_unknown":
+        # The violation is a finding, but a later dispatch's effect is unknown: no replay, reset first.
+        supervised["target_state_confirmed"]=False
+    return supervised
 
 
 def supervised_sequence(spec,result):
     """Each response a sequence worker reports must be the one the supervisor recorded for that step."""
     rows,records=result.get("observations",[]),result.get("broker_observations",[])
-    mismatch={**result,"status":"execution_error","reason":"Worker-reported responses differ from the supervisor's records"}
+    supervised=_supervised(result)
+    mismatch={**supervised,"status":"execution_error","reason":"Worker-reported responses differ from the supervisor's records","observations":[]}
     for index,row in enumerate(rows):
         if index<len(records) and (row.get("status_code"),row.get("body"))==(records[index].get("status_code"),records[index].get("body")):
             continue
@@ -126,9 +153,14 @@ def supervised_sequence(spec,result):
         if index==len(rows)-1 and row.get("status_code")==502 and result.get("status")!="completed":
             continue
         return mismatch
-    if result.get("status")=="completed" and not len(rows)==len(records)==len(spec.get("requests",[])):
+    steps=spec.get("requests",[])
+    if result.get("status")=="completed" and not len(rows)==len(records)==len(steps):
         return mismatch
-    return result
+    # The supervisor enforced the sealed step order, so record i answers step i whatever the worker labels it.
+    observations=[{"id":step.get("id"),"status_code":record.get("status_code"),"body":record.get("body"),"complete":record.get("complete") is True,
+                   "capture_success":record.get("capture_success") is True} for step,record in zip(steps,records)]
+    status=result.get("status") if result.get("status") in {"completed","inconclusive","blocked","execution_error","outcome_unknown"} else "execution_error"
+    return {**supervised,"status":status,"reason":result.get("reason"),"observations":observations,"requests":len(records)}
 
 
 def docker_command(*,prefix,image,name,phase,inputs,broker,runtime=HERE,source_dir=None,offline_db_dir=None):
@@ -191,8 +223,6 @@ class WorkerRuntime:
             if status!=200 or info.get("OSType")!="linux": raise WorkerBlocked("Docker daemon unavailable")
             return {"available":True,"isolation":"docker_network_none","production_ready":True}
         except Exception:
-            if 'proc' in locals() and proc.returncode is None:
-                proc.kill();await proc.wait()
             return {"available":False,"reason":"Local Linux Docker daemon could not be verified"}
 
     async def tool_inventory(self):
@@ -299,7 +329,7 @@ class WorkerRuntime:
                      "argv":argv,"docker_prefix":prefix,"container_name":name}
             options={"creationflags":0x08000200} if os.name=="nt" else {"start_new_session":True}
             proc=await asyncio.create_subprocess_exec(sys.executable,"-I",str(HERE/"worker_entry.py"),"supervise",stdin=asyncio.subprocess.PIPE,stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.PIPE,
-                                                       env=_client_env(manifest),limit=4*1024*1024+1,**options)
+                                                       env=_client_env(manifest),limit=SUPERVISOR_FRAME+1,**options)
             self.active[cap["task_id"]]={"pid":proc.pid,"capability":cap,"work_dir":str(private)}
             async def send(value):
                 proc.stdin.write((json.dumps(value,separators=(",",":"))+"\n").encode());await proc.stdin.drain()

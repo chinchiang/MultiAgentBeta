@@ -206,6 +206,7 @@ def parse_tool_result(tool_id, result, *, case_id):
     """Strict bounded artifact parsing; findings do not imply a security pass."""
     base = {"tool": tool_id, "version": VERSIONS[tool_id], "status": result.get("status", "execution_error"),
             "security_status": "inconclusive", "cleanup_confirmed": result.get("cleanup_confirmed") is True,
+            "deployment_changed": result.get("deployment_changed") is True,
             "isolation": result.get("isolation"), "findings": [], "observations": []}
     if result.get("status") != "completed" or not base["cleanup_confirmed"]:
         base["reason"] = result.get("reason", "Tool did not complete with confirmed cleanup")
@@ -257,8 +258,10 @@ def parse_tool_result(tool_id, result, *, case_id):
         base["status"] = "completed"
         base["artifact_sha256"] = {name: hashlib.sha256(raw(name)).hexdigest() for name in artifacts}
         base["reason"] = "Tool evidence requires the threat-specific oracle and verified preconditions"
-    except (ValueError, TypeError, KeyError, ET.ParseError) as exc:
-        base.update(status="execution_error", reason=str(exc), findings=[], observations=[])
+    except Exception as exc:
+        # Artifacts are untrusted: any shape the parser does not expect is an execution error, never a crash.
+        reason = str(exc) if isinstance(exc, (ToolInputError, ET.ParseError)) else "Tool artifact did not match its expected structure"
+        base.update(status="execution_error", reason=reason, findings=[], observations=[])
     return base
 
 
@@ -266,6 +269,13 @@ async def run_tool(runtime, tool_id, manifest, case, *, cancel_event, request_ho
                    image_pin=None, repetition=0):
     from .adapters import evaluate_oracle
     from .fixture_protocol import _ordinary_steps, _sequence, _completed, _observations
+    # Reject an uncompilable case before any positive control reaches the target.
+    try:
+        spec = compile_tool(tool_id, case, image_pin=image_pin)
+    except (ToolInputError, ValueError, KeyError, TypeError) as exc:
+        reason = str(exc) if isinstance(exc, ToolInputError) else "Case cannot be compiled for this tool"
+        return {"tool": tool_id, "status": "blocked", "security_status": "blocked", "reason": reason,
+                "observations": [], "cleanup_confirmed": True}
     controls = _ordinary_steps(case)[:-1]
     observations = []
     if controls:
@@ -274,9 +284,9 @@ async def run_tool(runtime, tool_id, manifest, case, *, cancel_event, request_ho
         if not _completed(setup):
             return {"tool": tool_id, "status": "inconclusive", "security_status": "inconclusive",
                     "reason": "Positive controls failed before tool dispatch", "observations": [],
-                    "cleanup_confirmed": setup.get("cleanup_confirmed") is True}
+                    "cleanup_confirmed": setup.get("cleanup_confirmed") is True,
+                    "deployment_changed": setup.get("deployment_changed") is True}
         observations = _observations(case, setup, repetition)
-    spec = compile_tool(tool_id, case, image_pin=image_pin)
     result = await runtime.execute_tool(spec, manifest=manifest, cancel_event=cancel_event,
         request_hook=request_hook, lease_hook=lease_hook, repetition=repetition)
     normalized = parse_tool_result(tool_id, result, case_id=case["id"])

@@ -20,8 +20,9 @@ assert(token, 'Set VIBEAUDIT_SESSION_TOKEN to the startup token printed by the l
 let cookie = '';
 let csrf = '';
 async function request(path, body) {
-  const headers = { Accept: 'application/json', ...(cookie ? { Cookie: cookie } : {}), ...(path === '/session' ? { 'X-VibeAudit-Token': token } : {}) };
-  if (body !== undefined) Object.assign(headers, { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf, Origin: base.origin });
+  // Every request after the startup exchange carries the CSRF token; the cookie alone opens nothing.
+  const headers = { Accept: 'application/json', ...(cookie ? { Cookie: cookie } : {}), ...(path === '/session' ? { 'X-VibeAudit-Token': token } : csrf ? { 'X-CSRF-Token': csrf } : {}) };
+  if (body !== undefined) Object.assign(headers, { 'Content-Type': 'application/json', Origin: base.origin });
   const response = await fetch(new URL(`/api${path}`, base), {
     method: body === undefined ? 'GET' : 'POST', headers,
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -37,6 +38,11 @@ async function request(path, body) {
 const session = await request('/session');
 csrf = session.csrf_token;
 assert(csrf && cookie, 'Session must establish CSRF and cookie.');
+for (const path of ['/session', '/runs']) {
+  const response = await fetch(new URL(`/api${path}`, base), { headers: { Accept: 'application/json', Cookie: cookie }, redirect: 'error' });
+  assert([401, 403].includes(response.status), `${path} must refuse the session cookie without its CSRF token.`);
+  assert(!(await response.text()).includes(csrf), `${path} must not reveal the CSRF token to a cookie-only caller.`);
+}
 const capabilities = await request('/capabilities');
 const created = await request('/runs', { name: '前端契約驗證 · 合成示範', mode: 'demo' });
 assert.equal(created.mode, 'demo');

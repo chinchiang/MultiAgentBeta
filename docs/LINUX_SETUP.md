@@ -2,7 +2,7 @@
 
 ## 執行需求
 
-Python 3.12+、Node 24（建置 UI／TS fixture）、PostgreSQL、支援 recursive read-only bind mount 的 Linux kernel/Docker，以及授權 staging。實際驗收版本見 VALIDATION.md。Windows 原生控制台可跑 demo；live 控制程序和 Docker workers 一起放在 Linux/WSL2。
+Python 3.12+、Node 24（建置 UI／TS fixture）、PostgreSQL、支援 recursive read-only bind mount 的 Linux kernel/Docker（supervisor 直接呼叫 Docker Engine API v1.52，需要 Docker 29 以上），以及授權 staging。實際驗收版本見 VALIDATION.md。Windows 原生控制台可跑 demo；live 控制程序和 Docker workers 一起放在 Linux/WSL2。
 
 模型、靶場與憑證不由安裝程序自動建立。以下下載與建置是管理者的明確 provisioning；評估期間不安裝套件、不拉取映像。
 
@@ -62,7 +62,7 @@ OSV provisioning 下載官方完整 PyPI/npm 生態系 archive，不外送本機
 sh scripts/start-local.sh 8000
 ```
 
-開啟終端機印出的 `http://127.0.0.1:8000/#token=…` 網址；沒有權杖無法建立 session。需要固定權杖時先設定 `VIBEAUDIT_SESSION_TOKEN`（32–256 個 URL-safe 字元）。先確認工具清單，再配置 Commander 和三個 reviewer 的確切端點/model ID/family。金鑰填環境變數名稱，例如 VIBEAUDIT_ANTHROPIC_API_KEY（UI 選 Anthropic 時的預設名稱），不填值。cloud_allowed 仍需逐一列出 origin；local_only 只接受明確 loopback 模型端點。
+開啟終端機印出的 `http://127.0.0.1:8000/#token=…` 網址；沒有權杖無法建立 session。同一分頁重新整理不需權杖，新分頁需重新開啟該網址。需要固定權杖時先設定 `VIBEAUDIT_SESSION_TOKEN`（32–256 個 URL-safe 字元）。先確認工具清單，再配置 Commander 和三個 reviewer 的確切端點/model ID/family。金鑰填環境變數名稱，例如 VIBEAUDIT_ANTHROPIC_API_KEY（UI 選 Anthropic 時的預設名稱），不填值。VIBEAUDIT_DATABASE_URL、VIBEAUDIT_SESSION_TOKEN 等本工具設定，或值與其相同、值為 URL 的變數，都不能當作模型或目標憑證。部分推理模型（例如 gpt-5、o 系列）只接受預設 temperature，請將該欄留空；探測會在送出前回報 unsupported_parameter，不計費也不鎖住用量。cloud_allowed 仍需逐一列出 origin；local_only 只接受明確 loopback 模型端點。
 
 填入使用者提供的來源、staging、允許 IP、每個 METHOD/path、業務需求、帳號 reference、fixtures、部署識別/header，以及時間/請求/模型上限。正控制、reset、cleanup 也必須列在 scope 中；空 scope 禁止所有黑箱請求。預檢不進行漏洞探測。
 

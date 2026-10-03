@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -55,6 +56,16 @@ def runtime(tmp_path):
 async def allow(**kwargs):return None
 
 
+async def test_each_scheduled_repetition_sends_the_case_once(runtime,target):
+    # The engine runs one task per repetition; the worker must not loop over the count again.
+    origin,seen=target
+    repeated=case();repeated["repetitions"]=3;repeated["hash"]=canonical_hash({k:v for k,v in repeated.items() if k!="hash"})
+    for repetition in range(3):
+        result=await runtime.run_case(manifest(origin),repeated,cancel_event=asyncio.Event(),request_hook=allow,repetition=repetition)
+        assert result["status"]=="pass" and result["requests"]==2,result
+    assert seen==["/fixture","/private"]*3
+
+
 async def test_real_independent_process_and_broker_preserve_oracle(runtime,target):
     origin,seen=target;scope=manifest(origin);requests=[]
     async def hook(**ctx):requests.append(ctx)
@@ -89,6 +100,92 @@ async def test_controller_denial_prevents_real_dispatch(runtime,target):
     assert result["status"]!="pass" and seen==[]
 
 
+@pytest.fixture
+def awkward_target():
+    """Answers the broker cannot relay: a redirect, a non-UTF-8 body and a HEAD with Content-Length."""
+    seen=[]
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self,*args):pass
+        def answer(self,status,body,head=False,**headers):
+            seen.append((self.command,self.path))
+            self.send_response(status)
+            for name,value in headers.items():self.send_header(name,value)
+            self.send_header("Content-Length",str(len(body)));self.end_headers()
+            if not head:self.wfile.write(body)
+        def do_GET(self):
+            if self.path=="/fixture":self.answer(200,b"TEST-CANARY")
+            elif self.path=="/redirect":self.answer(302,b"",Location="/login")
+            elif self.path=="/latin":self.answer(403,b"\xe9chec")
+            else:self.answer(403,b"Forbidden")
+        def do_HEAD(self):self.answer(200,b"TEST-CANARY",head=True)
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("Content-Length","0")))
+            self.answer(302,b"",Location="/done")
+    server=ThreadingHTTPServer(("127.0.0.1",0),Handler)
+    thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+    yield f"http://127.0.0.1:{server.server_port}",seen
+    server.shutdown();server.server_close();thread.join(timeout=2)
+
+
+def scoped(origin,*requests):
+    scope=manifest(origin);scope["allowed_requests"]=[{"method":m,"path":p} for m,p in [("GET","/fixture"),*requests]]
+    return scope
+
+
+def sealed_case(**fields):
+    value=case();value.update(fields);value["hash"]=canonical_hash({k:v for k,v in value.items() if k!="hash"})
+    return value
+
+
+@pytest.mark.parametrize("path",["/redirect","/latin"])
+async def test_unrelayable_answer_to_a_read_only_case_is_known_not_unknown(runtime,awkward_target,path):
+    # A 302 to a login page is a common denial: it must end this case, not the whole live run.
+    origin,seen=awkward_target
+    result=await runtime.run_case(scoped(origin,("GET",path)),sealed_case(path=path),cancel_event=asyncio.Event(),request_hook=allow)
+    assert result["status"] in {"inconclusive","blocked"} and result["cleanup_confirmed"] is True,result
+    assert seen==[("GET","/fixture"),("GET",path)]
+    denied=[row for row in result["broker_observations"] if row["path"]==path]
+    assert denied and denied[0]["complete"] is False and denied[0]["denied"]
+    assert runtime.leases.task(result["task_id"])["state"]=="finished"
+
+
+async def test_head_answer_has_no_body_whatever_its_content_length(runtime,awkward_target):
+    origin,seen=awkward_target
+    steps=[{"id":"head","method":"HEAD","path":"/fixture","expected_status":200}]
+    scope=scoped(origin,("HEAD","/fixture"))
+    head_case=sealed_case(method="HEAD",path="/fixture",preconditions=[])
+    result=await runtime.execute_tool({"operation":"request_sequence","cases":[head_case],"requests":steps,"timeout_seconds":30},manifest=scope,cancel_event=asyncio.Event(),request_hook=allow)
+    assert result["status"]=="completed",result
+    assert [(row["status_code"],row["body"]) for row in result["observations"]]==[(200,"")]
+
+
+async def test_refused_connection_sends_nothing_and_ends_only_the_case(runtime):
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1",0));port=probe.getsockname()[1]
+    result=await runtime.run_case(manifest(f"http://127.0.0.1:{port}"),case(),cancel_event=asyncio.Event(),request_hook=allow)
+    assert result["status"]=="inconclusive" and result["cleanup_confirmed"] is True,result
+    assert result["broker_observations"][0]["denied"].startswith("Target connection failed")
+
+
+async def test_unsafe_request_answered_by_redirect_stays_outcome_unknown(runtime,awkward_target):
+    origin,seen=awkward_target
+    steps=[{"id":"change","method":"POST","path":"/orders","body":{},"expected_status":200}]
+    post_case=sealed_case(method="POST",path="/orders",body={},preconditions=[],side_effects=True)
+    result=await runtime.execute_tool({"operation":"request_sequence","cases":[post_case],"requests":steps,"timeout_seconds":30},manifest=scoped(origin,("POST","/orders")),cancel_event=asyncio.Event(),request_hook=allow)
+    assert result["status"]=="outcome_unknown",result
+    assert seen==[("POST","/orders")]
+
+
+async def test_unmet_sequence_prerequisite_ends_the_sequence_with_a_known_answer(runtime,target):
+    origin,seen=target
+    steps=[{"id":"control","method":"GET","path":"/private","expected_status":200},
+           {"id":"main","method":"GET","path":"/leak","expected_status":403}]
+    result=await runtime.execute_tool({"operation":"request_sequence","cases":[case()],"requests":steps,"timeout_seconds":30},manifest=manifest(origin),cancel_event=asyncio.Event(),request_hook=allow)
+    assert result["status"]=="inconclusive" and result["cleanup_confirmed"] is True,result
+    assert seen==["/private"]
+    assert [(row["id"],row["status_code"]) for row in result["observations"]]==[("control",403)]
+
+
 async def test_deployment_change_revokes_before_later_requests(runtime,target):
     origin,seen=target;scope=manifest(origin)
     scope.update(deployment_header="X-Deployment",deployment_id="v1")
@@ -96,7 +193,7 @@ async def test_deployment_change_revokes_before_later_requests(runtime,target):
            {"id":"main","method":"GET","path":"/private","expected_status":403},
            {"id":"later","method":"GET","path":"/leak","expected_status":200}]
     result=await runtime.execute_tool({"operation":"request_sequence","cases":[case()],"requests":steps,"timeout_seconds":30},manifest=scope,cancel_event=asyncio.Event(),request_hook=allow)
-    assert result["status"]=="blocked",result
+    assert result["status"]=="blocked" and result["deployment_changed"] is True,result
     assert seen==["/fixture","/private"]
 
 
@@ -152,7 +249,20 @@ def test_controller_verdict_comes_from_supervisor_records(claim,main,expected):
 def test_controller_keeps_worker_failure_states():
     from vibe_audit.worker_runtime import supervised_verdict
     result={"status":"outcome_unknown","reason":"lost","broker_observations":[recorded("/private",200,"TEST-CANARY")]}
-    assert supervised_verdict(case(),result)==result
+    kept=supervised_verdict(case(),result)
+    assert (kept["status"],kept["reason"],kept["broker_observations"])==("outcome_unknown","lost",result["broker_observations"])
+
+
+@pytest.mark.parametrize("claim",["blocked","execution_error","completed","outcome_unknown"])
+def test_supervisor_recorded_leak_stands_whatever_the_worker_returns(claim):
+    from vibe_audit.worker_runtime import supervised_verdict
+    # Extra keys are the worker's claims: none may replace the supervisor's verdict.
+    result=supervised_verdict(case(),{"status":claim,"security_status":"pass","fixture_observations":[{"kind":"precondition"}],
+                                      "broker_observations":[recorded("/fixture",200,"TEST-CANARY"),recorded("/private",200,"TEST-CANARY")]})
+    assert result["status"]=="fail" and result["worker_status"]==claim
+    assert "security_status" not in result and "fixture_observations" not in result
+    # A leak recorded before a dispatch was lost is still a finding, but the target needs a reset first.
+    assert result.get("target_state_confirmed",True) is (claim!="outcome_unknown")
 
 
 def test_sequence_rows_must_match_supervisor_records():
@@ -160,14 +270,22 @@ def test_sequence_rows_must_match_supervisor_records():
     spec={"requests":[{"id":"control"},{"id":"main"}]}
     records=[recorded("/fixture",200,"TEST-CANARY"),recorded("/private",403,"Forbidden")]
     honest={"status":"completed","observations":[{"id":"control","status_code":200,"body":"TEST-CANARY"},{"id":"main","status_code":403,"body":"Forbidden"}],"broker_observations":records}
-    assert supervised_sequence(spec,honest)==honest
+    rows=lambda result:[(row["id"],row["status_code"],row["body"]) for row in result["observations"]]
+    checked=supervised_sequence(spec,honest)
+    assert checked["status"]=="completed" and rows(checked)==[("control",200,"TEST-CANARY"),("main",403,"Forbidden")]
     forged=copy.deepcopy(honest);forged["observations"][1]["body"]="Forbidden, honestly"
     assert supervised_sequence(spec,forged)["status"]=="execution_error"
     invented=copy.deepcopy(honest);invented["broker_observations"]=records[:1]
     assert supervised_sequence(spec,invented)["status"]=="execution_error"
+    # Step labels and fixture observations come from the sealed order, never from the worker.
+    relabelled=copy.deepcopy(honest);relabelled["observations"][0]["id"]="main";relabelled["observations"][1]["id"]="control:fixture"
+    relabelled["fixture_observations"]=[{"kind":"precondition","name":"fixture","value":True}]
+    checked=supervised_sequence(spec,relabelled)
+    assert rows(checked)==[("control",200,"TEST-CANARY"),("main",403,"Forbidden")] and "fixture_observations" not in checked
     # The relay's 502 for a request the supervisor refused ends the sequence; it is not a forgery.
     refused={"status":"inconclusive","observations":[honest["observations"][0],{"id":"main","status_code":502,"body":"Broker denied request"}],"broker_observations":records[:1]}
-    assert supervised_sequence(spec,refused)==refused
+    checked=supervised_sequence(spec,refused)
+    assert checked["status"]=="inconclusive" and rows(checked)==[("control",200,"TEST-CANARY")]
 
 
 def test_controller_redacts_decoded_artifacts_and_escaped_credentials(monkeypatch):
@@ -178,6 +296,35 @@ def test_controller_redacts_decoded_artifacts_and_escaped_credentials(monkeypatc
                                "observations":[{"body":'raw key-"q"-0123456789'}]},scope)
     assert result["artifacts"]["zap.json"]==b'{"evidence": "[REDACTED_CREDENTIAL]"}'
     assert result["observations"][0]["body"]=="raw [REDACTED_CREDENTIAL]"
+
+
+def test_supervisor_that_cannot_start_reports_nothing_to_clean_up(tmp_path):
+    from vibe_audit.worker_entry import read_frame
+    entry=Path(__file__).resolve().parents[1]/"backend"/"vibe_audit"/"worker_entry.py"
+    # The capability names a different specification, so the supervisor refuses before any worker exists.
+    task={"capability":{"id":"lease","token":"t","binding":{"spec_hash":"another-spec"}},"worker_id":"w","spec":{"tool_id":"http_case"},
+          "database_path":str(tmp_path/"leases.sqlite3"),"manifest":{}}
+    done=subprocess.run([sys.executable,"-I",str(entry),"supervise"],input=(json.dumps(task)+"\n").encode(),capture_output=True,timeout=30)
+    assert done.returncode==2
+    import io
+    result=read_frame(io.BytesIO(done.stdout))["result"]
+    assert (result["status"],result["cleanup_confirmed"],result["not_started"])==("blocked",True,True)
+
+
+def test_controller_redacts_credentials_reflected_in_escaped_forms(monkeypatch):
+    from vibe_audit.worker_runtime import redact_credentials
+    monkeypatch.setenv("VIBEAUDIT_TEST_KEY","bob/secret token")
+    scope={"auth_profiles":[{"id":"bob","credential_env":"VIBEAUDIT_TEST_KEY"}],"models":[]}
+    for reflected in ['bob\\/secret token','bob%2Fsecret%20token','bob/secret token']:
+        assert "[REDACTED_CREDENTIAL]" in redact_credentials({"body":"echo "+reflected},scope)["body"]
+
+
+def test_broker_reads_no_oversized_frame_before_its_token_check():
+    import io
+    from vibe_audit.worker_entry import read_frame,BROKER_FRAME
+    with pytest.raises(ValueError,match="oversized"):
+        read_frame(io.BytesIO(b"{" + b" "*(BROKER_FRAME+10) + b"}\n"),BROKER_FRAME)
+    assert read_frame(io.BytesIO(b'{"ok":true}\n'),BROKER_FRAME)=={"ok":True}
 
 
 @pytest.mark.skipif(os.name!="posix",reason="Hard-crash integration uses POSIX process semantics")

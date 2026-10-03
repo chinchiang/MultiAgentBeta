@@ -1,4 +1,8 @@
-"""Explicit OWASP catalog ingestion. Default is offline; --fetch refreshes pinned sources.
+"""Explicit OWASP catalog ingestion.
+
+  python scripts/refresh-catalog.py          offline check: rebuild in memory, report drift, write nothing
+  python scripts/refresh-catalog.py --write  rewrite the canonical catalogs and manifest from the pinned sources
+  python scripts/refresh-catalog.py --fetch  download the fixed source revisions, then rewrite
 
 No network is used by the application registry. Catalog data stays CC-BY-SA-4.0.
 """
@@ -10,6 +14,7 @@ import hashlib
 import io
 import json
 import re
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from html import unescape
@@ -56,8 +61,16 @@ def sha(data):
     return hashlib.sha256(data).hexdigest()
 
 
+OUTPUTS: dict[Path, bytes] = {}
+
+
+def render(value):
+    # Fixed CRLF on every platform: catalogs are hash-pinned, so each checkout must produce the same bytes.
+    return (json.dumps(value, ensure_ascii=False, indent=2) + "\n").replace("\n", "\r\n").encode("utf-8")
+
+
 def write_json(path, value):
-    path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    OUTPUTS[path] = render(value)
 
 
 def fetch(item):
@@ -77,6 +90,7 @@ def fetch(item):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--fetch", action="store_true", help="Explicitly download the fixed official source revisions")
+    parser.add_argument("--write", action="store_true", help="Rewrite the canonical catalogs and manifest")
     args = parser.parse_args()
     (ROOT / "sources").mkdir(parents=True, exist_ok=True)
     if args.fetch:
@@ -101,7 +115,7 @@ def main():
         filename = f"{standard.lower()}-{version}.json"
         write_json(ROOT / filename, entries)
         collections.append(dict(standard=standard, version=version, file=filename, count=len(entries),
-                                sha256=sha((ROOT / filename).read_bytes()), license="CC-BY-SA-4.0",
+                                sha256=sha(OUTPUTS[ROOT / filename]), license="CC-BY-SA-4.0",
                                 attribution="OWASP Foundation and the respective project contributors",
                                 sources=[lock[n] for n in names], verification=verification, quality_notes=notes or []))
     asvs = json.loads(text("asvs-5.0.0.json"))
@@ -172,12 +186,24 @@ def main():
          ["The :2026 suffix is a Vibe Audit version qualifier; OWASP's published Agentic IDs are ASI01 through ASI10.",
           "ASI02 and ASI05 have shortened titles in the launch blog; full mapping titles are retained.",
           "Official PDF download returned no-access HTML; published repository mapping and announcement are the ingested sources."])
-    manifest = {"schema_version": 1, "generated_at": datetime.now(timezone.utc).isoformat(), "collections": collections,
+    previous = json.loads((ROOT / "manifest.json").read_text(encoding="utf-8")) if (ROOT / "manifest.json").is_file() else {}
+    # Unchanged collections keep their timestamp, so a rebuild with no content change is byte-identical.
+    generated_at = previous["generated_at"] if previous.get("collections") == json.loads(json.dumps(collections)) else datetime.now(timezone.utc).isoformat()
+    manifest = {"schema_version": 1, "generated_at": generated_at, "collections": collections,
                 "trust_note": "Hashes detect local drift against this trusted manifest; they are not OWASP signatures.",
                 "id_conventions": {"ASVS": "ASVS- namespace + official versioned ID; official v5.0.0-* accepted as explicit aliases", "WSTG": "OWASP version-qualified WSTG-v42-*", "LLM": "Official LLMnn:2026", "AGENTIC": "Official ASInn with explicit :2026 application qualifier"}}
     write_json(ROOT / "manifest.json", manifest)
-    print(json.dumps({c["standard"]: c["count"] for c in collections}))
+    drift = sorted(path.relative_to(ROOT).as_posix() for path, data in OUTPUTS.items() if not path.is_file() or path.read_bytes() != data)
+    if args.write or args.fetch:
+        for path, data in OUTPUTS.items():
+            if path.relative_to(ROOT).as_posix() in drift:
+                path.write_bytes(data)
+    elif drift:
+        print("Catalog files differ from their pinned sources: " + ", ".join(drift) + "; review, then rerun with --write", file=sys.stderr)
+        return 1
+    print(json.dumps({c["standard"]: c["count"] for c in collections} | {"rewritten" if args.write or args.fetch else "drift": drift}))
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

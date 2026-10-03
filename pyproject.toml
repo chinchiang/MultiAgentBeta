@@ -1,5 +1,6 @@
 [build-system]
-requires = ["setuptools>=75"]
+# 77 is the first release that reads a PEP 639 license string.
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]

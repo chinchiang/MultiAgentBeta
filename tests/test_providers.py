@@ -94,6 +94,57 @@ async def test_explicit_origin_and_credential_references(profile, policy, fake_p
     assert fake_provider[0][0][4] == "synthetic-test-key"
 
 
+@pytest.mark.parametrize("name,value", [
+    ("VIBEAUDIT_DATABASE_URL", "postgresql://vibe:db-secret@127.0.0.1/vibeaudit"),
+    ("VIBEAUDIT_SESSION_TOKEN", "s" * 40),
+    ("VIBEAUDIT_LEASE_DB", "postgresql://vibe:db-secret@127.0.0.1/leases"),
+    ("VIBEAUDIT_COPY", "s" * 40),
+])
+@pytest.mark.asyncio
+async def test_credentials_never_name_the_tools_own_settings(profile, policy, fake_provider, monkeypatch, name, value):
+    # The probe would send the value as a bearer token; the session token and database URLs never leave.
+    monkeypatch.setenv("VIBEAUDIT_SESSION_TOKEN", "s" * 40)
+    monkeypatch.setenv(name, value)
+    policy["allowed_model_origins"] = ["http://127.0.0.1:11434"]
+    profile["credential_env"] = name
+    with pytest.raises(providers.ProviderError) as err:
+        await providers.generate_json(profile, "Review", {}, policy)
+    assert err.value.code == "invalid_credential_reference"
+    assert fake_provider[0] == []
+
+
+@pytest.mark.asyncio
+async def test_failures_before_dispatch_cost_nothing_and_keep_usage_known(policy, monkeypatch):
+    # Real LiteLLM: gpt-5 rejects temperature 0 before any request; nothing listens on port 9 either.
+    profile = {"id": "reviewer-a", "provider": "openai", "model_id": "gpt-5", "family": "gpt",
+               "endpoint": "http://127.0.0.1:9/v1", "credential_env": "", "max_output_tokens": 256, "temperature": 0}
+    policy.update(allowed_model_origins=[], max_model_calls=1)
+    with pytest.raises(providers.ProviderError) as err:
+        await providers.generate_json(profile, "Review", {}, policy)
+    assert err.value.code == "unsupported_parameter" and err.value.usage["tokens_known"] is True
+    assert "temperature" in str(err.value) and "no request was sent" in str(err.value)
+    # Leaving temperature empty uses the model default and gets as far as the (closed) endpoint.
+    profile["temperature"] = None
+    with pytest.raises(providers.ProviderError) as err:
+        await providers.generate_json(profile, "Review", {}, policy)
+    assert err.value.code == "endpoint_unavailable" and err.value.usage["tokens_known"] is True
+    # A policy denial of the resolved address is not a billed attempt either.
+    monkeypatch.setenv("VIBEAUDIT_TEST_KEY", "synthetic-test-key")
+    profile.update(endpoint="https://10.0.0.5/v1", temperature=0.2, credential_env="VIBEAUDIT_TEST_KEY")
+    policy.update(data_policy="cloud_allowed", allowed_model_origins=["https://10.0.0.5"])
+    with pytest.raises(providers.ProviderError) as err:
+        await providers.generate_json(profile, "Review", {}, policy)
+    assert err.value.code == "origin_denied" and err.value.usage["tokens_known"] is True
+
+
+def test_run_input_rejects_reserved_credential_names():
+    from vibe_audit.domain import AuthProfile, ModelProfile
+    with pytest.raises(ValueError, match="Vibe Audit setting"):
+        ModelProfile(id="a", role="reviewer", provider="openai", model_id="m", family="f", credential_env="VIBEAUDIT_DATABASE_URL")
+    with pytest.raises(ValueError, match="Vibe Audit setting"):
+        AuthProfile(id="alice", credential_env="VIBEAUDIT_SESSION_TOKEN")
+
+
 @pytest.mark.parametrize("endpoint", ["http://127.0.0.1:11434/v1", "http://[::1]:11434/v1"])
 @pytest.mark.asyncio
 async def test_local_only_loopback_needs_no_origin_list(profile, policy, fake_provider, endpoint):
@@ -419,7 +470,8 @@ def test_redaction_keeps_security_relevant_code_readable(content):
     assert redact_text(content) == content
 
 
-@pytest.mark.parametrize("unit", ["a", "token", "secret_", "\n", " \n", "a.", "a+", "define('token", "export token_"])
+@pytest.mark.parametrize("unit", ["a", "token", "secret_", "\n", " \n", "a.", "a+", "define('token", "export token_",
+                                  "eyJ-", "sk-a", "xoxb-", "glpat-"])
 def test_redaction_stays_linear_on_hostile_single_token_files(unit):
     # Each of these took minutes at the per-file limit with backtracking name scans.
     import time

@@ -1,6 +1,6 @@
 /* Optional browser E2E. Provide an installed Playwright module with
  * VIBEAUDIT_PLAYWRIGHT_MODULE (default: playwright) and optionally an Edge/
- * Chromium executable via VIBEAUDIT_BROWSER_EXECUTABLE. No downloads occur.
+ * Chromium executable via VIBEAUDIT_BROWSER_EXECUTABLE. No packages are downloaded.
  * VIBEAUDIT_TEST_BASE_URL defaults to http://127.0.0.1:8000. VIBEAUDIT_SESSION_TOKEN
  * must hold the startup token printed by the backend.
  * Run after starting the backend. This creates a labeled synthetic demo run.
@@ -31,12 +31,17 @@ async function main() {
     const saved=await savedResponse;
     assert(saved.ok(),await saved.text());
     await page.getByText('專案設定已保存在本機。', {exact: true}).waitFor();
+    // Direct API reads need the session's CSRF token, which the workbench keeps in sessionStorage.
+    const csrf = await page.evaluate(() => sessionStorage.getItem('vibeaudit.csrf'));
+    assert(csrf, 'The workbench must keep its CSRF token in sessionStorage.');
+    const authorized = {headers: {'X-CSRF-Token': csrf}};
+    assert.equal((await page.request.get(`${base.origin}/api/runs`)).status(), 403, 'The session cookie alone must not read runs.');
     const createdResponse = page.waitForResponse(r => r.url().endsWith('/api/runs') && r.request().method() === 'POST');
     await page.getByRole('button', {name: '建立並開始', exact: true}).click();
     const created = await (await createdResponse).json();
     let completed = false;
     for (let attempt = 0; attempt < 100; attempt++) {
-      const response = await page.request.get(`${base.origin}/api/runs/${created.id}`);
+      const response = await page.request.get(`${base.origin}/api/runs/${created.id}`, authorized);
       const run = await response.json();
       if (run.stage === 'complete') {
         assert.equal(run.status, 'incomplete');
@@ -59,9 +64,15 @@ async function main() {
     await page.getByRole('button', {name: '檢視證據', exact: true}).first().click();
     await page.getByRole('button', {name: '重新核對', exact: true}).first().waitFor();
     await page.locator('summary').filter({hasText: '匯出報告'}).click();
-    const links = await page.locator('a[href*="/report"]').evaluateAll(nodes => nodes.map(a => a.getAttribute('href')));
-    assert.equal(links.length, 3);
-    for (const href of links) assert((await page.request.get(base.origin + href)).ok());
+    const exports = page.locator('.download-menu button');
+    assert.equal(await exports.count(), 3);
+    for (let index = 0; index < 3; index++) {
+      const downloaded = page.waitForEvent('download');
+      await exports.nth(index).click();
+      const file = await downloaded;
+      assert.equal(await file.failure(), null);
+      assert.match(file.suggestedFilename(), /^vibe-audit-[0-9a-f]{8}\.(md|json|sarif)$/);
+    }
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false);
     await page.screenshot({path: path.join(docs, 'workbench.png'), fullPage: true});
     await page.setViewportSize({width: 390, height: 844});

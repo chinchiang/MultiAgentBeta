@@ -80,3 +80,21 @@ def test_release_ships_tracked_files_and_the_built_ui_only(tmp_path):
     assert release.check(tmp_path) == []
     (tmp_path / "b.py").write_text("changed")
     assert release.check(tmp_path) == ["b.py"]
+
+
+def test_committed_receipts_name_no_host_or_account():
+    import subprocess
+    done = subprocess.run([sys.executable, str(ROOT / "scripts" / "redact-receipts.py"), "--check"], capture_output=True, text=True)
+    assert done.returncode == 0, done.stderr
+
+
+def test_receipt_redaction_changes_only_identifiers():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("redact_receipts", ROOT / "scripts" / "redact-receipts.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    raw = (b'<testsuite hostname="DESK-01" tests="1"><testcase name="t" time="0.1">'
+           b'<skipped message="needs PG">C:\\Users\\alice\\repo\\tests\\t.py:3 /home/bob/repo /mnt/c/Users/alice/x</skipped></testcase></testsuite>')
+    assert module.redact(raw) == (b'<testsuite hostname="redacted-host" tests="1"><testcase name="t" time="0.1">'
+                                  b'<skipped message="needs PG">C:\\Users\\user\\repo\\tests\\t.py:3 /home/user/repo /mnt/c/Users/user/x</skipped></testcase></testsuite>')
+    assert module.redact(module.redact(raw)) == module.redact(raw)
