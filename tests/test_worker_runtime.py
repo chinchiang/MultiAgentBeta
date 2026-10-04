@@ -89,9 +89,16 @@ async def test_sustained_lease_outage_fails_closed_after_three_strikes(tmp_path,
     consecutive non-LeaseError renewal failures revoke the worker."""
     rt=WorkerRuntime(tmp_path,backend="process_test",allow_process_test=True,ttl_seconds=0.2)
     try:
-        def always_unavailable(capability,*args,**kwargs):
-            raise RuntimeError("lease database unavailable")
-        monkeypatch.setattr(rt.leases,"renew",always_unavailable)
+        real=rt.leases.renew
+        # Renewals must keep the capability alive until the supervisor has claimed
+        # it: process startup is slower on some platforms, and the sustained
+        # outage under test begins once a worker exists, not before it can start.
+        def fail_once_claimed(capability,*args,**kwargs):
+            with rt.leases.lock:
+                row=rt.leases._sql("SELECT state FROM worker_leases WHERE id=?",(capability["id"],)).fetchone()
+            if row and row[0]=="active": raise RuntimeError("lease database unavailable")
+            return real(capability,*args,**kwargs)
+        monkeypatch.setattr(rt.leases,"renew",fail_once_claimed)
         result=await rt.execute_tool({"operation":"selftest","selftest":"spawn_child","timeout_seconds":30},
                                      manifest=manifest(),cancel_event=asyncio.Event(),request_hook=allow)
         assert result["status"]=="outcome_unknown"
@@ -541,7 +548,10 @@ def test_guardian_tolerates_transient_lease_errors(runtime,monkeypatch):
 async def test_heartbeat_renews_off_the_event_loop(tmp_path,monkeypatch):
     """A slow lease database must not stall the controller event loop: renewal
     runs in a worker thread while grants and results keep flowing."""
-    rt=WorkerRuntime(tmp_path,backend="process_test",allow_process_test=True,ttl_seconds=0.2)
+    # A generous TTL keeps the supervisor's guardian from failing closed on
+    # platform scheduling jitter alone: three missed heartbeats must stay far
+    # above normal process-spawn and thread-wakeup latency.
+    rt=WorkerRuntime(tmp_path,backend="process_test",allow_process_test=True,ttl_seconds=2.0)
     try:
         loop_thread=threading.get_ident()
         real=rt.leases.renew
@@ -552,7 +562,8 @@ async def test_heartbeat_renews_off_the_event_loop(tmp_path,monkeypatch):
         monkeypatch.setattr(rt.leases,"renew",wrapped)
         cancel=asyncio.Event()
         operation=asyncio.create_task(rt.execute_tool({"operation":"selftest","selftest":"spawn_child","timeout_seconds":30},manifest=manifest(),cancel_event=cancel,request_hook=allow))
-        await asyncio.sleep(1.2)
+        # Heartbeats renew every ttl/3, so this window guarantees >=3 renewals.
+        await asyncio.sleep(2.2)
         cancel.set()
         result=await asyncio.wait_for(operation,30)
         assert result["status"]=="outcome_unknown"
