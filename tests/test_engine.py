@@ -262,19 +262,31 @@ async def test_provided_cases_leave_uncovered_threats_as_gaps(engine):
 
 async def test_demo_run_records_the_supplied_cases_it_cannot_execute(engine):
     """A demo run can only synthesize the fixed fixture set; supplied (or
-    retest-copied) cases must stay visible as an untested gap, never vanish."""
-    supplied={"id":"C-op","title":"Operator case","threat_ids":["T-001"],"requirement_id":"R-001",
-              "adapter":"demo","method":"GET","path":"/orders/private","headers":{},"body":None,"identity":None,
-              "preconditions":[],"oracle":{"kind":"deny_sensitive","forbidden_text":["B-PRIVATE-CANARY"],
-              "allowed_statuses":[403],"required_observations":["http_response"],"expected_role":None},
-              "cleanup":None,"side_effects":False,"repetitions":1,"observation_mode":"external_observation"}
-    run=engine.create(RunInput(name="Demo with supplied case",mode="demo",cases=[supplied]))
+    retest-copied) cases must stay visible as an untested gap, never vanish.
+    A demo retest's verbatim copies of the synthetic cases are the ones the
+    run does execute, so they must not be reported as untested."""
+    def supplied_case(case_id):
+        return {"id":case_id,"title":"Operator case","threat_ids":["T-001"],"requirement_id":"R-001",
+                "adapter":"demo","method":"GET","path":"/orders/private","headers":{},"body":None,"identity":None,
+                "preconditions":[],"oracle":{"kind":"deny_sensitive","forbidden_text":["B-PRIVATE-CANARY"],
+                "allowed_statuses":[403],"required_observations":["http_response"],"expected_role":None},
+                "cleanup":None,"side_effects":False,"repetitions":1,"observation_mode":"external_observation"}
+    run=engine.create(RunInput(name="Demo with supplied case",mode="demo",cases=[supplied_case("C-op")]))
     engine.start(run["id"])
     await engine.tasks[run["id"]]
     result=engine.store.get(run["id"])
     assert any("supplied case(s) were not executed" in gap for gap in result["gaps"]),result["gaps"]
     assert any(e["level"]=="warning" and "synthetic fixture set" in e["message"] for e in result["events"])
     assert {e["case_id"] for e in result["executions"]}=={"C-001","C-002","C-003"}
+    # The demo retest path copies the parent's synthetic cases back into the manifest;
+    # those are exactly what the run executes, so no untested-supply gap may appear.
+    retest=engine.create(RunInput(name="Demo retest",mode="demo",parent_run_id=run["id"],
+                                  cases=[supplied_case("C-001"),supplied_case("C-002"),supplied_case("C-003")]))
+    engine.start(retest["id"])
+    await engine.tasks[retest["id"]]
+    retest_result=engine.store.get(retest["id"])
+    assert not any("supplied case(s) were not executed" in gap for gap in retest_result["gaps"]),retest_result["gaps"]
+    assert {e["case_id"] for e in retest_result["executions"]}=={"C-001","C-002","C-003"}
 
 
 async def test_threat_model_that_drops_a_provided_case_threat_blocks_early(engine,monkeypatch):
@@ -495,6 +507,8 @@ def test_api_errors_stay_structured_instead_of_500(tmp_path,monkeypatch):
         # unprovisioned name stays structured, and a malformed one is a 422.
         named=client.get("/api/capabilities",params={"profile":"staging"})
         assert named.status_code==200 and named.json()["runtime"]["profile"]=="staging"
+        # An unprovisioned profile says so in its own words, not as a generic failure.
+        assert "not provisioned" in named.json()["runtime"]["reason"]
         assert named.json()["runtime"]["available"] is False
         assert client.get("/api/capabilities",params={"profile":"../evil"}).status_code==422
         for body in [b"[]",b'"x"',b"not json",b'{"profile":{}}']:

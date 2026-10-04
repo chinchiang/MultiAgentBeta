@@ -360,8 +360,10 @@ class Engine:
             source=await asyncio.to_thread(snapshot_source,staging["path"])
             if not source["files"]:
                 raise PolicyError("No supported source files available")
-            run["gaps"].extend(source["gaps"])
-            run.setdefault("limitations",[]).extend(source.get("limitations",[]))
+            # A resumed preflight re-reads the same snapshot; keep each gap and limitation once.
+            run["gaps"].extend(gap for gap in source["gaps"] if gap not in run["gaps"])
+            limitations=run.setdefault("limitations",[])
+            limitations.extend(item for item in source.get("limitations",[]) if item not in limitations)
             for profile in run["manifest"]["models"]:
                 policy,release=self.model_policy(run,profile,{"probe":True})
                 try:
@@ -527,7 +529,8 @@ class Engine:
     async def _adjudication(self,run):
         unique={}
         for review in run["reviews"]:
-            run["gaps"].extend(review["gaps"])
+            # A resumed adjudication would re-extend the same review gaps; keep each gap once.
+            run["gaps"].extend(gap for gap in review["gaps"] if gap not in run["gaps"])
             # A resumed adjudication reuses the sealed review's recorded evidence
             # instead of writing a second artifact for the same content.
             if not review.get("evidence"):
@@ -597,8 +600,12 @@ class Engine:
         if run["mode"]=="demo":
             # Demo execution can only synthesize the fixed fixture cases below; supplied
             # or retest-copied cases stay visible as an untested gap instead of vanishing.
-            if run["manifest"]["cases"]:
-                run["gaps"].append(f"Demo mode executes only the synthetic fixture cases; {len(run['manifest']['cases'])} supplied case(s) were not executed")
+            # A demo retest copies the parent's synthetic cases back verbatim, and those
+            # are exactly the cases this stage executes, so they are not untested supply.
+            synthetic_ids={"C-001","C-002","C-003"}
+            supplied=[c for c in run["manifest"]["cases"] if c.get("id") not in synthetic_ids]
+            if supplied:
+                run["gaps"].append(f"Demo mode executes only the synthetic fixture cases; {len(supplied)} supplied case(s) were not executed")
                 self.event(run,"Demo mode replaced supplied cases with the synthetic fixture set","warning")
             common=dict(adapter="demo",method="GET",path="/orders/private",headers={},body=None,identity=None,preconditions=["fixture_ready"],cleanup=None,side_effects=False,repetitions=1,observation_mode="external_observation")
             oracle={"kind":"deny_sensitive","forbidden_text":["B-PRIVATE-CANARY"],"allowed_statuses":[403,404],"required_observations":["http_response"],"expected_role":None}

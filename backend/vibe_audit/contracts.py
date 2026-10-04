@@ -130,6 +130,14 @@ class ChallengeItem(Contract):
     counterevidence: str = Field(default="", max_length=5000)
     missing_evidence: str = Field(default="", max_length=5000)
 
+    @model_validator(mode="after")
+    def substantive(self):
+        # The challenger round asks for evidence content: an empty challenge
+        # would only inflate the record without saying anything.
+        if not self.counterevidence.strip() and not self.missing_evidence.strip():
+            raise ValueError("A challenge needs counterevidence or missing evidence")
+        return self
+
 
 class ChallengeProposal(Contract):
     challenges: list[ChallengeItem] = Field(default_factory=list, max_length=500)

@@ -93,7 +93,7 @@ def redact_credentials(value,manifest):
 
 # Set by the supervisor or controller. Any other key in a worker result is only the worker's claim,
 # so a worker cannot add a security_status, fixture observations or a step label of its own.
-SUPERVISED_FIELDS=("broker_observations","cleanup_confirmed","deployment_changed","isolation","lifecycle","task_id","simulated","work_dir_removed")
+SUPERVISED_FIELDS=("broker_observations","cleanup_confirmed","deployment_changed","isolation","lifecycle","task_id","simulated","work_dir_removed","resumed_from_journal")
 
 
 def _supervised(result):
@@ -299,7 +299,7 @@ class WorkerRuntime:
         capability=await self.capabilities()
         if not capability.get("available"):
             return {"status":"blocked","reason":capability["reason"],"cleanup_confirmed":True}
-        private=proc=None
+        private=proc=cap=None
         try:
             spec,files=self._normalize(spec,manifest)
             if cancel_event is not None and cancel_event.is_set(): raise WorkerBlocked("Run was cancelled")
@@ -315,13 +315,13 @@ class WorkerRuntime:
                               operation=spec["tool_id"]+(":"+spec["task_stage"] if spec.get("task_stage") in {"setup","cleanup"} else ""),
                               repetition=repetition,spec_hash=canonical_hash(spec))
             try:
-                cap=self.leases.issue(max_requests=min(spec.get("max_requests",100),manifest.get("budget",{}).get("max_requests",100)),
+                cap=await asyncio.to_thread(self.leases.issue,max_requests=min(spec.get("max_requests",100),manifest.get("budget",{}).get("max_requests",100)),
                                       ttl_seconds=self.ttl,max_seconds=spec["timeout_seconds"],**binding_args)
             except LeaseError:
                 # A controller crash after the worker finished must not turn paid,
                 # journaled work into an unreplayable collision; unfinished tasks
                 # keep their reconciliation path.
-                resumed=self.leases.finished_result(**binding_args)
+                resumed=await asyncio.to_thread(self.leases.finished_result,**binding_args)
                 if resumed is None:
                     raise
                 resumed["resumed_from_journal"]=True
@@ -378,10 +378,13 @@ class WorkerRuntime:
                                 # worker; three consecutive failures mean authority is gone.
                                 transient+=1
                                 if transient>=3: raise
-                            transient=0
-                            await send({"kind":"heartbeat"})
+                                # Skip this tick's heartbeat so the counter can actually
+                                # accumulate; a short send gap stays inside the lease TTL.
+                            else:
+                                transient=0
+                                await send({"kind":"heartbeat"})
                         except Exception:
-                            self.leases.revoke(cap["id"],"Controller revoked worker lease")
+                            await asyncio.to_thread(self.leases.revoke,cap["id"],"Controller revoked worker lease")
                             try: await send({"kind":"cancel"})
                             except Exception: pass
                             return
@@ -392,7 +395,7 @@ class WorkerRuntime:
                     while data:=await proc.stderr.read(8192):
                         total+=len(data)
                         if total>256*1024:
-                            self.leases.revoke(cap["id"],"Supervisor stderr limit exceeded")
+                            await asyncio.to_thread(self.leases.revoke,cap["id"],"Supervisor stderr limit exceeded")
                             return
                 beat=asyncio.create_task(heartbeat())
                 errors=asyncio.create_task(drain_stderr())
@@ -415,7 +418,7 @@ class WorkerRuntime:
                         await send({"kind":"grant","request_id":message["request_id"],"allow":allow})
                     elif message.get("kind")=="result": result=message["result"];break
             except (Exception,asyncio.CancelledError):
-                self.leases.revoke(cap["id"],"Controller stopped awaiting worker")
+                await asyncio.to_thread(self.leases.revoke,cap["id"],"Controller stopped awaiting worker")
                 try: await send({"kind":"cancel"})
                 except Exception: pass
             finally:
@@ -427,12 +430,15 @@ class WorkerRuntime:
                 if errors: errors.cancel();await asyncio.gather(errors,return_exceptions=True)
                 self.active.pop(cap["task_id"],None)
             if result is None:
-                self.leases.revoke(cap["id"],"No verified supervisor result")
+                await asyncio.to_thread(self.leases.revoke,cap["id"],"No verified supervisor result")
                 result={"status":"outcome_unknown","reason":"No complete worker result; do not replay","cleanup_confirmed":False,"task_id":cap["task_id"]}
             if proc.returncode is None:
-                # The supervisor delivered its result but outlived the grace period:
+                # The supervisor delivered its result but outlived the grace period
+                # (its own teardown may wait up to ~30s on a stalled daemon):
                 # nothing of value remains and a lingering broker socket or task
-                # file must not stay on disk.
+                # file must not stay on disk. When cleanup was never confirmed the
+                # outcome is already unknown and demands reconciliation, so an
+                # untracked container stays the operator's documented case.
                 proc.kill()
                 try: await asyncio.wait_for(proc.wait(),5)
                 except TimeoutError: pass
@@ -445,9 +451,13 @@ class WorkerRuntime:
             if spec.get("operation")=="request_sequence":
                 result=supervised_sequence(spec,result)
             return redact_credentials(result,manifest)
-        except (WorkerBlocked,LeaseError,ValueError,OSError) as exc:
-            # Refused before any supervisor started, so nothing else can still be using the work directory.
+        except Exception as exc:
+            # Refused before any supervisor started, so nothing else can still be using
+            # the work directory; an issued capability nobody started would otherwise
+            # poison this binding forever, so the controller revokes it here.
             if private and proc is None: remove_private_tree(private)
+            if cap is not None and proc is None and (await asyncio.to_thread(self.leases.task,cap["task_id"]))["state"] in {"prepared","issued"}:
+                await asyncio.to_thread(self.leases.revoke,cap["id"],"Controller could not start the worker")
             # Our own gate messages are fixed local text; an OSError or unexpected
             # error string can embed host paths or database details, so only its
             # type name reaches the run record.
