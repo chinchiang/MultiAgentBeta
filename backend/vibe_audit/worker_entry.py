@@ -532,8 +532,11 @@ class Supervisor:
                 if not isinstance(result,dict): raise ValueError("Invalid worker result")
                 result["broker_observations"]=self.broker_observations
                 result.update(cleanup_confirmed=True)
-                self.lease.finish_task(self.cap,self.worker_id,result)
             result.update(isolation="docker_network_none" if self.task["backend"]=="docker" else "process_unisolated_test_only",lifecycle=self.lifecycle,task_id=self.cap["task_id"],simulated=self.task["backend"]!="docker")
+            if completed and cleanup:
+                # Enrich before journaling, so a result reused from this journal after
+                # a controller crash carries its isolation, lifecycle and simulated markers too.
+                self.lease.finish_task(self.cap,self.worker_id,result)
             self.emit({"kind":"result","result":result})
             Path(self.task["result_file"]).write_text(json.dumps(result),encoding="utf-8")
         except Exception as exc:

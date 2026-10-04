@@ -9,7 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from vibe_audit.api import create_app
-from vibe_audit.contracts import complete_requirements, verify_source_references
+from vibe_audit.contracts import ChallengeItem, complete_requirements, verify_source_references
 from vibe_audit.domain import RunInput
 from vibe_audit.policy import PolicyError, sealed
 from vibe_audit.service import Engine
@@ -43,6 +43,15 @@ def test_source_claims_need_exact_frozen_evidence():
                 {"file":"app.py","line":2,"quote":"t"},{"file":"app.py","line":2,"quote":"ret  "}):
         with pytest.raises(ValueError):
             verify_source_references([ref],source)
+
+
+def test_a_challenge_must_carry_evidence_content():
+    """An empty challenge would inflate the record without saying anything."""
+    assert ChallengeItem(finding_id="F-1",counterevidence="The sealing hash already covers this file.").counterevidence
+    assert ChallengeItem(finding_id="F-1",missing_evidence="No control execution was recorded.").missing_evidence
+    for empty in [{}, {"counterevidence":"   "}, {"missing_evidence":""}]:
+        with pytest.raises(ValueError):
+            ChallengeItem(finding_id="F-1",**empty)
 
 
 def test_model_cannot_claim_operator_requirements_or_change_supplied_rules():

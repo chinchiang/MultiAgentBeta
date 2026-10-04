@@ -162,10 +162,14 @@ def create_app(data_dir=None, database_url=None, testing=False, session_token=No
         tools=tool_capabilities()
         worker=None
         try:
-            from .worker_runtime import WorkerRuntime,load_config
+            from .worker_runtime import WorkerBlocked,WorkerRuntime,load_config
             worker=WorkerRuntime(load_config(profile))
             runtime.update(await worker.capabilities())
             tools=await worker.tool_inventory()
+        except WorkerBlocked as exc:
+            # load_config's messages are fixed local text: an unprovisioned profile
+            # must not be reported as a generic infrastructure failure.
+            runtime.update(available=False,isolation="unavailable",reason=str(exc))
         except Exception:
             # Includes an unreachable lease database: the inventory reports it instead of failing.
             runtime.update(available=False,isolation="unavailable",reason="Configure the Linux isolated worker profile")

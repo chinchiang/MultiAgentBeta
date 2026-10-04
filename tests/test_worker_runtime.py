@@ -77,8 +77,28 @@ async def test_finished_journal_result_is_reused_not_replayed(runtime,target):
     assert seen==["/fixture","/private"]
     replayed=await runtime.execute_tool(dict(spec),manifest=scope,cancel_event=asyncio.Event(),request_hook=allow)
     assert replayed["status"]=="pass" and replayed.get("resumed_from_journal") is True,replayed
+    # The journaled result was enriched before journaling, so the reuse carries
+    # the supervisor's isolation, lifecycle and simulated markers.
+    assert replayed["isolation"]=="process_unisolated_test_only" and replayed["lifecycle"] and replayed["task_id"] and replayed["simulated"] is True
     # No request reached the target a second time.
     assert seen==["/fixture","/private"]
+
+
+async def test_sustained_lease_outage_fails_closed_after_three_strikes(tmp_path,monkeypatch):
+    """The controller-side three-strike fail-safe must actually fire: three
+    consecutive non-LeaseError renewal failures revoke the worker."""
+    rt=WorkerRuntime(tmp_path,backend="process_test",allow_process_test=True,ttl_seconds=0.2)
+    try:
+        def always_unavailable(capability,*args,**kwargs):
+            raise RuntimeError("lease database unavailable")
+        monkeypatch.setattr(rt.leases,"renew",always_unavailable)
+        result=await rt.execute_tool({"operation":"selftest","selftest":"spawn_child","timeout_seconds":30},
+                                     manifest=manifest(),cancel_event=asyncio.Event(),request_hook=allow)
+        assert result["status"]=="outcome_unknown"
+        tasks=rt.leases._sql("SELECT state FROM worker_tasks").fetchall()
+        assert tasks and {row[0] for row in tasks}=={"outcome_unknown"}
+    finally:
+        rt.leases.close()
 
 
 async def test_unfinished_journal_collision_stays_blocked(runtime):
