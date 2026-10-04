@@ -81,3 +81,87 @@ promptfoo/PyRIT 等外部工具可在 setup、正控制、主測試、collector�
 先跑無模型憑證測試，再以實際三端點跑 probe 和完整流程。參照 VALIDATION.md 的環境變數啟用 PostgreSQL/Docker 整合測試。沒有端點時不要把合成 demo 改標為真實模型結果。
 
 停止會先撤網再清理；outcome_unknown 不可直接恢復重播。確認靶場狀態並重置後，建立新 run 保留舊證據。
+---
+# Linux / WSL2 Operations Guide
+
+## Prerequisites
+
+Python 3.12+, Node 24 (to build the UI / TS fixtures), PostgreSQL, a Linux kernel/Docker that supports recursive read-only bind mounts (the supervisor calls the Docker Engine API v1.52 directly, so Docker 29 or newer is required), and an authorized staging area. See VALIDATION.md for the actual validated versions. The native Windows console can run the demo; the live control program and the Docker workers are placed together on Linux/WSL2.
+
+Models, targets, and credentials are not created automatically by the installation procedure. The downloads and builds below are explicit provisioning by the administrator; no packages are installed and no images are pulled during an evaluation.
+
+## 1. Install the console
+
+Run from the project root:
+
+```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install --require-hashes -r requirements.lock.txt
+cd frontend
+npm ci
+npm run build
+cd ..
+```
+
+The shipped frontend/dist directly serves the local UI. The Linux launcher also allows VIBEAUDIT_PYTHON to point at an existing venv under test.
+
+requirements.lock.txt lists, for each locked version, the sha256 of every release file on PyPI, and pip installs in hash-checking mode: if a downloaded file does not match, or any dependency is not locked, the install aborts — it never silently switches to another version. After adjusting versions, run `python scripts/hash-lock.py --write` to regenerate the hashes.
+
+## 2. Database and working directories
+
+Prepare a dedicated PostgreSQL role/database, allowed to create this tool's tables and LangGraph checkpoints. Keep the connection details in VIBEAUDIT_DATABASE_URL; never write the password into project settings or prompts. Use a data directory pre-created by the administrator, for which the control program has permissions; sources under test go only under explicitly approved root directories.
+
+```sh
+export VIBEAUDIT_DATABASE_URL='postgresql://USER:PASSWORD@127.0.0.1:5432/vibeaudit'
+export VIBEAUDIT_DATA_DIR='/var/lib/vibeaudit/data'
+export VIBEAUDIT_SOURCE_ROOTS='/srv/authorized-test-sources'
+```
+
+The USER/PASSWORD above are placeholders. Validation uses a local peer role in WSL, which does not mean the product requires running as root; production deployments use a dedicated control account. An account that can operate the Docker daemon is a high-privilege trust boundary.
+
+## 3. Pre-build the worker and tools
+
+```sh
+docker build --build-arg BASE_IMAGE=python@sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b94cd8ebbe06a9 -t vibeaudit-worker:test deploy/worker
+docker build -f deploy/scanners/Dockerfile.gitleaks -t vibeaudit-gitleaks:8.30.1 deploy/scanners
+docker build -f deploy/scanners/Dockerfile.osv -t vibeaudit-osv:2.3.5 deploy/scanners
+docker build -f deploy/worker/Dockerfile.tools.locked -t vibeaudit-tools:integration deploy/worker
+docker pull semgrep/semgrep:1.153.0
+docker pull ghcr.io/zaproxy/zaproxy:2.17.0
+```
+
+Image tags are used for provisioning only. The next step writes the actual local image IDs into the configuration; the runner accepts only immutable SHA256 values. The exact Python/npm lockfiles for the tool images are in deploy/worker/locks; Dockerfile.tools keeps the original provisioning recipe, while Dockerfile.tools.locked uses the captured full dependency lockfiles. The pinned image IDs and validated versions are also stored in docs/runtime-images.json. After a cross-architecture build or any rebuild you must re-run the tool contracts; never assume the image IDs are unchanged.
+
+## 4. Offline vulnerability data and the runtime profile
+
+```sh
+.venv/bin/python scripts/provision-offline-db.py /opt/vibeaudit/osv
+.venv/bin/python scripts/provision-runtime.py --output /etc/vibeaudit/runtime.json --offline-db /opt/vibeaudit/osv --work-root /var/lib/vibeaudit/workers
+export VIBEAUDIT_RUNTIME_CONFIG='/etc/vibeaudit/runtime.json'
+```
+
+OSV provisioning downloads the official, complete PyPI/npm ecosystem archives and never ships out local dependency lists. The data date, sources, hashes, and coverage are saved in manifest.json; pin that manifest and the archive hashes again at evaluation time. Offline mode does not include commit-level matching; after a data update this becomes a new resource version.
+
+## 5. Start-up and configuration
+
+```sh
+sh scripts/start-local.sh 8000
+```
+
+Open the `http://127.0.0.1:8000/#token=…` URL printed by the terminal; without the token no session can be created. Refreshing the same tab needs no token; a new tab must reopen that URL. To pin a token, set `VIBEAUDIT_SESSION_TOKEN` first (32–256 URL-safe characters). Confirm the tool inventory first, then configure the exact endpoint/model ID/family for the Commander and the three reviewers. For keys, enter the environment variable name — for example VIBEAUDIT_ANTHROPIC_API_KEY (the default name when Anthropic is selected in the UI) — never a value. This tool's own settings such as VIBEAUDIT_DATABASE_URL and VIBEAUDIT_SESSION_TOKEN, variables whose values are identical to theirs, and variables whose values are URLs, must never be used as model or target credentials. Some reasoning models (e.g. gpt-5, the o-series) accept only the default temperature; leave that field empty. The probe reports unsupported_parameter before submission, with no billing and no usage lockout. cloud_allowed still requires each origin to be listed individually; local_only accepts only explicit loopback model endpoints.
+
+Fill in the user-provided sources, staging, allowed IPs, every METHOD/path, business requirements, account references, fixtures, deployment identifiers/headers, and the time/request/model limits. Positive controls, resets, and cleanups must also be listed in scope; an empty scope forbids all black-box requests. The pre-check performs no vulnerability probing.
+
+## 6. Your own target adapter
+
+VIBEAUDIT_FIXTURE_CONFIG can point to a JSON registry written by the administrator. Each profile declares reset/session_reset/setup/cleanup, repetitions, and the optional collector_binding/collector_requests; the full lifecycle scope and profile hash are computed before case sealing.
+
+Ordinary HTTP reads can use pre-approved fixture markers; side-effect cases must have reset/cleanup. no_unauthorized_commit additionally requires calling register_effect_binding from a trusted Python bootstrap, supplying independent collectors for begin/collect_verified/close. Arbitrary code must never be loaded from an LLM or the target. The built-in synthetic-ai-v1/synthetic-web-v1 are for the bundled targets only and must not impersonate backend validation of a general product.
+
+External tools such as promptfoo/PyRIT can be run within the setup, positive-control, main-test, collector, and cleanup phases; the report keeps the actual tool and artifact hashes. Login/logout cases that need to capture and reuse a session currently use the native HTTP sequence; when an external tool that does not support that flow is specified, the case is blocked — it never silently switches to another tool.
+
+## 7. Acceptance
+
+First run the tests without model credentials, then run the probe and the full flow against the actual three endpoints. See VALIDATION.md for the environment variables that enable the PostgreSQL/Docker integration tests. When there are no endpoints, never relabel the synthetic demo as real model results.
+
+Stopping first withdraws the network and then cleans up; outcome_unknown must never be resumed and replayed directly. After confirming the target's state and resetting it, create a new run and keep the old evidence.

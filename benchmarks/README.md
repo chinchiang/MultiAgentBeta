@@ -52,3 +52,58 @@ python -m vibe_audit.benchmark --mode local_tools --output benchmarks/results-lo
 每組共享同一 paired sample 的已封存 tool_context；其用量在每組預算中扣除，剩下額度再均分模型步驟。每個模型步驟至少要分到 provider 的重試次數（`MAX_ATTEMPTS`），各組才有相同的 schema 修正機會；live 預設 `max_model_calls` 因此是 8（debate 四步 × 2），傳入不足的預算會直接拒絕，工具用掉呼叫次數而不足時該步驟 blocked。工具實際每個 pair 只執行一次，報告也保留 `shared_tool_contexts`；各組用量相加不能當作實際總工具花費。所有獨立初審 payload 一致且不包含 gold；debate 才取得匿名初審。模型無法自行宣布動態重現，只有可信工具／oracle adapter 可提供 reproduced_ids；未做重現時 reproduce_rate 為 null。
 
 CLI 可用 `--mode live --config path/to/benchmark-config.json`，config 只接受 `profiles` 與 `model_policy`。profiles 的 a/b/c 各自符合既有 ModelProfile，金鑰只能用 `VIBEAUDIT_*` 環境變數參照。CLI 預設傳統工具仍是本地 AST；整合 sandbox 工具時使用 async API 注入。測試用注入 adapter 可驗證調度及預算，不代表真實模型品質。
+---
+# Comparison experiment: verify the engineering first, then the effect
+
+This runner can already schedule runs, execute synthetic responses, run a local traditional AST baseline, compute metrics, and produce traceable JSON. The bundled data are **synthetic fixtures, with the gold pending human review**. They cannot demonstrate that any real model is more accurate or that multiple models reduce bias.
+
+```powershell
+$env:PYTHONPATH = 'backend'
+python -m vibe_audit.benchmark --mode synthetic --output benchmarks/results-synthetic
+python -m vibe_audit.benchmark --mode local_tools --output benchmarks/results-local
+```
+
+Every output in the `synthetic` schedule comes from a pre-specified fixture. `local_tools` really does run standard-library AST analysis on the fixtures' Python text; it executes no code, HTTP, models, or shell; it detects only eval/exec calls, is a narrow traditional static baseline, and must not pass itself off as Semgrep or full SAST. The other model arms all produce explicit blocked records. `live` already has a working provider and tool-injection interface and is blocked only when an explicit profile/policy is missing; its effect has not been validated with real keys.
+
+## Comparison arms and budgets
+
+Seven arms: traditional tools, single model A/B/C, the same model A three times, three-model independent review, and three models with one debate round after the initial reviews. A/B/C are synthetic personas; none is passed off as Claude, GPT, or Nemotron.
+
+For every project/sample/repetition, the seven arms use identical caps on tokens, wall-clock time, requests, and model calls, with arm order shuffled using a fixed seed. The three-member arms cannot obtain three times the total budget. Each single step splits the arm cap evenly; the debate's extra round also draws on the same total budget. These are equal budget caps and do not guarantee equal actual spend. Traditional tools legitimately use zero model tokens.
+
+The initial reviews in all arms receive the same input and cannot see the gold or the other initial reviews' output; each step records the input hash and the archived output hash. Only the debate's final step can see the archived initial reviews. The heterogeneous independent arms keep the union of candidates and do not erase minority opinions by majority vote; a candidate being retained does not mean the vulnerability is confirmed. The synthetic debate deliberately includes cases where minority true positives are kept or lost, to verify whether the measurement can catch this phenomenon.
+
+## Data and human gold
+
+The data is split into train/validation/test by complete project and project family; related forks or versions must not cross splits. The CLI runs test only by default; training/tuning and final testing must be kept separate. This check cannot prove the data never appeared in the models' pretraining.
+
+Formal gold requires two independent, named human reviewers, explicit positive/negative issue IDs, oracle_verified with evidence references, and a synthetic=false marker. The declaration itself does not substitute for the human work; a formal study must also retain the reviewers' original records, disagreement adjudication, oracle execution evidence, and immutable sample digests. The models' unknown findings must first go through human blind-review matching; a standard taxonomy ID must not be used directly as vulnerability identity.
+
+Known limitations: the runner provides no human adjudication workflow. human_reviewed, reviewers, and oracle_evidence are declaration fields checked only for format (at least two distinct names, non-empty evidence list) and cannot prove the review actually happened; unknown findings are listed in `unadjudicated_ids`, and there is no blind-review matching interface to backfill them as TP/FP, so precision stays null. The review, disagreement adjudication, and matching above must be completed outside the tool before new gold is produced.
+
+The bundled gold has human_reviewed=false; all quality metrics are placed only in `preview_metrics`, and the formal `metrics=null`. In blocked local_tools/live scenarios the model arms are not filled with zero quality scores, so that untested is not mistaken for a miss.
+
+## Metric definitions and limitations
+
+- Precision = TP/(TP+FP), Recall = TP/(TP+FN). Null when a denominator is missing. When unknown findings not yet adjudicated by humans exist, precision is null and the unmatched IDs are listed separately; they must not be quietly counted as true or false positives.
+- Common miss = gold positives missed by all independent initial reviews / all gold positives. Null when there is only one initial review.
+- Minority retention = of the items found by only one initial review and confirmed true by the gold, the fraction still retained in the end. Null when no items apply.
+- Reproduce = TPs with an oracle reproduction record / all TPs. A synthetic reproduction only represents the fixture's marker, not an exploit against a real target.
+- Completion records completed/incomplete/blocked separately; an exhausted budget or a missing response must not count as complete.
+- Each arm records tokens, requests, model calls, declared latency, measured runner wall time, and cost. Unknown prices are null, and synthetic token/latency values do not pass themselves off as real model usage.
+
+The aggregate quality metric takes the macro mean only over defined samples in completed records; partial results of incomplete records are still kept per record but do not enter the average — they count only toward completion. Completion is computed over each arm's entire schedule; both blocked and incomplete count as not completed (each arm additionally has a `completion` field). Paired completion differences likewise compare the two sides' statuses directly, so a blocked side does not make the comparison vanish. The raw TP/FP/FN are still kept per record. Differences are produced by pairing against single A by project/sample/repetition; when either side is incomplete only completion is compared, and no automatic significance or bias-reduction inference is performed. A formal comparison should first register primary metrics and use project-clustered paired resampling / confidence intervals; repeated reruns of the same project must not be treated as independent samples. Effect studies have not been run, so this program fabricates no p-values or model advantages.
+
+## Still required before real-model effect validation
+
+Exact models, an approved data policy/budget, resettable isolated targets, identical tool capabilities, real usage and cost sources, and two-person reviewed gold / oracle evidence. When the CLI has no configuration it keeps the full blocked schedule and reasons; no untested arm is omitted.
+
+## Live runner interface
+
+`run_live_benchmark(..., profiles={a:...,b:...,c:...}, model_policy={data_policy:...,allowed_model_origins:[...]}, tool_runner=..., model_runner=...)` is an async API; synchronous programs use `run_benchmark(mode='live', ...)`. `model_runner(profile, system, payload, policy)` uses the existing `providers.generate_json` by default, so it inherits the exact endpoints, credential environment variables, JSON schema, output and total-token checks, and limited retries. Model settings are stored in full; the same-model arm repeats A, while the heterogeneous arms require three distinct configurations and model families; the debate's final arbitration is performed by A using the anonymized initial-review results.
+
+A trusted async `tool_runner(input_data, budget)` must return `BENCHMARK_OBSERVATION_SCHEMA`. Semgrep/OSV/Gitleaks adapters backed by a fixed sandbox can be connected in the host configuration; the dataset or a model must not be allowed to specify arbitrary Python imports, shells, or tools. Tools may run only within their allotted time and request budgets; the adapter itself must still reserve budget before each side effect. On timeout or contract errors, all arms depending on that tool's output are blocked, with the resource caps conservatively retained. Returned finding IDs must be normalized per the human matching rules; a tool's rule ID must not be treated as a vulnerability instance ID.
+
+All arms share the archived tool_context of the same paired sample; its usage is deducted from each arm's budget, and the remaining allowance is then split evenly among the model steps. Each model step must receive at least the provider's retry count (`MAX_ATTEMPTS`) so that all arms have the same schema-correction opportunities; the live default `max_model_calls` is therefore 8 (debate: four steps × 2), an insufficient budget passed in is rejected outright, and when the tool has used up call counts leaving too few, that step is blocked. The tool actually executes only once per pair, and the report also keeps `shared_tool_contexts`; summing the arms' usage must not be treated as the actual total tool spend. All independent initial-review payloads are identical and contain no gold; only the debate obtains the anonymized initial reviews. A model cannot declare dynamic reproduction on its own — only a trusted tool/oracle adapter can supply reproduced_ids; when no reproduction is done, reproduce_rate is null.
+
+The CLI accepts `--mode live --config path/to/benchmark-config.json`; the config accepts only `profiles` and `model_policy`. The a/b/c in profiles each conform to the existing ModelProfile, and keys may only be referenced via `VIBEAUDIT_*` environment variables. The CLI's default traditional tools remain the local AST; when integrating sandbox tools, inject them via the async API. Test-injected adapters can verify scheduling and budgets; they do not represent real model quality.

@@ -56,3 +56,62 @@ Built-in TS Web and Python AI targets are synthetic and deterministic. AI trials
 ## Limits
 
 No complete semantic call graph or exhaustive source reading, no proven model independence, no effectiveness claim from synthetic benchmarks, no remote fleet/SaaS, no arbitrary browser automation, no production deployment/patching. Source-to-deployment matching via an operator-supplied header proves that header equality, not cryptographic correspondence to the source. Host administrators remain trusted; file hashes are not forensic immutability.
+---
+# 架構與方法論 — 0.2.0
+
+## 控制平面與資料平面
+
+```mermaid
+flowchart TB
+  UI["Local React console"] --> API["FastAPI session / CSRF / scope"]
+  API --> C["AI Commander + LangGraph"]
+  C --> MG["LiteLLM gateway / per-agent profiles"]
+  C --> G["Deterministic gates + job ledger"]
+  G --> W["Read-only whitebox workers"]
+  W --> TM["Versioned assets / flows / threats / requirements"]
+  TM --> TC["Fixed case compiler / oracle / fixture hash"]
+  TC --> S["Independent supervisor / persistent lease"]
+  S --> B["Docker blackbox worker / network none"]
+  B --> R["Unix socket relay"]
+  R --> S
+  S --> T["Exact approved staging interfaces"]
+  T --> E["Independent effect collector / mock sink"]
+  E --> A["Run-bound evidence + trace graph"]
+  S --> A
+  A --> UI
+```
+
+受信任的控制平面包含操作者設定、模型閘道、supervisor、資料庫與證據寫入器。儲存庫、模型、目標、掃描器產物與報告文字皆屬不受信任的資料。JSON schema 驗證並不保證語意正確。broker 是強制執行點；模型 prompt 不是安全邊界。
+
+API 只監聽 127.0.0.1。瀏覽器透過將啟動權杖——以啟動 URL 的 `#token=…` 片段形式呈現，或以 `VIBEAUDIT_SESSION_TOKEN` 固定——放入 `X-VibeAudit-Token` 傳送到 `/api/session` 來取得 session。之後它會持有 8 小時的 HttpOnly、SameSite=Strict cookie，而其餘所有 `/api` 請求（含讀取）也必須附帶 `X-CSRF-Token`。Cookie 不會依連接埠隔離，因此操作者在同一瀏覽器中開啟的 staging 服務也會收到該 cookie；CSRF token 只存在於工作臺分頁的 port-scoped sessionStorage 中，且 `/api/session` 絕不會把 token 回傳給只出示 cookie 的呼叫方。事件流與報告匯出是透過該標頭取得，而不是透過 EventSource 或普通連結。每個請求都必須帶有允許的 Host，若有送出 Origin 則必須是允許的 Origin。
+
+## 依序執行的方法論
+
+1. 凍結原始碼 staging、去識別化（redacted）情境、部署宣告、範圍、預算、profile 與資源版本。記錄省略項目。
+2. 探測確切的模型端點。三名獨立 reviewer 各自收到相同的核心問題與原始碼情境。靜態掃描器可並行執行；初始 reviewer 看不到掃描器的結論。
+3. 封存所有審查、保留聯集、保存個別主張、檢視確切的原始碼參照，並執行至多一輪 challenger。表決無法確立或駁回任何發現。
+4. 建立資產、角色、信任邊界、資料流、威脅與安全需求。由模型衍生的需求保留「衍生」的來源標記。既有控制措施需要證據；未知項目保持可見。
+5. 驗證威脅完整性與標準 ID。只編譯可追溯、有範圍限制的 case，並附上 positive control、明確的 oracle、允許的身分與 cleanup。
+6. 透過不含原始碼的 worker 對外執行。每個請求都檢查 capability、lease、run/case 綁定、method/path、身分、IP 與預算。部署標頭不符時停止該分支。
+7. 評估實際的 observations。區分 pass/fail、inconclusive、blocked、execution_error 與 outcome_unknown。保留證據與反證；只匯出 run 所擁有且經驗證的 artifact。
+8. 修復會建立一個新的連結 run，並附帶新的原始碼／部署識別。未知的副作用需要 reconciliation/reset，而不是重播。
+
+標準用於分類威脅與需求；它們不會自動產生合規。內建的登錄檔包含 ASVS 5.0.0、WSTG 4.2、LLM 2026 與 Agentic 2026 的標準條目，附有來源釘選與品質備註。WSTG 重複的來源識別碼會在同一個標準條目中保留兩個子項目。
+
+## 隔離與復原
+
+Linux Docker worker 的 whitebox 使用非 root 的 UID 65532，blackbox 使用 UID 65533，並搭配移除的 capabilities、唯讀檔案系統、資源／輸出上限與 network none。只有 whitebox 會收到不可變的原始碼 staging 掛載。工具輸出寫入容器內有大小上限的 tmpfs，而非主機目錄。私密的 staging 副本（為掃描器保留儲存庫的機密檔案）會在 whitebox 階段完成時以及每次嘗試結束、blocked、failed 或 cancelled 時刪除；啟動時，磁碟上留下的任何副本都會被移除。恢復執行的掃描會重新 stage 原始碼，且必須與凍結的 intake 完全一致，否則 run 會停止。intake 略過的目錄（建置輸出、相依套件、.git、連結）會記錄為省略項目，因為掃描器和模型都看不到它們。每個 worker 在主機上的工作目錄會在確認清理後刪除。兩種 worker 都不會取得 Docker socket 或目標憑證。具特權的操作者分別供應映像與離線資料；掃描絕不會拉取映像或安裝相依套件。
+
+獨立的 Python supervisor 使用 Unix socket relay，並持有目標憑證、IP 釘選的傳輸層與 dispatch 帳本。它能在 controller 失聯後存活足夠久的時間，以撤銷通訊並終止 worker。lease 到期、取消或 controller EOF 會在 process／container 清理之前先撤銷 socket。它不宣稱能復原已經完成的遠端副作用。
+
+PostgreSQL 儲存 job 與 lease 記錄以及 LangGraph checkpoint。Resume 不會從這些 checkpoint 還原。當有 job 仍處於 sent 狀態、有 worker 等待清理、或某個執行為 outcome_unknown 時，resume 會被拒絕。除此之外，圖會依據已儲存的 run 記錄重新啟動：再次檢查 manifest 政策、已標記完成的 stage 會被略過、中斷的 whitebox 階段會重用輸入雜湊仍與原始碼摘要相符的已封存審查，而 blackbox 會在派發前先對已儲存的 case 重新執行 case 閘門，且只派發尚無執行紀錄的 case 重複項。Job 在 I/O 之前先標記為 sent；彙總結果與已完成的 job 以 atomic 方式一併提交。當機可能留下無害的孤兒 artifact，但無法把不確定的 dispatch 提升為新的隱式嘗試：在重新啟動時，或當某次嘗試在記錄結果前停止時，每個仍標記為 sent 的 job 都會變成一個帶有 gap 的 outcome_unknown 執行，因此匯出會顯示它，而 resume 會拒絕該 run。supervisor 區分三種情況：從未送出的請求（連線或位址失敗）沒有任何效果；答案無法回傳的唯讀請求（redirect、壓縮、大小、非 UTF-8、被截斷的內容）是已知的 observation，只會結束其 case；在上述任一情況下會改變狀態的請求則保持 outcome_unknown。HEAD 回應無論其 Content-Length 為何都沒有 body。部署標頭缺失或變更會停止 run，且 resume 會拒絕它。執行與清理各自擁有固定的生命週期識別，兩者都有重播保護。SQLite 與 process_test 用於明確的合成／測試路徑，而非正式環境的隔離。
+
+## 工具與 AI 邊界
+
+ZAP 只執行經審查的 requestor/passive 計畫。Schemathesis 使用明確的 schema 範例。Playwright 使用其 API client。promptfoo 使用本機自訂的 provider／eval 斷言；PyRIT 使用受控制的目標。工具不會自行擴充目標或產生任意程式。它們的 artifact 僅供輔助：安全 oracle 依賴 supervisor 的 observations 與獨立的收執。
+
+內建的 TS Web 與 Python AI 目標是合成且確定性的。AI 試驗會重置 session／fixture 五次。Collector 事件區分 proposed → denied/allowed → invoked → committed；mock sink 收執只證明合成的 sink 效果。通用目標 profile 需要操作者宣告的生命週期步驟，以及另外註冊的受信任 collector 綁定。目標回傳的文字無法註冊綁定，也無法偽造受信任的來源證明。
+
+## 限制
+
+沒有完整的語意呼叫圖或窮盡的原始碼閱讀、沒有經證明的模型獨立性、不能以合成基準宣稱有效性、沒有遠端 fleet／SaaS、沒有任意的瀏覽器自動化、沒有正式環境的部署／修補。透過操作者提供的標頭進行的原始碼對部署比對，只證明該標頭相等，而非與原始碼的密碼學對應。主機管理員仍然受信任；檔案雜湊不是鑑識等級的不可變性。

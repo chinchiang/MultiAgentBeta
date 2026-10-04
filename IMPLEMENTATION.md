@@ -53,3 +53,59 @@ Reviewers receive the same core questions and snapshot without scanner findings 
 Cases bind threat model, requirement, source, fixture and case hashes. Controls and cleanup must also be in scope. Deployment change requires a new run; unknown outcomes require reconciliation/reset.
 
 See docs/LINUX_SETUP.md, docs/VALIDATION.md and docs/DELIVERY.md.
+---
+# 實作契約 — 0.2.0
+
+權威驗證依據：backend/vibe_audit/domain.py、contracts.py、policy.py 與 docs/run-input.schema.json（schema 版本 2）。
+
+## API
+
+所有路由皆以 /api 開頭；在已有 session 的情況下，未知的 /api 路徑會回傳 JSON 404。GET /session 會以啟動權杖（X-VibeAudit-Token；以 `#token=…` 形式印在啟動 URL 中，或以 VIBEAUDIT_SESSION_TOKEN 固定）換取 8 小時的 HttpOnly SameSite=Strict session cookie 與 CSRF token。其餘所有 /api 請求（含讀取）都必須同時具備該 cookie 與 X-CSRF-Token：cookie 會送達主機上的每個連接埠，因此僅憑 cookie 無法開啟任何東西，而 GET /session 只會把 token 回傳給已出示該 token 的呼叫方。Host/Origin 檢查涵蓋工作區路由。錯誤格式：{detail: ...}。
+
+| Method | Route | Purpose |
+|---|---|---|
+| GET | /session, /capabilities | Session/CSRF 與實際設定的 runtime 可用性；/capabilities?profile=… 回報該 runtime profile（預設：default） |
+| GET / PUT | /projects, /projects/{id} | 列出／儲存專案設定 |
+| GET / PUT | /models, /models/{id} | 列出／儲存 profile；僅限憑證參照 |
+| GET | /catalogs?standard=... | 標準 ID、版本與來源出處 |
+| POST | /models/probe | 明確的端點契約，含 policy／預算 |
+| GET / POST | /runs | 列出／建立不可變的 manifest |
+| GET | /runs/{id} | 狀態、用量、缺口與發現 |
+| POST | /runs/{id}/start, /cancel, /resume | 生命週期轉換 |
+| GET | /runs/{id}/events | SSE 進度事件 |
+| GET | /runs/{id}/trace | 持久化的實體、連結與歷史 |
+| GET | /runs/{id}/evidence/{artifact_id} | 綁定於 run、經雜湊驗證的信封 |
+| GET | /runs/{id}/report?format=json or markdown or sarif | 經驗證的匯出 |
+| POST | /runs/{id}/retest | 建立連結到原始發現的新 run（trace 記錄 `retests` 連結，Markdown 與 SARIF 會標註父項） |
+| POST | /runs/{id}/reconcile | 操作者對 worker 清理的證明；關閉處於 cancelling 狀態的 run，該 run 仍不可恢復（unresumable） |
+| POST | /runs/{id}/findings/{finding_id}/decision | 以證據為依據的 refuted／inconclusive 決策：被引用的黑箱執行必須測試該發現的威脅（若該發現沒有威脅連結，由操作者命名這些威脅）；要駁回（refute）需要一次 pass，且該 run 中這些威脅沒有任何失敗；validated_dynamic 狀態的發現只能透過已連結的 retest 清除 |
+| GET | /openapi.json | 位於 /api/openapi.json 的 OpenAPI schema（需要 session 與 CSRF token；不提供互動式文件頁面） |
+
+Stages（階段）：新 run 在任何工作開始前會先記錄於 `intake` 階段；實際執行的圖為 preflight → whitebox → adjudication → threat_model → case_design → blackbox → report → complete。
+Run 狀態：created/running/cancelling/cancelled/completed/incomplete/blocked/failed。
+Finding（發現）狀態：hypothesis/corroborated_static/validated_dynamic/refuted/inconclusive。
+Execution（執行）狀態：pass/fail/inconclusive/blocked/execution_error/outcome_unknown。工具執行完成不代表通過安全性檢驗（security pass）。若 fail 的目標重置或其後的 dispatch 未經確認，該發現會保留並標記 target_state_confirmed=false；與 outcome_unknown 一樣，它會停止 run 並阻止 resume。部署識別變更會停止 run（deployment_changed=true）並阻止 resume；每次排定的重複執行只會送出該 case 一次。模型設計的 case 必須符合嚴格的 case contract，而提供的 case 會在 run 建立時做型別檢查。含 supplied 或 retest case 的 run 會把這些 case 未涵蓋的自動化威脅記錄為 gap；威脅模型必須保留每個此類 case 所測試的威脅 ID。Worker 的結果會由 supervisor 的欄位與記錄重建，因此 worker 回傳的多餘鍵無法設定 verdict、observations 或步驟標籤；不論由哪個 executor 執行 case，每個內容 oracle 都需要一個已驗證的 positive control，且該 control 顯示過每個禁止的 canary。在 resume 時，lease journal 顯示已完成的工作會直接回傳其已記錄且已計費的結果，而非重播或要求 reconciliation；prepared 或 sent 狀態的工作永不重播，並保留其 reconciliation 路徑。
+
+## 模組（Modules）
+
+- service：LangGraph 編排、凍結的 manifest、已封存（sealing）的審查、靜態證據聯集、閘門（gate）、含日誌（journal）的執行／報告。
+- providers：LiteLLM、明確的 origins／憑證、schema／拒答／截斷驗證、有界的重試、無 fallback、unknown-usage 鎖存。
+- staging/snapshot：有界的原始私密掃描器輸入，以及另外去識別化（redacted）的模型情境；儲存庫設定無法控制命令。
+- worker_runtime/worker_entry：controller、獨立且受信任的 supervisor、隔離的 worker 與 Unix socket relay。Docker 沒有直接對外連線（egress）；process_test 明確不隔離，且在 production profile 載入時不可用。controller 的結果期限涵蓋 supervisor 有界的容器建立預算加上 teardown，因此緩慢的 daemon 無法為健康的 worker 憑空捏造 unknown 結果。
+- lease：持久的 capability 綁定、保留（reservation）帳本、續約／到期、unknown 結果。controller EOF 或到期會在終止前先撤銷 socket。續約在 controller 事件迴圈之外執行；worker guardian 與 controller 心跳可以容忍個別的暫時性 lease 資料庫錯誤（連續三次失敗），但遇到真正的到期或撤銷時會立即 fail closed。
+- tool_runners：固定的 input／argv 編譯 → 隔離執行 → 有界的 artifact 收集 → 正規化的 observations → 以 broker 證據為本的 oracle。不允許任意的 shell／腳本。
+- fixture_protocol：經審查且具雜湊的 reset/setup/cleanup、session 擷取、由管理員註冊的通用 profile；內建者皆為合成。
+- effect_collector：獨立排序的事件與 sink 收執，以僅在 collector 驗證期間存在的 per-call 金鑰進行 HMAC 綁定（儲存的 bundle 是證據記錄，而非可重新驗證的簽章）；目標的 JSON 無法賦予來源證明（provenance）。
+- store/traceability：正式環境用 PostgreSQL、示範用 SQLite、atomic 的 job/run 提交、版本化的實體／證據連結。
+- catalog：釘選的標準 ID、版本／來源檢查；類別歸屬不等於測試涵蓋或認證。
+- benchmark：七個比較臂（arm）、共用的預算／工具證據、獨立的 ground truth 與不完整項目的計量。合成 run 僅驗證管線本身。
+
+## 角色與證據
+
+Live 模式需要一名 commander 與三個不同的 reviewer 設定／家族。選用的專職 architecture_mapper、challenger、threat_modeler 與 test_designer 可以使用經核准的獨立端點；否則由 commander 扮演這些角色。報告只驗證既有證據；選用的專職 reporter 只能重新排列確切既有的 finding ID 順序，不能建立新的主張。模型不能新增目標、執行 shell、變更網路政策，也不能以多數決確認發現。
+
+Reviewers 收到相同的核心問題與快照，但不包含掃描器的發現或其他 reviewer 的結論。靜態掃描器可並行執行，但只有在初始批次封存後才會加入。缺少 reviewer 就無法產出完整的三模型審查。
+
+Case 會綁定威脅模型、需求、原始碼、fixture 與 case 的雜湊。Control 與 cleanup 也必須在範圍內。部署變更需要新的 run；unknown 結果需要 reconciliation/reset。
+
+請參閱 docs/LINUX_SETUP.md、docs/VALIDATION.md 與 docs/DELIVERY.md。

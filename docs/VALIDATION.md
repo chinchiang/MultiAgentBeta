@@ -95,3 +95,103 @@ python -m pytest tests/test_tool_runners.py -q
 ```
 
 verify-linux.sh 只在設定 `VIBEAUDIT_JUNIT_XML` 時寫出 JUnit 收據；放進 docs/ 前先執行 `python scripts/redact-receipts.py`。沒有 PostgreSQL 管理權限時，可用已安裝的 `initdb` 與 `pg_ctl` 在暫存目錄以一般使用者啟動只聽 unix socket 的測試實例（例如 `-o "-k /tmp/pgsock -p 55432 -c listen_addresses=''"`），再把上面的 URL 指向它；2026-10-03 的 Linux 收據即以此方式取得。Web fixture 測試以 `VIBEAUDIT_TEST_NODE` 指定 Node 24。其他整合測試所需旗標以各 tests/test_*.py 的明確 skip 條件為準；例外是未設 VIBEAUDIT_FIXTURE_IMAGE 時，fixture protocol 測試會改用 process_test 後端，不會顯示為 skip。以一般使用者帳號跑整個 tests/（含 Docker 整合）的步驟，以及 runtime profile 的 work_root 須可寫等常見設定錯誤，見 DOCKER_INTEGRATION_TESTING.md。完整 Linux provisioning、憑證 reference、fixtures、scope 與資料庫設定見 LINUX_SETUP.md。Browser smoke 的環境變數見 frontend/scripts/browser-smoke.cjs；SSR 指定 `node frontend/scripts/contract-smoke.mjs --base-url http://127.0.0.1:8002`。不同埠請替換為自己的 loopback 控制台。
+
+---
+
+# 0.2.0 Local Validation Record
+
+Validation date: 2026-09-24; after follow-up fixes from review, the full Windows regression and the frontend build were re-run on 2026-10-02; after the fixes from the in-depth review were completed on 2026-10-03, the full regression (including PostgreSQL integration and the Node 24 fixture), the frontend type check and production build, and the real API + React SSR contract checks were re-run on WSL2/Linux, and the full Linux regression including all Docker integrations was run with Docker 29.1.3; after the third-round review fixes (controller state reclamation, worker lifecycle teardown and deadline alignment, lease log result/request binding and completed-task reuse, dead-code cleanup, etc., PR #6) were merged on 2026-10-04, both full regression suites, the frontend type check and the production build were re-run on Linux; the Docker integrations covered the isolated worker, the three offline scanners, the five dynamic tools and the full pipeline, and the SSR/API contract checks (including fetch-based SSE and download) were re-run against the current code. As specified by the user, this round completed the engineering work and the local integrations that do not require model credentials. **Real Claude, OpenAI or Nemotron were NOT called; no multi-model bias reduction, detection-rate or cost improvement has been demonstrated.**
+
+This round actually used the Windows console, WSL2/Linux, Docker 29.1.3, PostgreSQL 18.6 and eight security tools at pinned versions. Windows ran Python 3.12.14, the Linux test venv used Python 3.14.4, and Node was 24.19.0. The complete Python/npm dependency and tool image lockfiles are delivered with the source code. The images and the offline OSV data themselves are not packed into the ZIP.
+
+## Acceptance Results
+
+The test groups overlap one another; **do not add the rows together and treat the sum as a count of unique tests**. JUnit's successful records include subtests that are reported separately; the table below uses the test counts as displayed by pytest.
+
+| Acceptance | Actual result | Evidence |
+|---|---|---|
+| Full Linux regression (2026-10-04, current code) | 350 passed, 21 skipped, 4 subtests passed; the PostgreSQL 18.6 integration (atomic rollback, checkpoint and resume, concurrent lease claim) and the Node 24 Web fixture were actually executed; the skips are 20 integrations requiring Docker images and 1 Windows-only case | linux-regression.xml |
+| Full Linux regression with Docker integration (2026-10-04, current code) | 370 passed, 1 skipped, 4 subtests passed; the isolated worker, the three offline scanners, the five dynamic tools, the fixture protocol executed with the Docker backend and the full pipeline were all actually executed, and this run also includes the PostgreSQL 18.6 integration and the Node 24 Web fixture; the only skip is Windows-specific. The supervisor teardown, deadline alignment, log reuse and guardian fault tolerance added in this round all actually ran on the code covered by this receipt | linux-docker-integration.xml |
+| Full Windows regression (2026-10-02) | 279 passed, 25 skipped, 4 subtests passed | windows-regression.xml |
+| PostgreSQL, isolated worker, full workflow | 27 passed, 4 deselected | postgres-pipeline-integration.xml |
+| Fixture, reset, stop and failure paths | 24 passed, 3 skipped, 4 subtests passed | runtime-fixture-integration.xml |
+| Final workflow and policy checks | 45 passed, 14 skipped | final-guards.xml |
+| Dynamic tools and AI lifecycle, fully dependency-locked images | 27 passed; zero failures, zero skips | tool-integration-release.xml |
+| Schemathesis header fix | 2 passed, 25 deselected | schemathesis-header-regression.xml |
+| Known-issue detection by the three offline scanners | 3 passed | scanner-integration-release.xml |
+| Frontend type check and production build (2026-10-04) | Passed, 32 modules; rebuilt with the locked dependencies, the artifacts are byte-identical to frontend/dist | frontend/dist |
+| Edge real browser | Three export types, saving a project, traceability, creating a retest; 0 page errors | browser-validation.json |
+| Real FastAPI + React SSR/API | Three synthetic reviews, fail/pass/inconclusive, seven pieces of evidence, five tabs, three export types and HTML escaping; re-run and passed on 2026-10-04 against the current code (including the evidence adjudication console added on 10-03), also confirming that with only a session cookie /api/session and /api/runs are rejected without leaking the CSRF token, and fetch-based SSE and download were verified with Node | api-ssr-validation.json |
+| Python dependency consistency | pip check passed; after the lockfile carried hashes (2026-10-03; re-run 2026-10-04), installation with `--require-hashes` into fresh venvs passed: the packages actually installed on Linux Python 3.14.4 and Windows Python 3.13.15 match the lockfile item by item, and that Linux venv, excluding Docker, tested 350 passed, 21 skipped. The Windows Python 3.12 used for release verification is not on this machine, so it was not reinstalled in hash mode | requirements.lock.txt |
+
+The two full Linux regressions (with and without Docker integration), the frontend build and the SSR/API contract represent the current code as of 2026-10-04; the full Windows regression is the result from 2026-10-02. The remaining rows are results from 2026-09-24. After the 10-03 fixes (session protocol, supervisor failure classification, staging lifecycle, etc.) and the 10-04 fixes (unified supervisor teardown, controller deadline alignment, log reuse, guardian transient-error tolerance, etc.), the isolated worker, scanner and dynamic tool integrations have been re-verified by linux-docker-integration.xml; the itemized 09-24 receipts in the table are kept as records of that time. Several runs before the 10-03 receipts were obtained had failures: four were cases where the tests themselves depended on external environment variables (fixed, see item 11 below), and the rest came from incomplete environment variable and runtime profile configuration on the test host; see DOCKER_INTEGRATION_TESTING.md for details. The Edge real-browser checks have not been re-run after the 10-04 fixes and do not represent the current code; the SSR/API contract checks (including fetch-based SSE and download) have been re-run and passed against the current code. The Windows skips include cases requiring Linux/Docker/PostgreSQL, POSIX processes or platform symlink capability; for the parts also executed on Linux, the Linux reports above take precedence. The three skips in the fixture group include an unconfigured PostgreSQL test condition and Windows-specific paths; the PostgreSQL scenario is covered by a separate group. The fourteen Docker integrations in the final policy checks were executed separately; skips were never counted as passes.
+
+The original per-test names, durations and skip reasons are in the XML; validation-summary.json is read automatically by scripts/summarize-validation.py, and no LLM was used to fabricate results. Hostnames and user accounts in the receipts have been redacted by scripts/redact-receipts.py (only the hostname attributes and the account segments of home directories are changed; the tests, counts, durations and reasons are unchanged); previously committed versions remain in git history. release-guards.xml, local-pipeline.xml and tool-integration.xml are earlier overlapping checks that passed and are not counted additionally.
+
+docs/history keeps the two failed receipts from before the Schemathesis header fix, 25 passed/2 failed and 4 passed/1 failed respectively; the common cause was that examples added unsealed headers, and after the policy layer rejected them, inconclusive was correctly preserved. The post-fix results are in the table above; historical failures are not hidden as successes.
+
+## Paths Actually Verified
+
+- Synthetic model contracts drove the full white-box, threat, requirement, case, real Docker HTTP and PostgreSQL checkpoint/job ledger flows; another variant also ran real Semgrep, Gitleaks and OSV. Synthetic model output does not impersonate vendor inference results.
+- PostgreSQL atomic commit rollback, concurrent lease claims, journal recovery and non-duplicate execution. Fault injection for control-process hard crashes and spawned child processes used real POSIX processes and the process_test backend; Docker's actual identity, network, mounts and normal cleanup have separate integration tests. The process-backend fault tests are not passed off as covering all Docker daemon failure scenarios; the SQLite demo tests also do not substitute for PostgreSQL.
+- Real containers ran as non-root with network=none; the black box had no source code or Docker socket; an independent supervisor mediated target connections. Stopping first revokes communication, then terminates the worker.
+- ZAP 2.17.0, Schemathesis 4.28.0, Playwright 1.63.0, promptfoo 0.123.1 and PyRIT 1.1.0 used fixed cases with positive and negative examples. Tool check results cannot replace side-effect oracles.
+- Semgrep 1.153.0, Gitleaks 8.30.1 and OSV-Scanner 2.3.5 used bundled rules, a synthetic repository and the complete official PyPI/npm offline data. Data sources and content hashes are in osv-database-manifest.json.
+- The TypeScript Web fixture's BOLA/logout; the Python AI fixture's synthetic RAG, tool events, sink and reset/cleanup. The native AI fixture used five independent trials each time; the external AI tool combination acceptance ran each positive and negative example twice.
+- The real LiteLLM 1.102.1 SDK with a synthetic HTTP transport covered success, redirect, rate-limiting and service errors for OpenAI, OpenAI-compatible, NIM and Anthropic. One dispatch per authorization constraint; there was no cloud model traffic or cost.
+- Desktop 1440px and mobile 390px had no full-page horizontal overflow. Untrusted report text was not executed as HTML. This is not full accessibility or cross-browser certification.
+
+## Issues Fixed During Testing
+
+1. Implicit tokenizer downloads by model SDKs and NIM retry/fallback behavior: switched to hash-verified bundled assets and a single-dispatch transport.
+2. A replay window from results and journal being saved separately: changed to joint transaction commits; unknown outcomes after submission block automatic replay.
+3. Calls could still resume with unknown usage: unknown usage is now persisted and further paid-model work is forbidden.
+4. White-box path races, symlink/hardlink and mount restrictions: unsafe sources are rejected; Linux uses descriptor path checks and recursive read-only mounts.
+5. Fixture cleanup used the same idempotency key as the main operation: setup, execution and cleanup are now separated, ensuring the actual reset and cleanup each run.
+6. The Windows fixture launcher could leave child processes behind after exiting: a Job Object now manages the process tree, and the code waits for the actual listening port to close.
+7. Dynamic tools omitted empty identity headers; ZAP uses a fixed absolute launch path. Schemathesis examples now use existing case headers, without loosening the unauthorized headers.
+8. The retest window was initialized before findings were loaded: options are refreshed when it opens; real-browser verification successfully created a linked retest.
+9. Combining external AI tools with the fixture lifecycle: the selected tools are executed and the tool receipt is kept, without silently substituting native HTTP.
+10. The Commander's dispatch plan is actually applied (reviewers run in parallel; ordering only determines the arrangement of records and does not affect their individual inputs); the Reporter can only reorder existing finding IDs and cannot fabricate or upgrade evidence.
+11. When VIBEAUDIT_DATABASE_URL was set, the API and workspace tests would connect to the shared PostgreSQL and read runs left by other tests: these two test modules now remove that variable before each test and use SQLite under their own tmp_path.
+
+## Images and Reproducibility
+
+runtime-images.json stores the image IDs read at provision time. Tool dependencies were first verified against the actual working images, then rebuilt with the complete Python/npm lockfiles under deploy/worker/locks. The image IDs used in testing and the corresponding reports are in image-validation.json.
+
+Pinned versions and hashes provide traceable inputs and do not guarantee that all CPU architectures produce identical image IDs. The Dockerfile still includes operating system package installation, and the system package sources were not fully time-snapshotted; rebuilding in a different environment requires re-acceptance. All sources, tools, rules, standards and models retain their respective licenses.
+
+## Boundaries of the Demo and Effect Comparison
+
+sample-report.json / .md are exports of an actual local synthetic demo. It deliberately includes inconclusive entries that lack side-effect observations and is marked incomplete overall; this is an example demonstrating that "passing cannot be faked", not an indication that the engineering flow failed to run to completion.
+
+benchmarks/results-synthetic contains seven groups of six items each — 42 synthetic comparisons in total — used to verify the budget, grouping, recording and metric pipelines. The local AST baseline in results-local actually reads samples; groups without model endpoints are explicitly listed as blocked. Without a manually adjudicated complete ground truth and real model outputs, the official efficacy metrics remain null and no bias-reduction or recall-improvement conclusions are published.
+
+Known limitation: the runner does not provide a human adjudication process. The gold's human_reviewed, reviewers and oracle_evidence are declarative fields, only format-checked (at least two distinct names, a non-empty evidence list), and cannot prove that review actually happened. The model's unknown findings are listed in unadjudicated_ids, and with no blind-review matching interface to backfill them as TP/FP, precision remains null. A formal study must complete two-person review, disagreement arbitration and blind-review matching outside the tool, and then produce a new gold.
+
+## Capabilities Not Yet Verified or Not Included
+
+- The exact model names, endpoints, quotas, usage and model quality of the three real models; the user's own staging and backend observations. At the user's decision, these are left for acceptance after configuration is complete.
+- Full semantic analysis of arbitrary repositories/frameworks, unbounded code length, full-site exploration and active fuzzing, and arbitrary browser scripting. The dynamic tools in this version only execute the approved, limited cases.
+- All upstream plugins of promptfoo/PyRIT or arbitrary multi-step red-team workflows; this version verifies a fixed, controlled target + fixture/effect protocol.
+- Cross-host high-availability deployment, macOS live workers, multi-user SaaS, independent third-party penetration review, or forensic-grade tamper-proof storage.
+- Five trials with no observed violations do not mean safety; mock tools and sinks do not prove that real backend authorization is correct. The standards catalog has 462 canonical IDs, which is not the same as having tested all standards.
+
+## Re-running
+
+Windows: run scripts/verify.ps1 after installation; Linux uses scripts/verify-linux.sh. Before enabling the real integrations, set the following environment variables; the values must come from your own local provisioning:
+
+```sh
+export PYTHONPATH=backend
+export VIBEAUDIT_TEST_POSTGRES='postgresql:///vibeaudit_test?host=/var/run/postgresql&user=YOUR_TEST_ROLE'
+export VIBEAUDIT_TEST_DATABASE_URL="$VIBEAUDIT_TEST_POSTGRES"
+export VIBEAUDIT_DATABASE_URL="$VIBEAUDIT_TEST_POSTGRES"
+export VIBEAUDIT_TEST_RUNTIME_CONFIG='/etc/vibeaudit/runtime.json'
+export VIBEAUDIT_INTEGRATION_IMAGE='sha256:YOUR_VERIFIED_TOOL_IMAGE'
+export VIBEAUDIT_ZAP_IMAGE='sha256:YOUR_VERIFIED_ZAP_IMAGE'
+export VIBEAUDIT_FIXTURE_IMAGE='sha256:YOUR_VERIFIED_WORKER_IMAGE'
+export VIBEAUDIT_TEST_WORKER_IMAGE="$VIBEAUDIT_FIXTURE_IMAGE"
+python -m pytest tests/test_tool_runners.py -q
+```
+
+verify-linux.sh only writes JUnit receipts when `VIBEAUDIT_JUNIT_XML` is set; run `python scripts/redact-receipts.py` before placing them in docs/. Without PostgreSQL administrator rights, you can use the installed `initdb` and `pg_ctl` to start, as an ordinary user and in a temporary directory, a test instance listening only on a unix socket (for example `-o "-k /tmp/pgsock -p 55432 -c listen_addresses=''"`), then point the URL above at it; the 2026-10-03 Linux receipt was obtained this way. The web fixture tests specify Node 24 via `VIBEAUDIT_TEST_NODE`. The flags required by the other integration tests follow the explicit skip conditions in each tests/test_*.py; the exception is that when VIBEAUDIT_FIXTURE_IMAGE is not set, the fixture protocol tests fall back to the process_test backend and do not show up as skips. For the steps to run the whole tests/ (including the Docker integrations) under an ordinary user account, and for common configuration mistakes such as the runtime profile's work_root needing to be writable, see DOCKER_INTEGRATION_TESTING.md. For complete Linux provisioning, the credential reference, fixtures, scope and database setup, see LINUX_SETUP.md. The environment variables for the browser smoke are in frontend/scripts/browser-smoke.cjs; for SSR specify `node frontend/scripts/contract-smoke.mjs --base-url http://127.0.0.1:8002`. For a different port, substitute your own loopback console.
