@@ -24,7 +24,15 @@ python -m vibe_audit.benchmark --mode local_tools --output benchmarks/results-lo
 
 正式 gold 需要兩位獨立且具名的人工 reviewer、明確 positive／negative issue IDs、oracle_verified 與 evidence references，並標示 synthetic=false。聲明本身不代替人工工作；正式研究還須保留 reviewer 原始記錄、分歧仲裁、oracle 執行證據與不可變樣本 digest。模型的未知 finding 必須先做人類盲審 matching，不能用標準分類 ID 直接當成漏洞同一性。
 
-已知限制：runner 不提供人工裁定流程。human_reviewed、reviewers 與 oracle_evidence 是宣告欄位，只檢查格式（至少兩個不同姓名、證據清單非空），不能證明審核確實發生；未知 finding 列於 `unadjudicated_ids`，沒有盲審 matching 介面可回填為 TP／FP，因此 precision 維持 null。上述審核、分歧仲裁與 matching 須在工具外完成後再產生新的 gold。
+已知限制：human_reviewed、reviewers 與 oracle_evidence 是宣告欄位，只檢查格式（至少兩個不同姓名、證據清單非空），不能證明審核確實發生。runner 現提供盲審 matching 介面 `python -m vibe_audit.benchmark_matching`：`worksheet` 產生不含任何組別／模型身分的盲審工作表（僅含樣本原始輸入、gold 參照、`unadjudicated_ids` 與去識別化的 rationale）；兩位具名 reviewer 分別提交裁定檔（verdict 為 matches_positive／matches_negative／new_positive／not_a_vulnerability；matches_* 須附一致的 matched_gold_id），所有裁定一致才回填 gold，分歧必須由第三位 arbiter 明示裁定；`apply` 以一致（或仲裁後）的裁定回填 gold、重算每筆指標並寫出可追溯的 matching record 與更新後資料集。工具只記錄裁定宣告，不能證明審核發生；正式研究仍須保留 reviewer 原始記錄與 oracle 執行證據。
+
+```powershell
+$env:PYTHONPATH = 'backend'
+python -m vibe_audit.benchmark_matching worksheet --results benchmarks/results-synthetic/results.jsonl --output worksheet.json
+python -m vibe_audit.benchmark_matching apply --results benchmarks/results-synthetic/results.jsonl --report benchmarks/results-synthetic/report.json --reviewer reviewer-a.json --reviewer reviewer-b.json --output-dir benchmarks/results-adjudicated
+```
+
+回填後 `unadjudicated_ids` 清空、precision 可計算；隨附合成資料的 gold 仍標記 synthetic=true，正式 `metrics` 維持 null，只有回填結果進入 `preview_metrics`。真實資料集（synthetic=false）在兩人回填且 oracle 條件齊備後，重算的指標才能晉升為正式 `metrics`，且報告會附上 adjudication 來源與限制說明。
 
 隨附 gold 的 human_reviewed=false，所有品質指標只放在 `preview_metrics`，正式 `metrics=null`。模型組在 local_tools／live 的 blocked 情境不填零品質分數，以免把未測當成漏報。
 
@@ -79,7 +87,15 @@ The data is split into train/validation/test by complete project and project fam
 
 Formal gold requires two independent, named human reviewers, explicit positive/negative issue IDs, oracle_verified with evidence references, and a synthetic=false marker. The declaration itself does not substitute for the human work; a formal study must also retain the reviewers' original records, disagreement adjudication, oracle execution evidence, and immutable sample digests. The models' unknown findings must first go through human blind-review matching; a standard taxonomy ID must not be used directly as vulnerability identity.
 
-Known limitations: the runner provides no human adjudication workflow. human_reviewed, reviewers, and oracle_evidence are declaration fields checked only for format (at least two distinct names, non-empty evidence list) and cannot prove the review actually happened; unknown findings are listed in `unadjudicated_ids`, and there is no blind-review matching interface to backfill them as TP/FP, so precision stays null. The review, disagreement adjudication, and matching above must be completed outside the tool before new gold is produced.
+Known limitations: human_reviewed, reviewers, and oracle_evidence are declaration fields checked only for format (at least two distinct names, non-empty evidence list) and cannot prove the review actually happened. The runner now provides a blind-review matching interface, `python -m vibe_audit.benchmark_matching`: `worksheet` produces a blinded review worksheet containing no arm or model identity (only each sample's raw input, the gold references, `unadjudicated_ids`, and de-identified rationales); two named reviewers submit separate adjudication files (verdict is matches_positive/matches_negative/new_positive/not_a_vulnerability; matches_* requires a consistent matched_gold_id); gold is backfilled only when all verdicts agree, and disagreements must be explicitly decided by a third arbiter; `apply` backfills the gold with the agreed (or arbitrated) verdicts, recomputes every record's metrics, and writes a traceable matching record plus the updated dataset. The tool records adjudication declarations only — it cannot prove that the reviews happened; a formal study must still retain the reviewers' original records and oracle execution evidence.
+
+```powershell
+$env:PYTHONPATH = 'backend'
+python -m vibe_audit.benchmark_matching worksheet --results benchmarks/results-synthetic/results.jsonl --output worksheet.json
+python -m vibe_audit.benchmark_matching apply --results benchmarks/results-synthetic/results.jsonl --report benchmarks/results-synthetic/report.json --reviewer reviewer-a.json --reviewer reviewer-b.json --output-dir benchmarks/results-adjudicated
+```
+
+After backfilling, `unadjudicated_ids` is empty and precision becomes computable; the bundled synthetic gold is still marked synthetic=true, so the formal `metrics` stay null and only the backfilled results enter `preview_metrics`. For a real dataset (synthetic=false), the recomputed metrics may be promoted to formal `metrics` once the two-reviewer backfill and the oracle conditions are met; the rebuilt report then carries the adjudication provenance and its limitation note.
 
 The bundled gold has human_reviewed=false; all quality metrics are placed only in `preview_metrics`, and the formal `metrics=null`. In blocked local_tools/live scenarios the model arms are not filled with zero quality scores, so that untested is not mistaken for a miss.
 

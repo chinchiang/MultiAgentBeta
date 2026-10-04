@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-04T11:13:01.072252+00:00",
+  "generated_at": "2026-10-04T22:17:18.735585+00:00",
   "model_endpoints_tested": false,
   "efficacy_established": false,
   "note": "Suites overlap; do not add counts as distinct tests. JUnit successful records include subtests where emitted. Docker, database and synthetic model contracts are separate evidence.",
@@ -23,14 +23,14 @@
     },
     {
       "file": "docs/linux-docker-integration.xml",
-      "tests": 378,
+      "tests": 386,
       "failures": 0,
       "errors": 0,
       "skipped": 1,
-      "passed": 377,
-      "seconds": 459.393,
+      "passed": 385,
+      "seconds": 467.379,
       "timestamp": [
-        "2026-10-04T16:33:30.134257+08:00"
+        "2026-10-05T05:47:16.318651+08:00"
       ],
       "skip_reasons": [
         "Windows redirector process-tree fallback"
@@ -39,14 +39,14 @@
     },
     {
       "file": "docs/linux-regression.xml",
-      "tests": 378,
+      "tests": 386,
       "failures": 0,
       "errors": 0,
       "skipped": 21,
-      "passed": 357,
-      "seconds": 202.561,
+      "passed": 365,
+      "seconds": 272.81,
       "timestamp": [
-        "2026-10-04T16:29:35.023436+08:00"
+        "2026-10-05T06:12:21.682709+08:00"
       ],
       "skip_reasons": [
         "Explicit pinned Docker tool image required",
@@ -176,14 +176,14 @@
     },
     {
       "file": "docs/windows-regression.xml",
-      "tests": 378,
+      "tests": 386,
       "failures": 0,
       "errors": 0,
       "skipped": 25,
-      "passed": 353,
-      "seconds": 326.001,
+      "passed": 361,
+      "seconds": 329.062,
       "timestamp": [
-        "2026-10-04T16:42:41.603595+08:00"
+        "2026-10-04T22:55:08.690979+08:00"
       ],
       "skip_reasons": [
         "Explicit pinned Docker tool image required",
