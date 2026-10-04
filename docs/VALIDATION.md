@@ -80,7 +80,7 @@ benchmarks/results-synthetic 有七組、每組六件的 42 次合成比較，�
 
 ## 重跑
 
-Windows：安裝後執行 scripts/verify.ps1；Linux 使用 scripts/verify-linux.sh。啟用真整合前設定下列環境變數，值必須來自自己的本地 provisioning：
+Windows：安裝後執行 scripts/verify.ps1；Linux 使用 scripts/verify-linux.sh。兩者都會在驗證中本機啟動一個後端程序並執行 SSR/API 契約 smoke（預設埠 8002，可用 VIBEAUDIT_SMOKE_PORT 覆寫；Linux 上缺少 node 或 frontend/node_modules 時略過該步並提示）。啟用真整合前設定下列環境變數，值必須來自自己的本地 provisioning：
 
 ```sh
 export PYTHONPATH=backend
@@ -181,7 +181,7 @@ Known limitation: the runner does not provide a human adjudication process. The 
 
 ## Re-running
 
-Windows: run scripts/verify.ps1 after installation; Linux uses scripts/verify-linux.sh. Before enabling the real integrations, set the following environment variables; the values must come from your own local provisioning:
+Windows: run scripts/verify.ps1 after installation; Linux uses scripts/verify-linux.sh. Both start a local backend process and run the SSR/API contract smoke during verification (default port 8002, override with VIBEAUDIT_SMOKE_PORT; on Linux the step is skipped with a notice when node or frontend/node_modules is missing). Before enabling the real integrations, set the following environment variables; the values must come from your own local provisioning:
 
 ```sh
 export PYTHONPATH=backend
