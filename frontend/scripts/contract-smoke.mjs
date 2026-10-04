@@ -78,8 +78,13 @@ for (const format of ['markdown', 'json', 'sarif']) {
 // TypeScript's in-process transpiler avoids spawning a compiler or a browser.
 const require = createRequire(resolve(root, 'package.json'));
 function compile(source, name, overrides = {}) {
-  const mod = new Module(resolve(root, 'src', name));
-  mod.filename = resolve(root, 'src', name);
+  // The in-process loader must mount the transpiled CommonJS as .cjs: under
+  // Node 24 a .ts/.tsx filename inside this "type": "module" package makes the
+  // module load as ESM, where `exports` does not exist. The TypeScript filename
+  // is still needed for transpileModule to strip type-only syntax.
+  const cjs = name.replace(/\.[cm]?[jt]sx?$/, '.cjs');
+  const mod = new Module(resolve(root, 'src', cjs));
+  mod.filename = resolve(root, 'src', cjs);
   mod.paths = require.resolve.paths('react');
   mod.require = id => Object.hasOwn(overrides, id) ? overrides[id] : require(id);
   const output = ts.transpileModule(source, { compilerOptions: {
@@ -92,7 +97,10 @@ function compile(source, name, overrides = {}) {
 const api = compile(await readFile(resolve(root, 'src/api.ts'), 'utf8'), 'api.ts');
 const extensions = compile(await readFile(resolve(root, 'src/extensions.tsx'), 'utf8'), 'extensions.tsx', { './api': api, './extensions.css': {} });
 const source = await readFile(resolve(root, 'src/App.tsx'), 'utf8');
-const components = compile(`${source}\nexport { RunDetail, CreateForm, CapabilitiesView, SafeText };`, 'App.tsx', { './api': api, './extensions': extensions });
+// Vite statically replaces import.meta.env.* at build time (false for a
+// production bundle); transpileModule cannot transform import.meta, so the
+// smoke applies the same substitution before compiling.
+const components = compile(source.replace(/import\.meta\.env\.\w+/g, 'false') + '\nexport { RunDetail, CreateForm, CapabilitiesView, SafeText };', 'App.tsx', { './api': api, './extensions': extensions });
 const noop = () => {};
 const render = (component, props) => renderToStaticMarkup(React.createElement(component, props));
 const tabs = ['overview', 'trace', 'findings', 'evidence', 'activity'];
