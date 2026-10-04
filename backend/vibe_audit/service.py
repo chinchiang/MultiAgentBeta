@@ -789,4 +789,4 @@ def report_sarif(run:dict)->dict:
     properties={"runId":run["id"]}
     if manifest.get("parent_run_id"):
         properties.update(retestOf=manifest["parent_run_id"],retestedFindingIds=list(manifest.get("parent_finding_ids",[])))
-    return {"version":"2.1.0","$schema":"https://json.schemastore.org/sarif-2.1.0.json","runs":[{"tool":{"driver":{"name":"Vibe Audit","version":"0.2.0"}},"results":results,"properties":properties}]}
+    return {"version":"2.1.0","$schema":"https://json.schemastore.org/sarif-2.1.0.json","runs":[{"tool":{"driver":{"name":"Vibe Audit","version":"0.2.1"}},"results":results,"properties":properties}]}

@@ -13,7 +13,7 @@ import sys
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "0.2.0"
+VERSION = "0.2.1"
 MANIFEST = "source-manifest.sha256"
 PRIVATE = (".env", "local-secrets.", ".data")
 

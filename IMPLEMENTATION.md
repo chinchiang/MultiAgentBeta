@@ -1,4 +1,4 @@
-# Implementation contract — 0.2.0
+# Implementation contract — 0.2.1
 
 Authoritative validation: backend/vibe_audit/domain.py, contracts.py, policy.py and docs/run-input.schema.json (schema version 2).
 
@@ -54,7 +54,7 @@ Cases bind threat model, requirement, source, fixture and case hashes. Controls 
 
 See docs/LINUX_SETUP.md, docs/VALIDATION.md and docs/DELIVERY.md.
 ---
-# 實作契約 — 0.2.0
+# 實作契約 — 0.2.1
 
 權威驗證依據：backend/vibe_audit/domain.py、contracts.py、policy.py 與 docs/run-input.schema.json（schema 版本 2）。
 
