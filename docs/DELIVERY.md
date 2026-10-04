@@ -26,3 +26,34 @@
 ## 真實模型驗收
 
 準備確切型號、端點與 VIBEAUDIT_* 憑證環境變數，先跑每端點契約，再以隔離 staging 及合成資料跑完整流程。最後才在人工核定、按專案切分且未公開的測試集執行七組公平預算比較。未知用量、未完成及缺少觀測不能作零成本或通過處理。
+
+---
+
+# 0.2.0 Delivery Scope Compared with the Original Plan
+
+This version continues from 0.1.0, adding the isolated worker, PostgreSQL integration, dynamic tool adapters, fixture reset, side-effect collection, the standards catalog and the console workbench. The user has specified completing the engineering and local integration first; the real three-model endpoints are not yet prepared.
+
+"Implemented" and "verified" are recorded separately. Actual test results are governed by [VALIDATION.md](VALIDATION.md) and the accompanying JUnit XML; the mere existence of code does not mean the effects of models or tools have been proven.
+
+| Phase | Engineering deliverables | External acceptance boundary |
+|---|---|---|
+| P0 | schema v2, per-Agent models, fallback forbidden, synthetic transport contracts for the four provider SDK types, pinned dependency versions (the npm lockfile includes integrity hashes; the Python lockfile pins versions item by item and carries release hashes, with installation verified via --require-hashes), image/rule/database hashes, license sources | Real Claude/OpenAI/Nemotron model names, quotas and usage await endpoint acceptance |
+| P1 | LangGraph, PostgreSQL job ledger (recovery follows the run records and the ledger, not LangGraph checkpoints), atomic commits, an independent supervisor, persistent leases, network revocation before stopping, loopback UI, settings, SSE | Local single-user; no multi-user SaaS or cross-host worker fleet commitments |
+| P2 | Private read-only staging, three first-pass reviews of the same core questions, parallel static tools, one round of Challenger, program citations, a union of the minority findings, Semgrep/Gitleaks/OSV runners | Program summaries are capped; model quality and deep analysis of arbitrary frameworks cannot be inferred from contract tests |
+| P3 | Threat/Requirement gates, version freezing, traceability, ZAP/Schemathesis/Playwright, login/logout fixtures, positive controls and oracles | ZAP is an approved-path requestor + passive; Schemathesis uses explicit examples; Playwright is API flows, not arbitrary exploration, full-site fuzzing or arbitrary browser scripts |
+| P4 | promptfoo local eval, PyRIT targets, a registrable fixture protocol, independent effect collectors/sinks, five resets, separation of proposal/rejection/invocation/side effects | mock success does not mean real backend authorization is correct; a real target must provide trustworthy observations, otherwise blocked/inconclusive |
+| P5 | Web/JSON/Markdown/SARIF, linked retests, TS/Python synthetic ranges, a seven-group budget comparison runner, ground-truth format, version locking and acceptance | Paid model comparisons were not executed; no claims of bias-reduction, detection-rate or cost improvement. Full-scale production deployment and independent penetration review require separate acceptance |
+
+## Execution Boundaries
+
+- The demo is fully synthetic and calls no models or external targets; the three role names are not results from three model vendors.
+- live must use PostgreSQL and Linux Docker. Windows natively provides the console and the demo; live services and workers run in WSL2.
+- Source code is mounted only to the white-box worker. The black box uses a different UID, with no sources, target credentials or Docker socket, and network none.
+- Every HTTP request goes through an independent supervisor that re-checks the lease, case, identity, exact METHOD/path, target IP, deployment headers and budget, and does not follow redirects.
+- Losing contact after submission is outcome_unknown and blocks automatic replay; unconfirmed cleanup cannot show stop as complete.
+- A completed assessment means the approved work is finished, not that there are no vulnerabilities or that it is absolutely safe. Capability limitations, actual gaps and safety verdicts are kept separately.
+- Container and host administrators are within the trust boundary. Local hashes are not tamper-proof forensic storage and cannot restrict all outbound traffic for external staging.
+
+## Real Model Acceptance
+
+Prepare the exact model names, endpoints and VIBEAUDIT_* credential environment variables; run the per-endpoint contracts first, then run the full flow with an isolated staging environment and synthetic data. Only at the end run the seven-group fair budget comparison on a manually adjudicated, project-partitioned and unpublished test set. Unknown usage, incomplete runs and missing observations cannot be treated as zero-cost or as passes.

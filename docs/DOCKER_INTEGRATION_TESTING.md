@@ -60,3 +60,66 @@ export VIBEAUDIT_TEST_NODE="$(command -v node)"   # 必須是 Node 24
 ```
 
 資料目錄 /tmp/va-pg 可保留，下次直接 `pg_ctl … start` 即可。
+---
+# Full Docker integration testing on Linux
+
+The "re-run" in VALIDATION.md only demonstrates tests/test_tool_runners.py. This document records the steps for running the whole tests/ suite with a regular user account, Docker, and a throwaway PostgreSQL, as well as the configuration problems actually encountered on 2026-10-03. The images must first be provisioned as in section 3 of LINUX_SETUP.md; an account that can operate the Docker daemon is a high-privilege trust boundary.
+
+## 1. Throwaway PostgreSQL
+
+Without database administration rights, start, as a regular user, an instance that listens only on a unix socket. `--auth=trust` is suitable only for this kind of local-test-only, use-and-discard instance.
+
+```sh
+/usr/lib/postgresql/18/bin/initdb -D /tmp/va-pg -U vibeaudit_test --auth=trust
+mkdir -p /tmp/va-pgsock
+/usr/lib/postgresql/18/bin/pg_ctl -D /tmp/va-pg -l /tmp/va-pg.log -o "-k /tmp/va-pgsock -p 55432 -c listen_addresses=''" start
+# initdb creates only the role, not a database with the same name; the database the test URL points to must be created yourself:
+/usr/lib/postgresql/18/bin/psql -h /tmp/va-pgsock -p 55432 -U vibeaudit_test -d postgres -c "CREATE DATABASE vibeaudit_test OWNER vibeaudit_test"
+```
+
+## 2. Runtime profile for testing
+
+The production profile's work_root (/var/lib/vibeaudit/workers) belongs to the dedicated control account. When testing under your own account, generate a separate profile whose work_root points to a directory you can write; the script reads the image IDs from the local Docker, so no manual copying is needed.
+
+```sh
+.venv/bin/python scripts/provision-runtime.py --output /tmp/va-runtime.json --work-root /tmp/va-workers
+mkdir -p /tmp/va-workers
+```
+
+## 3. Environment variables and execution
+
+```sh
+export PYTHONPATH=backend
+export VIBEAUDIT_TEST_POSTGRES='postgresql:///vibeaudit_test?host=/tmp/va-pgsock&port=55432&user=vibeaudit_test'
+export VIBEAUDIT_TEST_DATABASE_URL="$VIBEAUDIT_TEST_POSTGRES"
+export VIBEAUDIT_DATABASE_URL="$VIBEAUDIT_TEST_POSTGRES"
+export VIBEAUDIT_TEST_RUNTIME_CONFIG=/tmp/va-runtime.json
+export VIBEAUDIT_TEST_WORKER_IMAGE="$(docker image inspect --format '{{.Id}}' vibeaudit-worker:test)"
+export VIBEAUDIT_FIXTURE_IMAGE="$VIBEAUDIT_TEST_WORKER_IMAGE"
+export VIBEAUDIT_INTEGRATION_IMAGE="$(docker image inspect --format '{{.Id}}' vibeaudit-tools:integration)"
+export VIBEAUDIT_ZAP_IMAGE="$(docker image inspect --format '{{.Id}}' ghcr.io/zaproxy/zaproxy:2.17.0)"
+export VIBEAUDIT_TEST_NODE="$(command -v node)"   # must be Node 24
+.venv/bin/python -m pytest tests -q -rs
+```
+
+The whole local run takes about 7 minutes. When receipts are needed, add `--junitxml=…`, and before putting them into docs/ first run `python scripts/redact-receipts.py`.
+
+## Problems encountered on 2026-10-03
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| The full pipeline test ends incomplete with gap `[Errno 13] Permission denied: '/var/lib/vibeaudit/workers/…'` | The production profile was reused and its work_root is not writable | Generate a separate profile as in section 2 |
+| The ZAP tool test is `outcome_unknown` because Worker exited without a valid result | VIBEAUDIT_ZAP_IMAGE was not set, so the test fell back to the tool image without ZAP | Set VIBEAUDIT_ZAP_IMAGE |
+| The web fixture tests (including login/logout) are skipped | Node 24 not found: VIBEAUDIT_TEST_NODE is unset and there is no node in PATH | Set VIBEAUDIT_TEST_NODE |
+| The fixture protocol tests pass but never go through Docker | When VIBEAUDIT_FIXTURE_IMAGE is not set, the tests switch to the process_test backend, which does not show up as a skip | Set it to the worker image |
+| Three API tests read runs left behind by other tests; another test cannot read the run it just stored | create_app reads VIBEAUDIT_DATABASE_URL, so these tests connect to the shared PostgreSQL instead of the SQLite under their own tmp_path | Fixed: tests/test_engine.py and tests/test_contracts_and_workspace.py remove that variable before each test |
+
+The first four items are incomplete test-environment configuration; the last item was the tests themselves depending on an external environment variable, which has already been fixed in the code. Results and receipts are in VALIDATION.md.
+
+## Cleanup
+
+```sh
+/usr/lib/postgresql/18/bin/pg_ctl -D /tmp/va-pg stop
+```
+
+The data directory /tmp/va-pg can be kept; next time just run `pg_ctl … start`.

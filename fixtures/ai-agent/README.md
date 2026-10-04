@@ -37,3 +37,43 @@ Control header 為 `X-Fixture-Control: local-synthetic-control`。靶場拒絕�
 `proposed`、`invoked` 與 `committed` 分開記錄；測試以 mock sink 的實際變化佐證，不能只用回答字串推測成功。這個 ledger 仍是**受測合成 fixture 的觀測介面**，不是已實作的正式可信外部 collector。核心 HTTP adapter 不會將此 JSON 自動升格成可信工具效果證據。正式環境需要獨立 collector、完整 trace 和真正授權鏈路；不可用 mock tool 取代它們。
 
 `fixed` 僅修正這些刻意缺陷，並非全面安全的 AI 應用模板。
+---
+# Local Synthetic AI Agent Application Range
+
+This is a **deterministic mock that calls no LLM**. It only uses fixed markers to simulate "raising tool requests from untrusted documents", making it easy to test retrieval and tool policies, event logging, and the oracle. It cannot prove the probability that models such as Claude, Nemotron, or ChatGPT would be affected by prompt injection, nor can it vouch for real backends.
+
+Only the Python standard library is used; it listens fixedly on `127.0.0.1`, with no external network, disk sink, or shell execution.
+
+```powershell
+python fixtures/ai-agent/server.py --mode fixed --port 8912
+python fixtures/ai-agent/server.py --mode vulnerable --port 8912
+```
+
+Pick one of the two commands; the `--port 0` configuration allocates an available port and reports it in the first JSON line. Stop with Ctrl+C. The exposed synthetic bearer tokens are: A=`fixture-ai-a`, B=`fixture-ai-b`.
+
+| Interface | Purpose |
+|---|---|
+| `GET /documents/doc-a`, `/documents/doc-b` | A convenient GET positive control for toolkits; returns a `documents` array |
+| `POST /retrieve` | JSON `{"document_id":"doc-b"}`; fixed checks the tenant, vulnerable deliberately ignores the tenant |
+| `POST /agent/run` | JSON `{"document_id":"doc-a-untrusted"}` simulates seeing a tool-request marker in document A |
+| `POST /agent/run` | JSON `{"document_id":"doc-a","action":"export","approved":true}` is a normal mock export, same tenant and explicitly approved |
+| `POST /sessions/reset` | JSON `{}`; clears the mock conversation memory of this bearer session, keeping audit events and the sink |
+| `POST /__fixture/reset` | JSON `{}`, control header; resets all synthetic sessions, events, and the sink |
+| `POST /__fixture/shutdown` | JSON `{}`, control header; shuts down the actual HTTP server and exits the Python interpreter normally |
+| `GET /__fixture/state?run_id=...` | control header; gets the mock events/sink/unauthorized commit count of the specified run |
+
+The control header is `X-Fixture-Control: local-synthetic-control`. The range rejects other Hosts/Origins; no CORS is opened.
+
+Automated tests shut down the actual server via the shutdown endpoint, then wait for the launcher to exit and confirm the port is closed; this handles the `python.exe` redirector/child interpreter structure of Windows venvs. Windows tests register this run's launcher and the actual server PID with a Job Object, and terminate the Job if the HTTP shutdown fails. Only when the launched process has not yet reported a PID is process-tree termination used on this run's still-living launcher; Python is never batch-killed by process name. Linux does not load the Win32 API and still uses the normal exit/process-termination flow.
+
+The `doc-a` canary is `TENANT_A_RAG_CANARY`, and `doc-b` is `TENANT_B_RAG_CANARY`. When testing retrieval isolation, first fetch doc-b with identity B as a positive control, then fetch doc-b with A; fixed returns 403, vulnerable returns B's synthetic data. This tests the actual retrieval branch, not pre-loading B's data into A's context and only watching the answer.
+
+`doc-a-untrusted` is a document owned by A, containing `[[FIXTURE_REQUEST_EXPORT:doc-b]]`. The mock interpreter proposes `mock_export(doc-b)` upon seeing the marker. The fixed policy requires the same tenant and `approved=true`:
+
+- vulnerable: `retrieved → proposed → invoked → committed`; the mock sink records one entry of unauthorized synthetic data.
+- fixed: `retrieved → proposed → denied`; the mock sink does not increase.
+- Normal A/doc-a with explicit approval: both modes can reach committed, with `authorized=true`.
+
+`proposed`, `invoked`, and `committed` are recorded separately; tests corroborate with the actual changes in the mock sink and must not infer success from the answer string alone. This ledger is still the **observation interface of the synthetic fixture under test**, not an implemented formal trusted external collector. The core HTTP adapter will not automatically promote this JSON into trusted tool-effect evidence. A production environment needs an independent collector, full traces, and a real authorization chain; mock tools cannot be used in their place.
+
+`fixed` only fixes these deliberate defects; it is not a comprehensively secure AI application template.

@@ -36,3 +36,42 @@ $env:VIBEAUDIT_FIXTURE_B = 'fixture-web-b'
 `fixed` 只修正以上兩個刻意缺陷，並非全面安全的應用模板。
 
 `bola-case.json` 是核心 HTTP adapter 的案例範例。使用時在 run 中允許 `GET /orders/order-b`，auth profiles ID 必須為 `tenant-a`、`tenant-b`，且威脅模型要包含 `T-BOLA` 與 `R-TENANT-ISOLATION` 的對應需求。Compiler 會補來源／威脅版本雜湊；不要手動偽造 gate receipt。此檔本身不是已完成的測試結果。
+---
+# Local Synthetic Web/API Range
+
+This is the toolkit's deliberate-defect demo, containing only fake data and in-memory sessions; it cannot be treated as real backend authorization verification. It listens only on `127.0.0.1` by design, with no external network, disk writes, or heavy dependencies. Node.js 24 is required, running with built-in TypeScript type stripping.
+
+```powershell
+node fixtures/web-api/server.ts --mode fixed --port 8911
+node fixtures/web-api/server.ts --mode vulnerable --port 8911
+```
+
+Run one of the two commands; `--port 0` lets the system assign an available port, and the first JSON line provides `origin`. Stop with Ctrl+C.
+
+All API responses are marked `synthetic: true`; the range accepts only its own exact Host/Origin, and no CORS is allowed. `GET /` provides a simple description page.
+
+| Interface | Behavior |
+|---|---|
+| `GET /orders/order-a` | Tenant A's fake order, canary `TENANT_A_ORDER_CANARY` |
+| `GET /orders/order-b` | Tenant B's fake order, canary `TENANT_B_ORDER_CANARY` |
+| `GET /me` | The current synthetic session's user, tenant, and roles |
+| `POST /auth/login` | JSON `{"username":"alice","password":"synthetic-alice"}`; Bob corresponds to `bob`, `synthetic-bob` |
+| `POST /auth/logout` | JSON `{}`; fixed revokes this bearer token; vulnerable only replies that logout succeeded but still accepts the token |
+| `POST /__fixture/reset` | JSON `{}`, requires `X-Fixture-Control: local-synthetic-control`; clears events and resets the initial session |
+| `GET /__fixture/state` | Same control header, to view synthetic event and session counts |
+| `POST /__fixture/shutdown` | JSON `{}`, same control header; after completing the response, shuts down the HTTP server and exits normally |
+
+The initial bearer tokens are public fake credentials: A=`fixture-web-a`, B=`fixture-web-b`. Set the environment variables for local testing:
+
+```powershell
+$env:VIBEAUDIT_FIXTURE_A = 'fixture-web-a'
+$env:VIBEAUDIT_FIXTURE_B = 'fixture-web-b'
+```
+
+The toolkit's auth profiles can reference these two environment variables respectively. Reading `/orders/order-b` as identity B is a positive control; then reading the same path as identity A, vulnerable returns B's canary and fixed returns 403. This proves the local fixture's BOLA branch is identifiable.
+
+The logout test logs in as `alice` and captures the session, first successfully reads `/orders/order-a` (containing `TENANT_A_ORDER_CANARY`), POSTs to `/auth/logout`, then re-reads `/orders/order-a` with the same session; vulnerable gives 200 and still contains the canary, fixed gives 401. Each step uses a fresh HTTP request, and the session is held only by the supervisor. The built-in `synthetic-web-v1` fixture profile runs this flow as a native HTTP sequence (`fixture_protocol.py`); external tools cannot use the captured session, and specifying them is blocked.
+
+`fixed` only fixes the two deliberate defects above; it is not a comprehensively secure application template.
+
+`bola-case.json` is a case example for the core HTTP adapter. To use it, allow `GET /orders/order-b` in the run, the auth profile IDs must be `tenant-a` and `tenant-b`, and the threat model must include the requirements mapped to `T-BOLA` and `R-TENANT-ISOLATION`. The compiler fills in the source/threat version hashes; do not manually forge the gate receipt. This file itself is not a completed test result.
