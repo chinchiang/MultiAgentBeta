@@ -131,15 +131,11 @@ class Store:
 
     def finish_job(self, job_id: str, execution: dict, run: dict):
         """Commit the completed execution and aggregate run together; no replay window."""
-        with self.lock:
-            self._execute("BEGIN")
-            try:
-                self._execute("UPDATE jobs SET status=?,payload=? WHERE id=?", ("finished",json.dumps(execution),job_id))
-                self.save(run)
-                self._execute("COMMIT")
-            except BaseException:
-                self._execute("ROLLBACK")
-                raise
+        # The nesting-aware transaction helper, so a future caller inside another
+        # transaction joins it instead of raising on a nested BEGIN.
+        with self.transaction():
+            self._execute("UPDATE jobs SET status=?,payload=? WHERE id=?", ("finished",json.dumps(execution),job_id))
+            self.save(run)
 
     def jobs(self, run_id: str):
         with self.lock:

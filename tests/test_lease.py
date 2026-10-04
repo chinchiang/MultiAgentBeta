@@ -53,12 +53,30 @@ def test_dispatch_budget_is_atomic_and_request_ids_cannot_replay(leases):
     with pytest.raises(LeaseError):store.reserve_dispatch(cap,"worker","request-2",{"path":"/a"})
     assert store.validate(cap,"worker")["used_requests"]==1
     with pytest.raises(LeaseError):store.finish_task(cap,"worker",{"status":"pass"})
-    store.finish_dispatch(cap,"worker","request-1",{"status_code":200})
+    store.finish_dispatch(cap,"worker","request-1",{"path":"/a"},{"status_code":200})
     store.finish_task(cap,"worker",{"status":"pass"})
     assert store.task(cap["task_id"])["state"]=="finished"
     binding=cap["binding"]
     with pytest.raises(LeaseError):
         store.issue(**binding,max_requests=1,ttl_seconds=2,max_seconds=10)
+
+
+def test_finish_dispatch_must_match_the_journaled_request(leases):
+    store,_=leases;cap=issue(store);store.claim(cap,"worker")
+    store.reserve_dispatch(cap,"worker","request-1",{"path":"/a","method":"GET"})
+    # A result may only be journaled for the exact request that was reserved.
+    with pytest.raises(LeaseError):store.finish_dispatch(cap,"worker","request-1",{"path":"/b","method":"GET"},{"status_code":200})
+    with pytest.raises(LeaseError):store.finish_dispatch(cap,"worker","request-1",{"path":"/a","method":"POST"},{"status_code":200})
+    row=store.conn.execute("SELECT state,result_hash FROM worker_dispatches").fetchone()
+    assert row[0]=="sent" and row[1] is None
+    store.finish_dispatch(cap,"worker","request-1",{"path":"/a","method":"GET"},{"status_code":200})
+    assert store.conn.execute("SELECT state FROM worker_dispatches").fetchone()[0]=="finished"
+
+
+def test_a_lease_that_cannot_dispatch_is_invalid(leases):
+    store,_=leases
+    with pytest.raises(LeaseError):issue(store,max_requests=0)
+    with pytest.raises(LeaseError):issue(store,max_requests=-1)
 
 
 def test_revoke_persists_unknown_dispatch_across_connections(leases):

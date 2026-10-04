@@ -19,7 +19,6 @@ import socket
 import ssl
 import threading
 import time
-from pathlib import Path
 from urllib.parse import urlsplit
 
 MAX_RESPONSE_BYTES = 256 * 1024
@@ -507,38 +506,6 @@ async def execute_case(manifest: dict, case: dict, *, cancel_event, request_hook
         # Provider/HTTP exception strings may include request material. Never
         # return their text or traceback through an API or report.
         return _result("outcome_unknown" if requests and current_method not in SAFE_METHODS else "execution_error", "Target transport failed; no success was inferred.", observations, requests)
-
-
-def scanner_plans(source_dir: str) -> list[dict]:
-    """Legacy informational recipe shape, retained for client compatibility.
-
-    Runtime availability is owned by WorkerRuntime.tool_inventory; current sealed
-    dynamic recipes are compiled by tool_runners.compile_tool. These dictionaries
-    are never dispatched.
-
-    The source mount is read-only. The trusted plan/rules directory must be
-    controlled by the harness, never loaded from the untrusted source checkout.
-    Configuration compilation, egress enforcement and result ingestion are
-    deliberately marked as prerequisites, not silently replaced by host runs.
-    """
-    source = str(Path(source_dir).absolute())
-    specs = [
-        ("semgrep", ["semgrep", "scan", "--config", "/trusted/semgrep-rules.yml", "--metrics", "off", "--disable-version-check", "--json", "--output", "/out/semgrep.json", "/src"], "https://semgrep.dev/docs/cli-reference", ["trusted project rules", "pinned Semgrep image"], "none"),
-        ("osv", ["osv-scanner", "scan", "source", "--recursive", "--format", "json", "--output-file", "/out/osv.json", "/src"], "https://google.github.io/osv-scanner/usage/", ["pinned OSV v2 image", "approved vulnerability database access or snapshot"], "approved-vulnerability-database"),
-        ("gitleaks", ["gitleaks", "dir", "/src", "--redact", "--report-format", "json", "--report-path", "/out/gitleaks.json", "--timeout", "60", "--no-banner"], "https://github.com/gitleaks/gitleaks", ["pinned Gitleaks image"], "none"),
-        ("zap", ["zap.sh", "-cmd", "-autorun", "/trusted/zap.yaml"], "https://www.zaproxy.org/docs/desktop/addons/automation-framework/", ["reviewed threat-derived ZAP plan", "per-request policy proxy", "pinned ZAP image"], "authorized-target-via-policy-proxy"),
-        ("schemathesis", ["st", "run", "/trusted/openapi.json", "--url", "http://policy-proxy:8080", "--workers", "1", "--report", "junit", "--report-dir", "/out/schemathesis"], "https://schemathesis.readthedocs.io/en/latest/reference/cli/", ["reviewed bounded schema and checks", "per-request policy proxy", "pinned Schemathesis v4 image"], "authorized-target-via-policy-proxy"),
-        ("playwright", ["playwright", "test", "--config", "/trusted/playwright.config.ts", "--workers", "1", "--reporter", "json"], "https://playwright.dev/docs/test-cli", ["reviewed generated tests and config", "network policy proxy", "pinned browser image"], "authorized-target-via-policy-proxy"),
-        ("promptfoo", ["promptfoo", "eval", "--config", "/trusted/promptfooconfig.yaml", "--output", "/out/promptfoo.json", "--no-share", "--max-concurrency", "1"], "https://www.promptfoo.dev/docs/usage/command-line/", ["local static datasets", "custom target provider and deterministic assertions", "per-request budget proxy", "pinned promptfoo image"], "approved-model-and-target-via-policy-proxy"),
-        ("pyrit", ["python", "-I", "/trusted/pyrit_workflow.py"], "https://microsoft.github.io/PyRIT/latest/code/executor/workflow/", ["trusted PyRIT wrapper in tool_runners", "trusted complete tool collector", "per-request budget proxy", "pinned PyRIT image"], "approved-model-and-target-via-policy-proxy"),
-    ]
-    return [{"id": name, "argv": argv, "shell": False, "status": "blocked_missing_prerequisites" if name in {"semgrep", "osv", "gitleaks"} else "blocked_sandbox_required",
-             "implemented": "isolated_worker_executor", "executable": False, "sandbox_required": True,
-             "source_mount": {"host_path": source, "sandbox_path": "/src", "read_only": True, "used": name in {"semgrep", "osv", "gitleaks"}},
-             "network_policy": network, "prerequisites": requirements,
-             "limits": {"timeout_seconds": 120, "memory_mb": 2048, "pids": 128},
-             "source_url": url, "detail": "Optional sandbox.run_scanner executor exists; requires trusted image digest pins, Docker and provisioned offline inputs. Consult runtime inventory and validation receipts." if name in {"semgrep", "osv", "gitleaks"} else "Legacy informational recipe; current isolated adapter and result ingestion are in tool_runners."}
-            for name, argv, url, requirements, network in specs]
 
 
 def tool_capabilities() -> list[dict]:

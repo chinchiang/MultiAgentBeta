@@ -212,14 +212,26 @@ class Supervisor:
             except Exception: pass
 
     def guardian(self):
+        from lease import LeaseError
+        transient=0
         while not self.revoked.wait(.05):
-            try:
-                if not self.controller_alive or time.monotonic()-self.last_heartbeat>self.cap["ttl_seconds"]:
-                    raise ValueError
-                self.lease.validate(self.cap,self.worker_id)
-            except Exception:
+            if not self.controller_alive or time.monotonic()-self.last_heartbeat>self.cap["ttl_seconds"]:
                 self.revoke_network("Controller lease expired or durable authority unavailable")
                 return
+            try:
+                self.lease.validate(self.cap,self.worker_id)
+                transient=0
+            except LeaseError:
+                # A real expiry or revocation of durable authority stops the worker at once.
+                self.revoke_network("Controller lease expired or durable authority unavailable")
+                return
+            except Exception:
+                # One transient lease-database error must not kill a mid-flight worker;
+                # three consecutive failures mean authority is genuinely unavailable.
+                transient+=1
+                if transient>=3:
+                    self.revoke_network("Durable lease authority unavailable")
+                    return
 
     def allowed_request(self,request):
         from adapters import _prepare_request
@@ -287,15 +299,17 @@ class Supervisor:
 
     def forward(self,method,path,headers,body):
         from adapters import _origin,_pinned_address
+        from lease import LeaseError
         scheme,host,port=_origin(self.manifest)
         try: pinned=_pinned_address(host,port,self.manifest.get("allowed_target_ips",[]))
         except Exception: raise NotSent("Target address could not be resolved within the allowed IPs") from None
-        self.lease.validate(self.cap,self.worker_id)
+        try: self.lease.validate(self.cap,self.worker_id)
+        except LeaseError: raise NotSent("Run lease is no longer valid") from None
         address=ipaddress.ip_address(pinned)
         sock=socket.socket(socket.AF_INET6 if address.version==6 else socket.AF_INET,socket.SOCK_STREAM)
         sock.settimeout(5)
         with self.socket_lock:
-            if self.revoked.is_set(): sock.close();raise ValueError("Egress revoked")
+            if self.revoked.is_set(): sock.close();raise NotSent("Egress revoked before the request was sent")
             self.sockets.add(sock)
         conn=None
         try:
@@ -305,7 +319,7 @@ class Supervisor:
                     secure=ssl.create_default_context().wrap_socket(sock,server_hostname=host,do_handshake_on_connect=False)
                     with self.socket_lock:
                         self.sockets.discard(sock);sock=secure
-                        if self.revoked.is_set(): sock.close();raise ValueError("Egress revoked")
+                        if self.revoked.is_set(): sock.close();raise NotSent("Egress revoked before the request was sent")
                         self.sockets.add(sock)
                     secure.do_handshake()
             except OSError:
@@ -349,7 +363,10 @@ class Supervisor:
             approved=pending[0].wait(min(3,self.cap["ttl_seconds"])) and pending[1]
             with self.grant_lock: self.grants.pop(rid,None)
             if not approved or self.revoked.is_set(): raise ValueError("Controller denied request")
-            self.lease.reserve_dispatch(self.cap,self.worker_id,rid,{"method":method,"path":path,"case_id":case_id,"body_sha256":hashlib.sha256(body).hexdigest()})
+            # The exact record reserved here is also what finish_dispatch must match,
+            # so a journaled result can never be attached to a different request.
+            sealed_dispatch={"method":method,"path":path,"case_id":case_id,"body_sha256":hashlib.sha256(body).hexdigest()}
+            self.lease.reserve_dispatch(self.cap,self.worker_id,rid,sealed_dispatch)
             record={"case_id":case_id,"method":method,"path":path,"identity":request.get("identity"),"purpose":step.get("purpose","test")}
             # Only a read-only step that reached the target has a known outcome when its answer cannot be
             # relayed; any other failure after reservation may have changed the target.
@@ -363,7 +380,7 @@ class Supervisor:
                     self.revoke_network(self.policy_blocked or "Dispatched request has an unknown or invalid result")
                     raise
                 reason=str(exc) if isinstance(exc,(NotSent,Unusable)) else "Target response was incomplete"
-                self.lease.finish_dispatch(self.cap,self.worker_id,rid,{"delivered":not isinstance(exc,NotSent),"reason":reason})
+                self.lease.finish_dispatch(self.cap,self.worker_id,rid,sealed_dispatch,{"delivered":not isinstance(exc,NotSent),"reason":reason})
                 self.broker_observations.append({**record,"status_code":getattr(exc,"status_code",None),"body":"","peer_ip":None,"complete":False,"denied":reason})
                 if self.policy_blocked:
                     # Nothing more of this task goes to a deployment other than the declared one.
@@ -391,7 +408,7 @@ class Supervisor:
                         secrets.append(os.environ[key])
                 for secret in sorted({form for value in secrets for form in secret_forms(value)},key=len,reverse=True):
                     result["body"]=result["body"].replace(secret,"[REDACTED_CREDENTIAL]")
-                self.lease.finish_dispatch(self.cap,self.worker_id,rid,result)
+                self.lease.finish_dispatch(self.cap,self.worker_id,rid,sealed_dispatch,result)
                 self.broker_observations.append({**record,"status_code":result["status_code"],"body":result["body"],"peer_ip":result["peer_ip"],"complete":True,"capture_success":result.get("capture_success") is True,"body_sha256":hashlib.sha256(result["body"].encode()).hexdigest()})
             except Exception:
                 self.unknown_dispatch=True

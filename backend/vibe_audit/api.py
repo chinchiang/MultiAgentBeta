@@ -152,14 +152,18 @@ def create_app(data_dir=None, database_url=None, testing=False, session_token=No
         return response
 
     @app.get("/api/capabilities")
-    async def capabilities():
+    async def capabilities(profile: str = "default"):
+        # The inventory must describe the runtime profile a run may actually configure,
+        # not permanently the default one; an unprovisioned name reports unavailable.
+        if not re.fullmatch(r"[a-zA-Z0-9_-]{1,80}",profile):
+            raise HTTPException(status_code=422,detail="Invalid runtime profile ID")
         from .adapters import tool_capabilities
-        runtime={"postgres":store.postgres,"demo_available":True,"source_roots":[str(p) for p in source_roots]}
+        runtime={"postgres":store.postgres,"demo_available":True,"source_roots":[str(p) for p in source_roots],"profile":profile}
         tools=tool_capabilities()
         worker=None
         try:
             from .worker_runtime import WorkerRuntime,load_config
-            worker=WorkerRuntime(load_config("default"))
+            worker=WorkerRuntime(load_config(profile))
             runtime.update(await worker.capabilities())
             tools=await worker.tool_inventory()
         except Exception:

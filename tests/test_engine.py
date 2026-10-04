@@ -37,6 +37,14 @@ async def finished_demo(engine):
     return engine.store.get(run["id"])
 
 
+def arm_attempt(engine,run):
+    # A direct stage call stands in for a live attempt, whose state start() would have armed;
+    # a finished attempt's entries are reclaimed, so re-arm before driving stages by hand.
+    engine.runs[run["id"]]=run
+    engine.cancel_flags[run["id"]]=asyncio.Event()
+    engine.locks[run["id"]]=asyncio.Lock()
+
+
 async def test_end_to_end_demo_is_honest_and_preserves_minority(engine):
     run=await finished_demo(engine)
     assert run["stage"]=="complete",run.get("error")
@@ -129,8 +137,19 @@ async def test_malformed_model_case_still_saves_the_blocked_run(engine,monkeypat
     monkeypatch.setattr(engine.policy,"case_gate",omit_requirement)
     run=await finished_demo(engine)
     assert (run["stage"],run["status"],run["error"])==("case_design","blocked","Case security requirement mismatch")
-    engine.event(engine.runs[run["id"]],"Later event")
+    engine.event(run,"Later event")
     assert engine.store.get(run["id"])["events"][-1]["message"]=="Later event"
+
+
+async def test_finished_attempt_engine_state_is_reclaimed(engine):
+    run=await finished_demo(engine)
+    # A second event loop turn lets the done callback drop this attempt's state;
+    # a newer attempt may have replaced it, so only identity-matching entries go.
+    await asyncio.sleep(0)
+    assert run["id"] not in engine.tasks and run["id"] not in engine.runs
+    assert run["id"] not in engine.cancel_flags and run["id"] not in engine.locks
+    # The durable record is untouched by the reclamation.
+    assert engine.store.get(run["id"])["status"] in {"completed","incomplete"}
 
 
 async def test_whitebox_resume_keeps_paid_reviews_and_sealed_scans(engine,monkeypatch):
@@ -241,6 +260,23 @@ async def test_provided_cases_leave_uncovered_threats_as_gaps(engine):
     assert [g for g in run["gaps"] if "without a provided case" in g]==["Automated threats without a provided case were not tested: T-002"]
 
 
+async def test_demo_run_records_the_supplied_cases_it_cannot_execute(engine):
+    """A demo run can only synthesize the fixed fixture set; supplied (or
+    retest-copied) cases must stay visible as an untested gap, never vanish."""
+    supplied={"id":"C-op","title":"Operator case","threat_ids":["T-001"],"requirement_id":"R-001",
+              "adapter":"demo","method":"GET","path":"/orders/private","headers":{},"body":None,"identity":None,
+              "preconditions":[],"oracle":{"kind":"deny_sensitive","forbidden_text":["B-PRIVATE-CANARY"],
+              "allowed_statuses":[403],"required_observations":["http_response"],"expected_role":None},
+              "cleanup":None,"side_effects":False,"repetitions":1,"observation_mode":"external_observation"}
+    run=engine.create(RunInput(name="Demo with supplied case",mode="demo",cases=[supplied]))
+    engine.start(run["id"])
+    await engine.tasks[run["id"]]
+    result=engine.store.get(run["id"])
+    assert any("supplied case(s) were not executed" in gap for gap in result["gaps"]),result["gaps"]
+    assert any(e["level"]=="warning" and "synthetic fixture set" in e["message"] for e in result["events"])
+    assert {e["case_id"] for e in result["executions"]}=={"C-001","C-002","C-003"}
+
+
 async def test_threat_model_that_drops_a_provided_case_threat_blocks_early(engine,monkeypatch):
     run=await finished_demo(engine)
     proposal={k:v for k,v in run["threat_model"].items() if k not in {"hash","source_digest","deployment_id"}}
@@ -274,6 +310,7 @@ async def test_time_budget_counts_active_time_across_resume_and_restart(engine,t
     engine.store.save(resumed)
     restarted=Engine(engine.store).store.get(run["id"])
     assert restarted["attempt_started_at"] is None and restarted["active_seconds"]>budget
+    arm_attempt(engine,restarted)
     with pytest.raises(PolicyError,match="Time budget exhausted"):
         engine.check_active(restarted)
     restarted.update(status="running",stage="blackbox")
@@ -453,6 +490,13 @@ def test_api_errors_stay_structured_instead_of_500(tmp_path,monkeypatch):
         authorize(client)
         response=client.get("/api/capabilities")
         assert response.status_code==200 and response.json()["runtime"]["available"] is False
+        assert response.json()["runtime"]["profile"]=="default"
+        # The inventory can describe the profile a run will actually use; an
+        # unprovisioned name stays structured, and a malformed one is a 422.
+        named=client.get("/api/capabilities",params={"profile":"staging"})
+        assert named.status_code==200 and named.json()["runtime"]["profile"]=="staging"
+        assert named.json()["runtime"]["available"] is False
+        assert client.get("/api/capabilities",params={"profile":"../evil"}).status_code==422
         for body in [b"[]",b'"x"',b"not json",b'{"profile":{}}']:
             response=client.post("/api/models/probe",content=body,headers={"Content-Type":"application/json"})
             assert response.status_code==422 and "detail" in response.json(),body
@@ -703,6 +747,7 @@ async def test_positive_control_needs_exact_scope_and_sealed_case_authorization(
     case["hash"]=sealed(case)
     run["cases"]=[case]
     run["usage"]["requests"]=0
+    arm_attempt(engine,run)
     dispatched=[]
     def synthetic_request(scheme,host,port,pinned,method,path,*rest):
         dispatched.append((method,path))
@@ -758,6 +803,7 @@ async def live_post_case(engine,*,adapter,provenance):
     case["hash"]=sealed(case)
     run["cases"]=[case]
     run["usage"]["requests"]=0
+    arm_attempt(engine,run)
     return run
 
 

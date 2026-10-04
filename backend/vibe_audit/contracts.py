@@ -124,6 +124,17 @@ class ReviewProposal(Contract):
     gaps: list[str] = Field(default_factory=list, max_length=200)
 
 
+class ChallengeItem(Contract):
+    """One counter-evidence observation about an existing finding. Never a verdict."""
+    finding_id: str = Field(min_length=1, max_length=100)
+    counterevidence: str = Field(default="", max_length=5000)
+    missing_evidence: str = Field(default="", max_length=5000)
+
+
+class ChallengeProposal(Contract):
+    challenges: list[ChallengeItem] = Field(default_factory=list, max_length=500)
+
+
 class ArchitectureProposal(Contract):
     assets: list[Asset] = Field(default_factory=list, max_length=500)
     dataflows: list[Dataflow] = Field(default_factory=list, max_length=1000)
