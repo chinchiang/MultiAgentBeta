@@ -24,6 +24,8 @@ export interface AuditEvent { seq: number; at: string; stage: string; message: s
 export interface Finding {
   id: string; title: string; severity: string; state: string; description: string; file: string | null;
   line: number | null; cwe: string | null; agent_ids: string[]; evidence_ids: string[]; threat_ids: string[];
+  decisions?: {decision: string; rationale: string; evidence_ids: string[]; threat_ids: string[]; at: string; actor: string; previous_state: string}[];
+  counterevidence?: string[];
 }
 export interface Review { agent_id: string; provider: string; model_id: string; family: string; status: string; findings: Finding[]; gaps: unknown[]; input_hash: string; simulated: boolean }
 export interface Threat {
