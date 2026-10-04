@@ -106,7 +106,7 @@ Tool integrations use bounded, fixed cases. This version has no arbitrary site e
 
 ## Security Policy
 
-- Without a complete three-model initial review, a valid threat model, traceable Requirements, and Oracles, the black-box cannot obtain credentials.
+- Without a complete three-model initial review, a valid threat model, traceable Requirements, and Oracles, the black-box cannot obtain permissions.
 - Source code is mounted only into white-box workers; the black-box runs under a different UID with no Docker socket, host secrets, or source code, and the container network is none.
 - All target requests go through an independent broker; exact METHOD/path, IP, identity, case hash, lease, budget, and optional deployment headers are checked every time. Redirects are refused.
 - Credentials may only be referenced by VIBEAUDIT_* environment variable names, and cannot be this tool's own settings (database URL, launcher token, etc.) or aliases of them; target credentials are injected by the supervisor and are not handed to the tools. local_only accepts only explicitly loopback model endpoints.
