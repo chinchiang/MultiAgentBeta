@@ -367,7 +367,10 @@ class WorkerRuntime:
                             if cancel_event is not None and cancel_event.is_set(): raise WorkerBlocked("Cancelled")
                             if lease_hook: await lease_hook()
                             try:
-                                self.leases.renew(cap)
+                                # Renewal is a durable database round trip: run it off the
+                                # event loop so a slow lease database cannot stall grant
+                                # replies or result reads for every other task.
+                                await asyncio.to_thread(self.leases.renew,cap)
                             except LeaseError:
                                 raise
                             except Exception:

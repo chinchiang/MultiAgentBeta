@@ -518,6 +518,30 @@ def test_guardian_tolerates_transient_lease_errors(runtime,monkeypatch):
     assert revoked==["Durable lease authority unavailable"]
 
 
+async def test_heartbeat_renews_off_the_event_loop(tmp_path,monkeypatch):
+    """A slow lease database must not stall the controller event loop: renewal
+    runs in a worker thread while grants and results keep flowing."""
+    rt=WorkerRuntime(tmp_path,backend="process_test",allow_process_test=True,ttl_seconds=0.2)
+    try:
+        loop_thread=threading.get_ident()
+        real=rt.leases.renew
+        idents=[]
+        def wrapped(capability,*args,**kwargs):
+            idents.append(threading.get_ident())
+            return real(capability,*args,**kwargs)
+        monkeypatch.setattr(rt.leases,"renew",wrapped)
+        cancel=asyncio.Event()
+        operation=asyncio.create_task(rt.execute_tool({"operation":"selftest","selftest":"spawn_child","timeout_seconds":30},manifest=manifest(),cancel_event=cancel,request_hook=allow))
+        await asyncio.sleep(1.2)
+        cancel.set()
+        result=await asyncio.wait_for(operation,30)
+        assert result["status"]=="outcome_unknown"
+        assert len(idents)>=3,idents
+        assert loop_thread not in set(idents)
+    finally:
+        rt.leases.close()
+
+
 def test_docker_control_confirms_absent_container_and_reports_real_failures(monkeypatch):
     """The production teardown path: a daemon-reported missing container counts as
     confirmed cleanup, while daemon failures stay unconfirmed."""
