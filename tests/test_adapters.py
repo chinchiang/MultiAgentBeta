@@ -364,20 +364,11 @@ class StateChangeTests(unittest.TestCase):
         self.assertTrue(adapters.state_changing({"method": "GET", "side_effects": True}))
 
 
-class ScannerPlanTests(unittest.TestCase):
-    def test_scanners_are_plans_not_host_executions(self):
-        plans = adapters.scanner_plans(".")
-        self.assertEqual({p["id"] for p in plans}, {"semgrep", "osv", "gitleaks", "zap", "schemathesis", "playwright", "promptfoo", "pyrit"})
-        self.assertTrue(all(p["sandbox_required"] and not p["executable"] and not p["shell"] for p in plans))
-        self.assertTrue(all(p["source_mount"]["read_only"] for p in plans))
-        semgrep = next(p for p in plans if p["id"] == "semgrep")
-        self.assertIn("/trusted/semgrep-rules.yml", semgrep["argv"])
-        self.assertNotIn("auto", semgrep["argv"])
-
+class ToolCapabilityTests(unittest.TestCase):
     def test_detected_cli_does_not_claim_ready(self):
         with patch.object(adapters.shutil, "which", return_value="/untrusted/bin/tool"):
             capabilities = adapters.tool_capabilities()
-        scanners = [c for c in capabilities if c["id"] in {p["id"] for p in adapters.scanner_plans(".")}]
+        scanners = [c for c in capabilities if c["id"] in {"semgrep", "osv", "gitleaks", "zap", "schemathesis", "playwright", "promptfoo", "pyrit"}]
         self.assertTrue(all(c["cli_detected"] and not c["available"] for c in scanners))
 
 

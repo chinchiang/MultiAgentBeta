@@ -231,7 +231,9 @@ class WorkerRuntime:
         caps=await self.capabilities()
         rows=[]
         for tool in TOOLS:
-            pin=self.images.get(tool) or (self.images.get("worker") if tool in {"playwright","schemathesis","promptfoo","pyrit"} else None)
+            # Resolve exactly like execute_tool does, so the inventory never calls a
+            # tool unprovisioned when execution would use the shared worker pin.
+            pin=self.images.get(tool) or self.images.get("worker")
             installed=False
             if caps.get("available") and self.backend=="docker" and isinstance(pin,str) and IMAGE.fullmatch(pin):
                 try:
@@ -305,18 +307,35 @@ class WorkerRuntime:
             image=spec.get("image_pin") or self.images.get(spec["tool_id"]) or self.images.get("worker")
             if self.backend=="docker" and (not isinstance(image,str) or not IMAGE.fullmatch(image)):
                 raise WorkerBlocked("Provision a trusted immutable worker image digest")
+            cases=spec.get("cases",[])
+            case_hash=cases[0]["hash"] if len(cases)==1 else canonical_hash({"cases":cases,"source_digest":manifest.get("source_digest")})
+            threat_hash=cases[0]["threat_model_hash"] if cases else spec.get("threat_model_hash","offline-whitebox")
+            binding_args=dict(run_id=manifest["run_id"],case_hash=case_hash,threat_hash=threat_hash,
+                              manifest_hash=canonical_hash(manifest),
+                              operation=spec["tool_id"]+(":"+spec["task_stage"] if spec.get("task_stage") in {"setup","cleanup"} else ""),
+                              repetition=repetition,spec_hash=canonical_hash(spec))
+            try:
+                cap=self.leases.issue(max_requests=min(spec.get("max_requests",100),manifest.get("budget",{}).get("max_requests",100)),
+                                      ttl_seconds=self.ttl,max_seconds=spec["timeout_seconds"],**binding_args)
+            except LeaseError:
+                # A controller crash after the worker finished must not turn paid,
+                # journaled work into an unreplayable collision; unfinished tasks
+                # keep their reconciliation path.
+                resumed=self.leases.finished_result(**binding_args)
+                if resumed is None:
+                    raise
+                resumed["resumed_from_journal"]=True
+                if isinstance(resumed.get("artifacts"),dict):
+                    resumed["artifacts"]={k:base64.b64decode(v) for k,v in resumed["artifacts"].items()}
+                if spec.get("operation")=="request_sequence":
+                    resumed=supervised_sequence(spec,resumed)
+                return redact_credentials(resumed,manifest)
             private=Path(tempfile.mkdtemp(prefix="w-",dir=self.root));os.chmod(private,0o700)
             inputs=private/"inputs";out=private/"out";broker=private/"broker"
             for directory,mode in [(inputs,0o755),(out,0o700),(broker,0o711)]: directory.mkdir();os.chmod(directory,mode)
             for name,data in files.items():
                 path=inputs/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(data);os.chmod(path,0o444)
             worker_id=uuid.uuid4().hex;name="vibeaudit-worker-"+worker_id
-            cases=spec.get("cases",[])
-            case_hash=cases[0]["hash"] if len(cases)==1 else canonical_hash({"cases":cases,"source_digest":manifest.get("source_digest")})
-            threat_hash=cases[0]["threat_model_hash"] if cases else spec.get("threat_model_hash","offline-whitebox")
-            cap=self.leases.issue(run_id=manifest["run_id"],case_hash=case_hash,threat_hash=threat_hash,manifest_hash=canonical_hash(manifest),
-                                  max_requests=min(spec.get("max_requests",100),manifest.get("budget",{}).get("max_requests",100)),
-                                    ttl_seconds=self.ttl,max_seconds=spec["timeout_seconds"],operation=spec["tool_id"]+(":"+spec["task_stage"] if spec.get("task_stage") in {"setup","cleanup"} else ""),repetition=repetition,spec_hash=canonical_hash(spec))
             prefix=[self.docker,"--host","unix:///var/run/docker.sock"] if self.backend=="docker" else []
             argv=docker_command(prefix=prefix,image=image,name=name,phase=spec["phase"],inputs=inputs,broker=broker,source_dir=spec.get("source_dir"),offline_db_dir=spec.get("offline_db_dir")) if self.backend=="docker" else [sys.executable,"-I",str(HERE/"worker_entry.py"),"worker",str(inputs/"_worker_task.json")]
             # Only the supervisor receives target credential references; the
@@ -333,34 +352,52 @@ class WorkerRuntime:
             self.active[cap["task_id"]]={"pid":proc.pid,"capability":cap,"work_dir":str(private)}
             async def send(value):
                 proc.stdin.write((json.dumps(value,separators=(",",":"))+"\n").encode());await proc.stdin.drain()
-            await send(initial)
             stop=asyncio.Event()
-            async def heartbeat():
-                while not stop.is_set():
-                    try:
-                        if cancel_event is not None and cancel_event.is_set(): raise WorkerBlocked("Cancelled")
-                        if lease_hook: await lease_hook()
-                        self.leases.renew(cap)
-                        await send({"kind":"heartbeat"})
-                    except Exception:
-                        self.leases.revoke(cap["id"],"Controller revoked worker lease")
-                        try: await send({"kind":"cancel"})
-                        except Exception: pass
-                        return
-                    try: await asyncio.wait_for(stop.wait(),max(.05,self.ttl/3))
-                    except TimeoutError: pass
-            beat=asyncio.create_task(heartbeat())
-            async def drain_stderr():
-                total=0
-                while data:=await proc.stderr.read(8192):
-                    total+=len(data)
-                    if total>256*1024:
-                        self.leases.revoke(cap["id"],"Supervisor stderr limit exceeded")
-                        return
-            errors=asyncio.create_task(drain_stderr())
+            beat=errors=None
             result=None
             try:
-                deadline=asyncio.get_running_loop().time()+spec["timeout_seconds"]+25
+                # From here on the supervisor exists and the work directory holds unredacted
+                # input: any failure must run the teardown below, or the process and its
+                # container, socket and files outlive this call.
+                await send(initial)
+                async def heartbeat():
+                    transient=0
+                    while not stop.is_set():
+                        try:
+                            if cancel_event is not None and cancel_event.is_set(): raise WorkerBlocked("Cancelled")
+                            if lease_hook: await lease_hook()
+                            try:
+                                self.leases.renew(cap)
+                            except LeaseError:
+                                raise
+                            except Exception:
+                                # One transient lease-database error must not kill a healthy
+                                # worker; three consecutive failures mean authority is gone.
+                                transient+=1
+                                if transient>=3: raise
+                            transient=0
+                            await send({"kind":"heartbeat"})
+                        except Exception:
+                            self.leases.revoke(cap["id"],"Controller revoked worker lease")
+                            try: await send({"kind":"cancel"})
+                            except Exception: pass
+                            return
+                        try: await asyncio.wait_for(stop.wait(),max(.05,self.ttl/3))
+                        except TimeoutError: pass
+                async def drain_stderr():
+                    total=0
+                    while data:=await proc.stderr.read(8192):
+                        total+=len(data)
+                        if total>256*1024:
+                            self.leases.revoke(cap["id"],"Supervisor stderr limit exceeded")
+                            return
+                beat=asyncio.create_task(heartbeat())
+                errors=asyncio.create_task(drain_stderr())
+                # The supervisor may spend the same bounded create budget the worker's
+                # hard deadline allows, then up to 20s confirming teardown: a shorter
+                # controller deadline would abandon a healthy worker and invent an
+                # unknown outcome for a task it never let finish.
+                deadline=asyncio.get_running_loop().time()+spec["timeout_seconds"]+min(45,spec["timeout_seconds"])+25
                 while True:
                     raw=await asyncio.wait_for(proc.stdout.readline(),max(.1,deadline-asyncio.get_running_loop().time()))
                     if not raw: break
@@ -379,15 +416,23 @@ class WorkerRuntime:
                 try: await send({"kind":"cancel"})
                 except Exception: pass
             finally:
-                stop.set();await beat
+                stop.set()
+                if beat: await beat
                 if proc.stdin and not proc.stdin.is_closing(): proc.stdin.close()
                 try: await asyncio.wait_for(asyncio.shield(proc.wait()),25)
                 except TimeoutError: pass  # Independent guardian remains responsible for teardown.
-                errors.cancel();await asyncio.gather(errors,return_exceptions=True)
+                if errors: errors.cancel();await asyncio.gather(errors,return_exceptions=True)
                 self.active.pop(cap["task_id"],None)
             if result is None:
                 self.leases.revoke(cap["id"],"No verified supervisor result")
                 result={"status":"outcome_unknown","reason":"No complete worker result; do not replay","cleanup_confirmed":False,"task_id":cap["task_id"]}
+            if proc.returncode is None:
+                # The supervisor delivered its result but outlived the grace period:
+                # nothing of value remains and a lingering broker socket or task
+                # file must not stay on disk.
+                proc.kill()
+                try: await asyncio.wait_for(proc.wait(),5)
+                except TimeoutError: pass
             if result.get("cleanup_confirmed") is True and proc.returncode is not None:
                 # The worker is gone; its inputs, outputs and unredacted supervisor record must not stay on disk.
                 result["work_dir_removed"]=remove_private_tree(private)
@@ -400,7 +445,11 @@ class WorkerRuntime:
         except (WorkerBlocked,LeaseError,ValueError,OSError) as exc:
             # Refused before any supervisor started, so nothing else can still be using the work directory.
             if private and proc is None: remove_private_tree(private)
-            return {"status":"blocked","reason":str(exc),"cleanup_confirmed":True}
+            # Our own gate messages are fixed local text; an OSError or unexpected
+            # error string can embed host paths or database details, so only its
+            # type name reaches the run record.
+            reason=str(exc) if isinstance(exc,(WorkerBlocked,LeaseError)) else f"{type(exc).__name__}: worker prerequisites failed before any dispatch"
+            return {"status":"blocked","reason":reason,"cleanup_confirmed":True}
 
     async def run_case(self,manifest,case,*,cancel_event,request_hook,lease_hook=None,repetition=0):
         return supervised_verdict(case,await self.execute_tool({"operation":"http_case","tool_id":"http_case","cases":[case],"phase":"blackbox", "timeout_seconds":min(120,manifest.get("budget",{}).get("max_seconds",120))},manifest=manifest,cancel_event=cancel_event,request_hook=request_hook,lease_hook=lease_hook,repetition=repetition))

@@ -8,7 +8,7 @@ All routes start with /api; with a session, an unknown /api path is a JSON 404. 
 
 | Method | Route | Purpose |
 |---|---|---|
-| GET | /session, /capabilities | Session/CSRF and actual configured runtime availability |
+| GET | /session, /capabilities | Session/CSRF and actual configured runtime availability; /capabilities?profile=… reports that runtime profile (default: default) |
 | GET / PUT | /projects, /projects/{id} | List/save project settings |
 | GET / PUT | /models, /models/{id} | List/save profiles; credential references only |
 | GET | /catalogs?standard=... | Canonical IDs, versions and provenance |
@@ -23,9 +23,9 @@ All routes start with /api; with a session, an unknown /api path is a JSON 404. 
 | POST | /runs/{id}/retest | New run linked to original findings (trace `retests` links, Markdown and SARIF note the parent) |
 | POST | /runs/{id}/reconcile | Operator attestation of worker cleanup; closes a cancelling run, which stays unresumable |
 | POST | /runs/{id}/findings/{finding_id}/decision | Evidence-backed refuted/inconclusive decision: cited black-box executions must test the finding's threats (the operator names them for a finding without threat links); refuting needs a pass and no failure of those threats in the run; a validated_dynamic finding is cleared only by a linked retest |
-| GET | /openapi.json | OpenAPI schema (session and CSRF token required; no interactive docs page) |
+| GET | /openapi.json | OpenAPI schema at /api/openapi.json (session and CSRF token required; no interactive docs page) |
 
-Stages: intake → preflight → whitebox → adjudication → threat_model → case_design → blackbox → report → complete.
+Stages: a new run is recorded at stage `intake` before any work; the executed graph is preflight → whitebox → adjudication → threat_model → case_design → blackbox → report → complete.
 Run status: created/running/cancelling/cancelled/completed/incomplete/blocked/failed.
 Finding state: hypothesis/corroborated_static/validated_dynamic/refuted/inconclusive.
 Execution state: pass/fail/inconclusive/blocked/execution_error/outcome_unknown. Tool completion does not imply security pass. A fail whose target reset, or a later dispatch, is unconfirmed keeps its finding and carries target_state_confirmed=false; like outcome_unknown it stops the run and blocks resume. A deployment-identity change stops the run (deployment_changed=true) and blocks resume; each scheduled repetition sends the case once. Model-designed cases must match a strict case contract, and supplied cases are type-checked when the run is created. Runs with supplied or retest cases record automated threats those cases leave out as gaps; the threat model must keep every threat ID such a case tests. Worker results are rebuilt from supervisor fields and records, so extra keys a worker returns cannot set a verdict, observations or step labels; every content oracle needs a verified positive control that showed each forbidden canary, whatever executor ran the case.

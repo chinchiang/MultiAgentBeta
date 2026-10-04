@@ -66,6 +66,34 @@ async def test_each_scheduled_repetition_sends_the_case_once(runtime,target):
     assert seen==["/fixture","/private"]*3
 
 
+async def test_finished_journal_result_is_reused_not_replayed(runtime,target):
+    """A controller crash after the worker finished reuses the paid journaled
+    result; the target must not see a replayed request."""
+    origin,seen=target
+    spec={"operation":"http_case","tool_id":"http_case","cases":[case()],"phase":"blackbox","timeout_seconds":5}
+    scope=manifest(origin)
+    first=await runtime.execute_tool(dict(spec),manifest=scope,cancel_event=asyncio.Event(),request_hook=allow)
+    assert first["status"]=="pass",first
+    assert seen==["/fixture","/private"]
+    replayed=await runtime.execute_tool(dict(spec),manifest=scope,cancel_event=asyncio.Event(),request_hook=allow)
+    assert replayed["status"]=="pass" and replayed.get("resumed_from_journal") is True,replayed
+    # No request reached the target a second time.
+    assert seen==["/fixture","/private"]
+
+
+async def test_unfinished_journal_collision_stays_blocked(runtime):
+    """A prepared task without a recorded result is never implicitly replayed."""
+    c=case()
+    spec={"operation":"http_case","tool_id":"http_case","cases":[c],"phase":"blackbox","timeout_seconds":5}
+    scope=manifest()
+    cap=runtime.leases.issue(run_id=scope["run_id"],case_hash=c["hash"],threat_hash="trusted-threat-hash",
+                             manifest_hash=canonical_hash(scope),max_requests=5,ttl_seconds=5,max_seconds=30,
+                             operation="http_case",repetition=0,spec_hash=canonical_hash(spec))
+    assert runtime.leases.task(cap["task_id"])["state"]=="prepared"
+    result=await runtime.execute_tool(dict(spec),manifest=scope,cancel_event=asyncio.Event(),request_hook=allow)
+    assert result["status"]=="blocked" and "already exists" in result["reason"],result
+
+
 async def test_real_independent_process_and_broker_preserve_oracle(runtime,target):
     origin,seen=target;scope=manifest(origin);requests=[]
     async def hook(**ctx):requests.append(ctx)
@@ -80,8 +108,11 @@ async def test_real_independent_process_and_broker_preserve_oracle(runtime,targe
     assert runtime.leases.task(result["task_id"])["state"]=="finished"
     assert result["work_dir_removed"] is True
     assert not list(runtime.root.glob("w-*"))
+    # The journal holds this exact task finished: the paid result is reused and
+    # no request reaches the target a second time. (run_case rebuilds the verdict
+    # from supervisor records, so the reuse marker is visible on execute_tool only.)
     again=await runtime.run_case(scope,case(),cancel_event=asyncio.Event(),request_hook=hook)
-    assert again["status"]=="blocked"
+    assert again["status"]=="pass"
     assert seen==["/fixture","/private"]
     assert not list(runtime.root.glob("w-*"))
 
@@ -311,6 +342,83 @@ def test_supervisor_that_cannot_start_reports_nothing_to_clean_up(tmp_path):
     assert (result["status"],result["cleanup_confirmed"],result["not_started"])==("blocked",True,True)
 
 
+async def test_supervisor_pipe_failure_cleans_up_instead_of_leaking(runtime,monkeypatch):
+    """A supervisor that dies before reading its task must not leave the lease,
+    the active table or the outcome unsettled: control or observation failure cannot count as clean."""
+    class ClosedPipe:
+        def write(self,data):raise BrokenPipeError("supervisor died before reading its task")
+        async def drain(self):pass
+        def is_closing(self):return False
+        def close(self):pass
+    class DeadSupervisor:
+        class Stream:
+            def __init__(self):self.data=b""
+            async def readline(self):return self.data
+            async def read(self,size=-1):return self.data
+        def __init__(self):
+            self.pid=424242;self.returncode=None;self.stdin=ClosedPipe()
+            self.stdout=self.Stream();self.stderr=self.Stream()
+        async def wait(self):self.returncode=1;return 1
+    spawned=[]
+    async def broken_exec(*args,**kwargs):
+        spawned.append(args);return DeadSupervisor()
+    monkeypatch.setattr(asyncio,"create_subprocess_exec",broken_exec)
+    result=await runtime.execute_tool({"operation":"http_case","tool_id":"http_case","cases":[case()],"phase":"blackbox","timeout_seconds":5},
+                                      manifest=manifest(),cancel_event=asyncio.Event(),request_hook=allow)
+    assert spawned
+    assert (result["status"],result["cleanup_confirmed"])==("outcome_unknown",False)
+    assert runtime.active=={}
+    states=[row[0] for row in runtime.leases._sql("SELECT state FROM worker_tasks").fetchall()]
+    assert states and set(states)<={"outcome_unknown"}
+
+
+async def test_tool_inventory_resolves_pins_like_execution(tmp_path):
+    """The inventory must describe the pin execution would actually use."""
+    shared="example/worker@sha256:"+"a"*64
+    rt=WorkerRuntime(tmp_path,backend="docker",image_pins={"worker":shared},allow_process_test=True)
+    try:
+        rows=await rt.tool_inventory()
+        by_id={row["id"]:row for row in rows}
+        assert all(row["image_pin"]==shared for row in rows)
+        assert by_id["semgrep"]["image_pin"]==by_id["zap"]["image_pin"]==shared
+    finally:
+        rt.leases.close()
+
+
+async def test_pre_send_revocation_is_known_not_unknown(runtime,monkeypatch):
+    """Nothing that never reached the target may demand reconciliation: an egress
+    revocation or lease expiry before the request is sent stays a known outcome."""
+    import sys
+    import vibe_audit.adapters as adapters_module
+    from vibe_audit import lease as lease_module
+    from vibe_audit.worker_entry import NotSent,Supervisor
+    monkeypatch.setitem(sys.modules,"adapters",adapters_module)
+    # The worker runs these modules flat in production; map them so the same class objects are compared here.
+    monkeypatch.setitem(sys.modules,"lease",lease_module)
+    sup=Supervisor.__new__(Supervisor)
+    sup.manifest=manifest()
+    sup.lease=runtime.leases
+    sup.worker_id="w"
+    sup.socket_lock=threading.Lock()
+    sup.sockets=set()
+    sup.revoked=threading.Event()
+    sup.cap=runtime.leases.issue(run_id="pre-send",case_hash="case",threat_hash="threat",manifest_hash="m",
+                                 max_requests=5,ttl_seconds=5,max_seconds=30,operation="http_case",repetition=0,spec_hash="s")
+    runtime.leases.claim(sup.cap,"w")
+    sup.revoked.set()
+    with pytest.raises(NotSent):
+        sup.forward("GET","/private",{},None)
+    assert not getattr(sup,"unknown_dispatch",False)
+    # An expired lease also stops the request before it is sent.
+    expired=runtime.leases.issue(run_id="pre-send-2",case_hash="case",threat_hash="threat",manifest_hash="m",
+                                 max_requests=5,ttl_seconds=0.1,max_seconds=30,operation="http_case",repetition=1,spec_hash="s")
+    runtime.leases.claim(expired,"w")
+    sup.cap=expired;sup.revoked=threading.Event()
+    await asyncio.sleep(0.15)
+    with pytest.raises(NotSent):
+        sup.forward("GET","/private",{},None)
+
+
 def test_controller_redacts_credentials_reflected_in_escaped_forms(monkeypatch):
     from vibe_audit.worker_runtime import redact_credentials
     monkeypatch.setenv("VIBEAUDIT_TEST_KEY","bob/secret token")
@@ -374,6 +482,61 @@ async def test_cancel_closes_network_before_killing_process_tree(runtime):
             status=Path(f"/proc/{child_pid}/stat").read_text().split()[2]
             assert status=="Z"  # reparented, already dead, pending init reaping
         except ProcessLookupError:pass
+
+
+def test_guardian_tolerates_transient_lease_errors(runtime,monkeypatch):
+    """One lease-database hiccup must not kill a mid-flight worker; three
+    consecutive failures still fail closed."""
+    import sys
+    import time as time_module
+    from vibe_audit import lease as lease_module
+    from vibe_audit.worker_entry import Supervisor
+    monkeypatch.setitem(sys.modules,"lease",lease_module)
+    class FlakyLease:
+        def __init__(self):self.calls=0
+        def validate(self,cap,worker_id):
+            self.calls+=1
+            raise RuntimeError("database is locked")
+        def revoke(self,*args,**kwargs):pass
+    sup=Supervisor.__new__(Supervisor)
+    sup.cap=runtime.leases.issue(run_id="guardian",case_hash="c",threat_hash="t",manifest_hash="m",
+                                 max_requests=5,ttl_seconds=5,max_seconds=30,operation="http_case",repetition=0,spec_hash="s")
+    sup.worker_id="w"
+    sup.lease=FlakyLease()
+    sup.revoked=threading.Event()
+    sup.controller_alive=True
+    sup.last_heartbeat=time_module.monotonic()
+    sup.sockets=set();sup.socket_lock=threading.Lock()
+    sup.grants={};sup.grant_lock=threading.Lock()
+    revoked=[]
+    monkeypatch.setattr(sup,"revoke_network",lambda reason="":(revoked.append(reason),sup.revoked.set()))
+    thread=threading.Thread(target=sup.guardian,daemon=True);thread.start()
+    deadline=time_module.monotonic()+0.4
+    while sup.lease.calls<2 and time_module.monotonic()<deadline:time_module.sleep(0.02)
+    assert not revoked and sup.lease.calls>=1
+    thread.join(timeout=3)
+    assert revoked==["Durable lease authority unavailable"]
+
+
+def test_docker_control_confirms_absent_container_and_reports_real_failures(monkeypatch):
+    """The production teardown path: a daemon-reported missing container counts as
+    confirmed cleanup, while daemon failures stay unconfirmed."""
+    import vibe_audit.worker_entry as worker_entry_module
+    from vibe_audit.worker_entry import Supervisor
+    sup=Supervisor.__new__(Supervisor)
+    sup.task={"container_name":"vibeaudit-worker-"+"a"*32}
+    def absent(method,path,timeout=5):return (404,b"no such container")
+    monkeypatch.setattr(worker_entry_module,"docker_api",absent)
+    assert sup.docker_control("kill",sup.task["container_name"]) is True
+    assert sup.docker_control("wait",sup.task["container_name"]) is True
+    assert sup.docker_control("rm","--force",sup.task["container_name"]) is True
+    def failing(method,path,timeout=5):return (500,b"daemon unavailable")
+    monkeypatch.setattr(worker_entry_module,"docker_api",failing)
+    assert sup.docker_control("wait",sup.task["container_name"]) is False
+    def raising(method,path,timeout=5):raise OSError("socket gone")
+    monkeypatch.setattr(worker_entry_module,"docker_api",raising)
+    assert sup.docker_control("kill",sup.task["container_name"]) is False
+    assert sup.docker_control("invent",sup.task["container_name"]) is False
 
 
 def test_docker_namespace_identity_mounts_are_fixed(tmp_path):

@@ -43,6 +43,9 @@ def stage_source(source_path: str, private_root: str | Path, *, expected_snapsho
     # mkdir's mode is ignored for an existing directory, and it holds every staged secret file.
     os.chmod(private, 0o700)
     target = private / uuid.uuid4().hex
+    # 0755 is deliberate: the whitebox worker container (UID 65532) bind-mounts this
+    # directory and must traverse it, so host-side privacy rests on the 0700 parent
+    # above, not on this copy's own mode. Do not tighten it here.
     target.mkdir(mode=0o755)
     try:
         return _copy_source(source, target, expected_snapshot, max_files, max_bytes)

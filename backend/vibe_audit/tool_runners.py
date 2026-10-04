@@ -299,8 +299,7 @@ async def run_tool(runtime, tool_id, manifest, case, *, cancel_event, request_ho
                     and row.get("path") == case["path"] and row.get("identity") == case.get("identity")):
                 observations.append({"kind": "http_response", "provenance": "adapter.http", "case_id": case["id"],
                     "repetition": repetition, "status_code": row.get("status_code"), "body": row.get("body", ""),
-                    "complete": row.get("complete") is True, "peer_ip": row.get("peer_ip"),
-                    "forbidden_matches": row.get("forbidden_matches", [])})
+                    "complete": row.get("complete") is True, "peer_ip": row.get("peer_ip")})
         verdict = evaluate_oracle(case, observations)
         normalized["security_status"] = verdict["status"]
         normalized["reason"] = verdict.get("reason", normalized["reason"])
