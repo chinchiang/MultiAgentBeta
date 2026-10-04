@@ -25,7 +25,7 @@
 
 ## 真實模型驗收
 
-準備確切型號、端點與 VIBEAUDIT_* 憑證環境變數，先跑每端點契約，再以隔離 staging 及合成資料跑完整流程。最後才在人工核定、按專案切分且未公開的測試集執行七組公平預算比較。未知用量、未完成及缺少觀測不能作零成本或通過處理。
+準備確切型號、端點與 VIBEAUDIT_* 憑證環境變數，先跑每端點契約，再以隔離 staging 及合成資料跑完整流程。最後才在人工核定、按專案切分且未公開的測試集執行七組公平預算比較。人工核定可用 0.2.1 附帶的盲審 matching 工具（`python -m vibe_audit.benchmark_matching`，用法見 benchmarks/README.md）產生盲審工作表、記錄兩位 reviewer 裁定並回填 gold；工具只記錄裁定宣告，審核本身仍須由真人完成。未知用量、未完成及缺少觀測不能作零成本或通過處理。
 
 ---
 
@@ -56,4 +56,4 @@ This version continues from 0.1.0, adding the isolated worker, PostgreSQL integr
 
 ## Real Model Acceptance
 
-Prepare the exact model names, endpoints and VIBEAUDIT_* credential environment variables; run the per-endpoint contracts first, then run the full flow with an isolated staging environment and synthetic data. Only at the end run the seven-group fair budget comparison on a manually adjudicated, project-partitioned and unpublished test set. Unknown usage, incomplete runs and missing observations cannot be treated as zero-cost or as passes.
+Prepare the exact model names, endpoints and VIBEAUDIT_* credential environment variables; run the per-endpoint contracts first, then run the full flow with an isolated staging environment and synthetic data. Only at the end run the seven-group fair budget comparison on a manually adjudicated, project-partitioned and unpublished test set. For the manual adjudication, the blind-review matching tool shipped with 0.2.1 (`python -m vibe_audit.benchmark_matching`, usage in benchmarks/README.md) produces the blinded worksheet, records the two reviewers' verdicts and backfills the gold; the tool records adjudication declarations only — the review itself must still be performed by real humans. Unknown usage, incomplete runs and missing observations cannot be treated as zero-cost or as passes.
