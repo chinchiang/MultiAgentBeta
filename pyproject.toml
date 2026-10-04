@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vibe-audit"
-version = "0.2.0"
+version = "0.2.1"
 description = "Evidence-gated multi-model security testing workbench"
 requires-python = ">=3.12"
 license = "Apache-2.0"

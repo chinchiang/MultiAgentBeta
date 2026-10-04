@@ -59,7 +59,7 @@ def create_app(data_dir=None, database_url=None, testing=False, session_token=No
         store.close()
 
     # The schema is served behind the session; a Swagger page could not load its assets under this CSP.
-    app=FastAPI(title="Vibe Audit",version="0.2.0",lifespan=lifespan,docs_url=None,redoc_url=None,openapi_url="/api/openapi.json")
+    app=FastAPI(title="Vibe Audit",version="0.2.1",lifespan=lifespan,docs_url=None,redoc_url=None,openapi_url="/api/openapi.json")
     app.state.store=store
     app.state.engine=engine
     app.state.session_token=session_token
