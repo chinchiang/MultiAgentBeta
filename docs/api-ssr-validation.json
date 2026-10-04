@@ -1,6 +1,6 @@
 {
-  "check": "loopback API + React SSR; separate browser receipt",
-  "run_id": "9a332c1d-5e29-49f3-ad62-7c707fee767f",
+  "check": "loopback API + React SSR, not browser E2E",
+  "run_id": "c0d7939a-8c52-4a97-beb3-86c487cdaa0b",
   "status": "incomplete",
   "reviews": 3,
   "outcomes": [
@@ -8,7 +8,6 @@
     "pass",
     "inconclusive"
   ],
-  "evidence_verified": 7,
   "tabs_rendered": [
     "overview",
     "trace",
@@ -16,6 +15,7 @@
     "evidence",
     "activity"
   ],
+  "evidence_verified": 7,
   "report_formats": [
     "markdown",
     "json",

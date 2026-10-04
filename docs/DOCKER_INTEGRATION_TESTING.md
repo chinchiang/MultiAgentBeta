@@ -10,6 +10,8 @@ VALIDATION.md 的「重跑」只示範 tests/test_tool_runners.py。本文記錄
 /usr/lib/postgresql/18/bin/initdb -D /tmp/va-pg -U vibeaudit_test --auth=trust
 mkdir -p /tmp/va-pgsock
 /usr/lib/postgresql/18/bin/pg_ctl -D /tmp/va-pg -l /tmp/va-pg.log -o "-k /tmp/va-pgsock -p 55432 -c listen_addresses=''" start
+# initdb 只建立角色，不會建立同名資料庫；測試 URL 指向的資料庫要自己建：
+/usr/lib/postgresql/18/bin/psql -h /tmp/va-pgsock -p 55432 -U vibeaudit_test -d postgres -c "CREATE DATABASE vibeaudit_test OWNER vibeaudit_test"
 ```
 
 ## 2. 測試用 runtime profile
