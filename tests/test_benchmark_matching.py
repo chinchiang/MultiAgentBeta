@@ -183,6 +183,40 @@ def test_matches_verdicts_require_a_consistent_gold_reference(tmp_path):
                                                _adjudication(tmp_path, "bob", worksheet, broken)])
 
 
+def test_reviewer_names_are_normalized_before_dedup(tmp_path):
+    dataset, records, report, worksheet = _mini_with_worksheet(tmp_path)
+    full = _all_decisions(worksheet, "new_positive")
+    padded = _adjudication(tmp_path, " alice", worksheet, full)
+    upper = _adjudication(tmp_path, "ALICE", worksheet, full)
+    with pytest.raises(BenchmarkError, match="distinct"):
+        apply_adjudications(dataset, records, [padded, upper])
+    bob = _adjudication(tmp_path, "bob", worksheet, full)
+    updated, _, record = apply_adjudications(dataset, records, [padded, bob])
+    assert record["reviewers"] == ["alice", "bob"]
+    for entry in updated["projects"][0]["samples"]:
+        assert "alice" in entry["gold"]["reviewers"]
+    arbiter = _adjudication(tmp_path, "Alice ", worksheet, [full[0]])
+    with pytest.raises(BenchmarkError, match="distinct"):
+        apply_adjudications(dataset, records, [padded, bob], [arbiter])
+
+
+def test_worksheet_rationales_come_only_from_reporting_independent_steps(tmp_path):
+    dataset, records, report, worksheet = _mini_with_worksheet(tmp_path)
+    debate = next(r for r in records if r["arm"] == "debate" and r["sample_id"] == "alpha")
+    debate["observations"][-1]["rationale"] = "debate summary: reviewer two already confirmed this sink"
+    single = next(r for r in records if r["arm"] == "single_a" and r["sample_id"] == "alpha")
+    single["observations"][0]["rationale"] = "independent note: unused import path"
+    ws = build_worksheet(dataset, records)
+    text = json.dumps(ws)
+    assert "debate summary" not in text and "reviewer two" not in text
+    for entry in ws["samples"]:
+        for finding in entry["unknown_findings"]:
+            if entry["sample_id"] == "alpha":
+                assert finding["rationales"] == ["independent note: unused import path"]
+            else:
+                assert "independent note" not in finding["rationales"], "rationales must not cross samples"
+
+
 def test_updated_dataset_and_results_round_trip(tmp_path):
     dataset, records, report, worksheet = _mini_with_worksheet(tmp_path)
     def mixed(sid):

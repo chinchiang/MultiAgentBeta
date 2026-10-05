@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import unicodedata
 from pathlib import Path
 
 from jsonschema import validate
@@ -17,6 +18,11 @@ from .benchmark import DEFAULT_DATASET, BenchmarkError, _digest, compute_metrics
 from .schemas import BENCHMARK_DATASET_SCHEMA, MATCHING_ADJUDICATION_SCHEMA, MATCHING_WORKSHEET_SCHEMA
 
 VERDICTS = ("matches_positive", "matches_negative", "new_positive", "not_a_vulnerability")
+
+
+def _canonical_name(name):
+    """NFKC + trim + casefold so ' alice'/'ALICE'/homoglyphs cannot pose as a second reviewer."""
+    return unicodedata.normalize("NFKC", name).strip().casefold()
 
 
 def build_worksheet(dataset, records):
@@ -39,6 +45,12 @@ def build_worksheet(dataset, records):
                 entry["reported_by_runs"] += 1
                 entry["reproduced"] = entry["reproduced"] or finding_id in row["reproduced_ids"]
                 for observation in row["observations"]:
+                    # Debate rationales discuss peer reviews and would unblind strategy identity;
+                    # only independent steps that actually reported this finding may contribute.
+                    if observation.get("phase") != "independent":
+                        continue
+                    if finding_id not in observation.get("response", {}).get("finding_ids", []):
+                        continue
                     rationale = observation.get("rationale")
                     if rationale:
                         entry["rationales"].add(rationale)
@@ -63,6 +75,7 @@ def build_worksheet(dataset, records):
 def _load_adjudication(path, worksheet_hash, expected_ids, complete=True):
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     validate(data, MATCHING_ADJUDICATION_SCHEMA)
+    data["reviewer"] = _canonical_name(data["reviewer"])
     if data["worksheet_hash"] != worksheet_hash:
         raise BenchmarkError(f"{Path(path).name}: worksheet_hash does not match the rebuilt blinded worksheet")
     seen = set()
@@ -94,7 +107,7 @@ def apply_adjudications(dataset, records, reviewer_paths, arbiter_paths=(), mode
         raise BenchmarkError("Two independent named reviewer adjudication files are required")
     reviewers = [_load_adjudication(path, worksheet_hash, expected_ids) for path in reviewer_paths]
     names = [r["reviewer"] for r in reviewers]
-    if len(set(names)) != len(names) or any(not name.strip() for name in names):
+    if len(set(names)) != len(names) or any(not name for name in names):
         raise BenchmarkError("Reviewer names must be non-empty and distinct")
     arbiters = [_load_adjudication(path, worksheet_hash, expected_ids, complete=False) for path in arbiter_paths]
     arbiter_names = [a["reviewer"] for a in arbiters]

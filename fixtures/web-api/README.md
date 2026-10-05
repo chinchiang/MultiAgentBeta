@@ -36,6 +36,7 @@ $env:VIBEAUDIT_FIXTURE_B = 'fixture-web-b'
 `fixed` 只修正以上兩個刻意缺陷，並非全面安全的應用模板。
 
 `bola-case.json` 是核心 HTTP adapter 的案例範例。使用時在 run 中允許 `GET /orders/order-b`，auth profiles ID 必須為 `tenant-a`、`tenant-b`，且威脅模型要包含 `T-BOLA` 與 `R-TENANT-ISOLATION` 的對應需求。Compiler 會補來源／威脅版本雜湊；不要手動偽造 gate receipt。此檔本身不是已完成的測試結果。
+
 ---
 # Local Synthetic Web/API Range
 

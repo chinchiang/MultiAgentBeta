@@ -18,6 +18,7 @@ Accessed 2026-09-24 during planning; implementation dependencies are separately 
 | Tokenizer asset | https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken ; installed tiktoken_ext/openai_public.py | SHA256 223921b76ee99bde995b7ff738513eef100fb51d18c93597a113bcffe865b2a7; downloaded at setup, runtime downloads forbidden |
 
 License references: LangGraph MIT; LiteLLM non-enterprise MIT with separate enterprise terms; Strix Apache-2.0; Shannon AGPL-3.0 (reference only); Gitleaks MIT; OSV-Scanner Apache-2.0. Tool images, model weights, rules and data retain their own licenses. Root license never overrides those terms.
+
 ---
 # 來源清冊
 

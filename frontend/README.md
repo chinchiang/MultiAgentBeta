@@ -55,6 +55,7 @@ npm run build
 後端啟動後，設定 `VIBEAUDIT_SESSION_TOKEN` 為後端的啟動權杖再執行 `npm run smoke`，或 `npm run smoke -- --base-url http://127.0.0.1:8000`。只接受數字 loopback HTTP origin，會留下明確標示的合成評估紀錄。
 
 此檢查實際建立與啟動 demo，驗證三份合成 review、`pass/fail/inconclusive` 結果、所有證據讀取、三種報告，再使用真實 Run 資料渲染 React 的五個報告分頁，並驗證不可信 HTML 以文字跳脫。這是 API 與 React SSR 整合測試；不包含瀏覽器點擊、視覺截圖、SSE 重連或真實 LLM／目標驗證。表單互動與窄螢幕仍需依上述功能驗收步驟檢查。
+
 ---
 # Vibe Audit Local Workbench
 

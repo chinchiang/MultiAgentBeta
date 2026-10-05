@@ -37,6 +37,7 @@ Control header 為 `X-Fixture-Control: local-synthetic-control`。靶場拒絕�
 `proposed`、`invoked` 與 `committed` 分開記錄；測試以 mock sink 的實際變化佐證，不能只用回答字串推測成功。這個 ledger 仍是**受測合成 fixture 的觀測介面**，不是已實作的正式可信外部 collector。核心 HTTP adapter 不會將此 JSON 自動升格成可信工具效果證據。正式環境需要獨立 collector、完整 trace 和真正授權鏈路；不可用 mock tool 取代它們。
 
 `fixed` 僅修正這些刻意缺陷，並非全面安全的 AI 應用模板。
+
 ---
 # Local Synthetic AI Agent Application Range
 

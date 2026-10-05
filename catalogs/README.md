@@ -31,6 +31,7 @@ Hash 只能檢測相對於可信 manifest 的變動，不是 OWASP 簽章；整�
 - WSTG 4.2 官方 checklist 有 98 列、97 個不同 ID；Buffer Overflow 與 Format String Injection 共用 `WSTG-INPV-13`。本地以同一真實 ID 合併，保留兩個子項名稱與目的，不自創替代識別碼。最終目錄共有 345 + 97 + 10 + 10 = 462 個不同 ID。
 
 這是標準 ID 的完整目錄，不是所有標準要求都已實作測試，也不代表 OWASP 認證。
+
 ---
 # Version-pinned standards catalogs
 

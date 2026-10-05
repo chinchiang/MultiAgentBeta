@@ -60,6 +60,7 @@ python -m vibe_audit.benchmark_matching apply --results benchmarks/results-synth
 每組共享同一 paired sample 的已封存 tool_context；其用量在每組預算中扣除，剩下額度再均分模型步驟。每個模型步驟至少要分到 provider 的重試次數（`MAX_ATTEMPTS`），各組才有相同的 schema 修正機會；live 預設 `max_model_calls` 因此是 8（debate 四步 × 2），傳入不足的預算會直接拒絕，工具用掉呼叫次數而不足時該步驟 blocked。工具實際每個 pair 只執行一次，報告也保留 `shared_tool_contexts`；各組用量相加不能當作實際總工具花費。所有獨立初審 payload 一致且不包含 gold；debate 才取得匿名初審。模型無法自行宣布動態重現，只有可信工具／oracle adapter 可提供 reproduced_ids；未做重現時 reproduce_rate 為 null。
 
 CLI 可用 `--mode live --config path/to/benchmark-config.json`，config 只接受 `profiles` 與 `model_policy`。profiles 的 a/b/c 各自符合既有 ModelProfile，金鑰只能用 `VIBEAUDIT_*` 環境變數參照。CLI 預設傳統工具仍是本地 AST；整合 sandbox 工具時使用 async API 注入。測試用注入 adapter 可驗證調度及預算，不代表真實模型品質。
+
 ---
 # Comparison experiment: verify the engineering first, then the effect
 

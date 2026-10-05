@@ -81,6 +81,7 @@ promptfoo/PyRIT 等外部工具可在 setup、正控制、主測試、collector�
 先跑無模型憑證測試，再以實際三端點跑 probe 和完整流程。參照 VALIDATION.md 的環境變數啟用 PostgreSQL/Docker 整合測試。沒有端點時不要把合成 demo 改標為真實模型結果。
 
 停止會先撤網再清理；outcome_unknown 不可直接恢復重播。確認靶場狀態並重置後，建立新 run 保留舊證據。
+
 ---
 # Linux / WSL2 Operations Guide
 

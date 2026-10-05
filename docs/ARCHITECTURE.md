@@ -56,6 +56,7 @@ Built-in TS Web and Python AI targets are synthetic and deterministic. AI trials
 ## Limits
 
 No complete semantic call graph or exhaustive source reading, no proven model independence, no effectiveness claim from synthetic benchmarks, no remote fleet/SaaS, no arbitrary browser automation, no production deployment/patching. Source-to-deployment matching via an operator-supplied header proves that header equality, not cryptographic correspondence to the source. Host administrators remain trusted; file hashes are not forensic immutability.
+
 ---
 # 架構與方法論 — 0.2.1
 

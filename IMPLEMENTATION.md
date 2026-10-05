@@ -53,6 +53,7 @@ Reviewers receive the same core questions and snapshot without scanner findings 
 Cases bind threat model, requirement, source, fixture and case hashes. Controls and cleanup must also be in scope. Deployment change requires a new run; unknown outcomes require reconciliation/reset.
 
 See docs/LINUX_SETUP.md, docs/VALIDATION.md and docs/DELIVERY.md.
+
 ---
 # 實作契約 — 0.2.1
 

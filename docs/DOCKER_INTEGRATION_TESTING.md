@@ -60,6 +60,7 @@ export VIBEAUDIT_TEST_NODE="$(command -v node)"   # 必須是 Node 24
 ```
 
 資料目錄 /tmp/va-pg 可保留，下次直接 `pg_ctl … start` 即可。
+
 ---
 # Full Docker integration testing on Linux
 

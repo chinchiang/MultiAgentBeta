@@ -66,6 +66,7 @@ npm.cmd run build
 ```
 
 沒有 Linux/PostgreSQL/固定映像的測試環境，對應整合測試會明確 skip。不能將 skipped 當作驗證通過。核心 Apache-2.0；外部工具、規則、模型與標準內容各保留原授權。
+
 ---
 # Vibe Audit 0.2.1
 
