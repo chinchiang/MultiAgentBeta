@@ -1,0 +1,89 @@
+{
+  "id": "matching-example",
+  "version": "1",
+  "synthetic": true,
+  "description": "Minimal synthetic walkthrough dataset for the blind-review matching tool. Two samples, each with one gold positive, one gold negative, and two unknown findings to adjudicate. See README.md next to this file.",
+  "projects": [
+    {
+      "id": "acme-portal",
+      "family": "python-web",
+      "split": "test",
+      "samples": [
+        {
+          "id": "sqli-login",
+          "input": {
+            "files": [
+              {
+                "path": "app/login.py",
+                "content": "import sqlite3\n\nDB = sqlite3.connect(\"app.db\")\n\n\ndef login(username: str, password: str):\n    query = f\"SELECT * FROM users WHERE name = '{username}' AND pw = '{password}'\"\n    return DB.execute(query).fetchall()\n\n\ndef audit_log(user_id: str, action: str):\n    query = \"SELECT * FROM audit WHERE user_id = ? AND action = ?\"\n    return DB.execute(query, (user_id, action)).fetchall()\n"
+              }
+            ]
+          },
+          "gold": {
+            "positive_ids": ["sqli-login:sql-injection-login"],
+            "negative_ids": ["sqli-login:safe-parameterized-query"],
+            "human_reviewed": false,
+            "reviewers": [],
+            "oracle_verified": true,
+            "oracle_evidence": ["fixture:benchmarks/examples/README.md walkthrough"],
+            "synthetic": true
+          },
+          "responses": {
+            "traditional": [
+              {"finding_ids": ["sqli-login:sql-injection-login"], "reproduced_ids": ["sqli-login:sql-injection-login"], "status": "completed", "tokens": 0, "requests": 0, "model_calls": 0, "latency_seconds": 0.0, "cost_usd": 0.0}
+            ],
+            "a": [
+              {"finding_ids": ["sqli-login:sql-injection-login", "semgrep:sqli-login-py-l6", "bandit:b608-login-py-l10"], "reproduced_ids": [], "status": "completed", "tokens": 0, "requests": 0, "model_calls": 0, "latency_seconds": 0.0, "cost_usd": 0.0}
+            ],
+            "b": [
+              {"finding_ids": ["sqli-login:sql-injection-login", "semgrep:sqli-login-py-l6"], "reproduced_ids": [], "status": "completed", "tokens": 0, "requests": 0, "model_calls": 0, "latency_seconds": 0.0, "cost_usd": 0.0}
+            ],
+            "c": [
+              {"finding_ids": ["sqli-login:sql-injection-login"], "reproduced_ids": [], "status": "completed", "tokens": 0, "requests": 0, "model_calls": 0, "latency_seconds": 0.0, "cost_usd": 0.0}
+            ],
+            "debate": [
+              {"finding_ids": ["sqli-login:sql-injection-login", "semgrep:sqli-login-py-l6"], "reproduced_ids": [], "status": "completed", "tokens": 0, "requests": 0, "model_calls": 0, "latency_seconds": 0.0, "cost_usd": 0.0}
+            ]
+          }
+        },
+        {
+          "id": "eval-report",
+          "input": {
+            "files": [
+              {
+                "path": "app/report.py",
+                "content": "import json\n\nDEFAULT_CHART = {\"type\": \"bar\"}\n\n\ndef render_chart(config: str):\n    spec = json.loads(config or json.dumps(DEFAULT_CHART))\n    return f\"<chart data-spec='{spec['type']}'>\"\n\n\ndef note_tool(code: str):\n    sandbox = {\"__builtins__\": {}}\n    return eval(code, sandbox)\n"
+              }
+            ]
+          },
+          "gold": {
+            "positive_ids": ["eval-report:unsafe-eval-config"],
+            "negative_ids": ["eval-report:exec-note-tool"],
+            "human_reviewed": false,
+            "reviewers": [],
+            "oracle_verified": true,
+            "oracle_evidence": ["fixture:benchmarks/examples/README.md walkthrough"],
+            "synthetic": true
+          },
+          "responses": {
+            "traditional": [
+              {"finding_ids": ["eval-report:unsafe-eval-config"], "reproduced_ids": [], "status": "completed", "tokens": 0, "requests": 0, "model_calls": 0, "latency_seconds": 0.0, "cost_usd": 0.0}
+            ],
+            "a": [
+              {"finding_ids": ["eval-report:unsafe-eval-config", "bandit:b307-report-py-l9", "lgtm:py/template-injection-report"], "reproduced_ids": [], "status": "completed", "tokens": 0, "requests": 0, "model_calls": 0, "latency_seconds": 0.0, "cost_usd": 0.0}
+            ],
+            "b": [
+              {"finding_ids": ["eval-report:unsafe-eval-config", "bandit:b307-report-py-l9"], "reproduced_ids": [], "status": "completed", "tokens": 0, "requests": 0, "model_calls": 0, "latency_seconds": 0.0, "cost_usd": 0.0}
+            ],
+            "c": [
+              {"finding_ids": ["eval-report:unsafe-eval-config"], "reproduced_ids": [], "status": "completed", "tokens": 0, "requests": 0, "model_calls": 0, "latency_seconds": 0.0, "cost_usd": 0.0}
+            ],
+            "debate": [
+              {"finding_ids": ["eval-report:unsafe-eval-config", "bandit:b307-report-py-l9"], "reproduced_ids": [], "status": "completed", "tokens": 0, "requests": 0, "model_calls": 0, "latency_seconds": 0.0, "cost_usd": 0.0}
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "reviewer": "carol",
+  "worksheet_hash": "9ec08a1a9980d22d5ca796a5490a4b9b9e44bd3edf78cb9be5fe174166b4ec19",
+  "decisions": [
+    {
+      "sample_id": "eval-report",
+      "finding_id": "bandit:b307-report-py-l9",
+      "verdict": "matches_positive",
+      "matched_gold_id": "eval-report:unsafe-eval-config",
+      "notes": "Arbiter ruling on the alice/bob split. Both reviewers agree eval() is reachable with hostile input; the only question is bookkeeping. The gold entry already covers the eval sink, so a matches_positive with the existing id keeps metrics comparable."
+    }
+  ]
+}

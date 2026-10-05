@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "reviewer": "alice",
+  "worksheet_hash": "9ec08a1a9980d22d5ca796a5490a4b9b9e44bd3edf78cb9be5fe174166b4ec19",
+  "decisions": [
+    {
+      "sample_id": "eval-report",
+      "finding_id": "bandit:b307-report-py-l9",
+      "verdict": "matches_positive",
+      "matched_gold_id": "eval-report:unsafe-eval-config",
+      "notes": "Same eval() sink as the existing gold positive; bandit just labels it with its own convention. Not a separate vulnerability."
+    },
+    {
+      "sample_id": "eval-report",
+      "finding_id": "lgtm:py/template-injection-report",
+      "verdict": "not_a_vulnerability",
+      "notes": "spec['type'] comes from json.loads of a chart config and is embedded into an attribute the frontend treats as text; no execution context. False positive."
+    },
+    {
+      "sample_id": "sqli-login",
+      "finding_id": "bandit:b608-login-py-l10",
+      "verdict": "matches_negative",
+      "matched_gold_id": "sqli-login:safe-parameterized-query",
+      "notes": "Line 10 is the parameterized audit query with bound placeholders; bandit B608 fires on the string literal but the value is not user-controlled. Same known false positive already in gold."
+    },
+    {
+      "sample_id": "sqli-login",
+      "finding_id": "semgrep:sqli-login-py-l6",
+      "verdict": "matches_positive",
+      "matched_gold_id": "sqli-login:sql-injection-login",
+      "notes": "Same f-string SQL sink as the gold positive, re-reported by another tool under a different id."
+    }
+  ]
+}

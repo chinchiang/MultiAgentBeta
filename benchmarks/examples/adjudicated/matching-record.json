@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "dataset_id": "matching-example",
+  "original_dataset_hash": "6398cd831de0aa8daaf7fc631630a71c48bc847dbe7cd0547cec60d7f601cabb",
+  "updated_dataset_hash": "1571088c5566eb86bd39cefa18c7012652a5193cad54d6627e0e5cb9e42e2cdb",
+  "results_hash": "82cb4bc9707e1b75b8c89494e111382a17ed3d51412ac0601d382c2db8703dd2",
+  "worksheet_hash": "9ec08a1a9980d22d5ca796a5490a4b9b9e44bd3edf78cb9be5fe174166b4ec19",
+  "reviewers": [
+    "alice",
+    "bob"
+  ],
+  "arbiters": [
+    "carol"
+  ],
+  "counts": {
+    "decisions": 4,
+    "agreed": 3,
+    "arbitrated": 1
+  },
+  "decisions": [
+    {
+      "sample_id": "eval-report",
+      "finding_id": "bandit:b307-report-py-l9",
+      "verdict": "matches_positive",
+      "resolution": "arbitrated",
+      "reviewers": {
+        "alice": "matches_positive",
+        "bob": "new_positive"
+      },
+      "arbiter": "carol",
+      "matched_gold_id": "eval-report:unsafe-eval-config"
+    },
+    {
+      "sample_id": "eval-report",
+      "finding_id": "lgtm:py/template-injection-report",
+      "verdict": "not_a_vulnerability",
+      "resolution": "agreed",
+      "reviewers": {
+        "alice": "not_a_vulnerability",
+        "bob": "not_a_vulnerability"
+      }
+    },
+    {
+      "sample_id": "sqli-login",
+      "finding_id": "bandit:b608-login-py-l10",
+      "verdict": "matches_negative",
+      "resolution": "agreed",
+      "reviewers": {
+        "alice": "matches_negative",
+        "bob": "matches_negative"
+      },
+      "matched_gold_id": "sqli-login:safe-parameterized-query"
+    },
+    {
+      "sample_id": "sqli-login",
+      "finding_id": "semgrep:sqli-login-py-l6",
+      "verdict": "matches_positive",
+      "resolution": "agreed",
+      "reviewers": {
+        "alice": "matches_positive",
+        "bob": "matches_positive"
+      },
+      "matched_gold_id": "sqli-login:sql-injection-login"
+    }
+  ],
+  "declaration": "This record documents adjudication declarations. The tool cannot prove that the named reviews occurred."
+}

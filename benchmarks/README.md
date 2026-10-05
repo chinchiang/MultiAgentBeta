@@ -32,7 +32,7 @@ python -m vibe_audit.benchmark_matching worksheet --results benchmarks/results-s
 python -m vibe_audit.benchmark_matching apply --results benchmarks/results-synthetic/results.jsonl --report benchmarks/results-synthetic/report.json --reviewer reviewer-a.json --reviewer reviewer-b.json --output-dir benchmarks/results-adjudicated
 ```
 
-回填後 `unadjudicated_ids` 清空、precision 可計算；隨附合成資料的 gold 仍標記 synthetic=true，正式 `metrics` 維持 null，只有回填結果進入 `preview_metrics`。真實資料集（synthetic=false）在兩人回填且 oracle 條件齊備後，重算的指標才能晉升為正式 `metrics`，且報告會附上 adjudication 來源與限制說明。
+回填後 `unadjudicated_ids` 清空、precision 可計算；隨附合成資料的 gold 仍標記 synthetic=true，正式 `metrics` 維持 null，只有回填結果進入 `preview_metrics`。完整可重現的範例（縮小資料集、兩位 reviewer 與 arbiter 裁定檔、apply 輸出）見 `benchmarks/examples/`。真實資料集（synthetic=false）在兩人回填且 oracle 條件齊備後，重算的指標才能晉升為正式 `metrics`，且報告會附上 adjudication 來源與限制說明。
 
 隨附 gold 的 human_reviewed=false，所有品質指標只放在 `preview_metrics`，正式 `metrics=null`。模型組在 local_tools／live 的 blocked 情境不填零品質分數，以免把未測當成漏報。
 
@@ -95,7 +95,7 @@ python -m vibe_audit.benchmark_matching worksheet --results benchmarks/results-s
 python -m vibe_audit.benchmark_matching apply --results benchmarks/results-synthetic/results.jsonl --report benchmarks/results-synthetic/report.json --reviewer reviewer-a.json --reviewer reviewer-b.json --output-dir benchmarks/results-adjudicated
 ```
 
-After backfilling, `unadjudicated_ids` is empty and precision becomes computable; the bundled synthetic gold is still marked synthetic=true, so the formal `metrics` stay null and only the backfilled results enter `preview_metrics`. For a real dataset (synthetic=false), the recomputed metrics may be promoted to formal `metrics` once the two-reviewer backfill and the oracle conditions are met; the rebuilt report then carries the adjudication provenance and its limitation note.
+After backfilling, `unadjudicated_ids` is empty and precision becomes computable; the bundled synthetic gold is still marked synthetic=true, so the formal `metrics` stay null and only the backfilled results enter `preview_metrics`. A fully reproducible example (a miniature dataset, two reviewers' and an arbiter's adjudication files, and the apply outputs) lives in `benchmarks/examples/`. For a real dataset (synthetic=false), the recomputed metrics may be promoted to formal `metrics` once the two-reviewer backfill and the oracle conditions are met; the rebuilt report then carries the adjudication provenance and its limitation note.
 
 The bundled gold has human_reviewed=false; all quality metrics are placed only in `preview_metrics`, and the formal `metrics=null`. In blocked local_tools/live scenarios the model arms are not filled with zero quality scores, so that untested is not mistaken for a miss.
 

@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "dataset_id": "matching-example",
+  "dataset_hash": "6398cd831de0aa8daaf7fc631630a71c48bc847dbe7cd0547cec60d7f601cabb",
+  "results_hash": "82cb4bc9707e1b75b8c89494e111382a17ed3d51412ac0601d382c2db8703dd2",
+  "instructions": "Review each unknown finding against the sample source and gold references. Decide one verdict per finding without knowledge of which strategy produced it. Two independent named reviewers must submit separate adjudication files covering every unknown finding.",
+  "samples": [
+    {
+      "project_id": "acme-portal",
+      "sample_id": "eval-report",
+      "input": {
+        "files": [
+          {
+            "path": "app/report.py",
+            "content": "import json\n\nDEFAULT_CHART = {\"type\": \"bar\"}\n\n\ndef render_chart(config: str):\n    spec = json.loads(config or json.dumps(DEFAULT_CHART))\n    return f\"<chart data-spec='{spec['type']}'>\"\n\n\ndef note_tool(code: str):\n    sandbox = {\"__builtins__\": {}}\n    return eval(code, sandbox)\n"
+          }
+        ]
+      },
+      "gold": {
+        "positive_ids": [
+          "eval-report:unsafe-eval-config"
+        ],
+        "negative_ids": [
+          "eval-report:exec-note-tool"
+        ]
+      },
+      "unknown_findings": [
+        {
+          "finding_id": "bandit:b307-report-py-l9",
+          "reported_by_runs": 5,
+          "reproduced": false,
+          "rationales": []
+        },
+        {
+          "finding_id": "lgtm:py/template-injection-report",
+          "reported_by_runs": 3,
+          "reproduced": false,
+          "rationales": []
+        }
+      ]
+    },
+    {
+      "project_id": "acme-portal",
+      "sample_id": "sqli-login",
+      "input": {
+        "files": [
+          {
+            "path": "app/login.py",
+            "content": "import sqlite3\n\nDB = sqlite3.connect(\"app.db\")\n\n\ndef login(username: str, password: str):\n    query = f\"SELECT * FROM users WHERE name = '{username}' AND pw = '{password}'\"\n    return DB.execute(query).fetchall()\n\n\ndef audit_log(user_id: str, action: str):\n    query = \"SELECT * FROM audit WHERE user_id = ? AND action = ?\"\n    return DB.execute(query, (user_id, action)).fetchall()\n"
+          }
+        ]
+      },
+      "gold": {
+        "positive_ids": [
+          "sqli-login:sql-injection-login"
+        ],
+        "negative_ids": [
+          "sqli-login:safe-parameterized-query"
+        ]
+      },
+      "unknown_findings": [
+        {
+          "finding_id": "bandit:b608-login-py-l10",
+          "reported_by_runs": 3,
+          "reproduced": false,
+          "rationales": []
+        },
+        {
+          "finding_id": "semgrep:sqli-login-py-l6",
+          "reported_by_runs": 5,
+          "reproduced": false,
+          "rationales": []
+        }
+      ]
+    }
+  ]
+}

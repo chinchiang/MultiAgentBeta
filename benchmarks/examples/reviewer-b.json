@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "reviewer": "bob",
+  "worksheet_hash": "9ec08a1a9980d22d5ca796a5490a4b9b9e44bd3edf78cb9be5fe174166b4ec19",
+  "decisions": [
+    {
+      "sample_id": "eval-report",
+      "finding_id": "bandit:b307-report-py-l9",
+      "verdict": "new_positive",
+      "notes": "Disagrees with treating this as a duplicate: the config path and the report renderer take different inputs, so it deserves its own gold entry rather than being folded into the existing one."
+    },
+    {
+      "sample_id": "eval-report",
+      "finding_id": "lgtm:py/template-injection-report",
+      "verdict": "not_a_vulnerability",
+      "notes": "Chart spec key only; no template engine involved and the value is validated by json.loads. False positive."
+    },
+    {
+      "sample_id": "sqli-login",
+      "finding_id": "bandit:b608-login-py-l10",
+      "verdict": "matches_negative",
+      "matched_gold_id": "sqli-login:safe-parameterized-query",
+      "notes": "Parameterized query with bound parameters; a scanner id mismatch, not a real injection."
+    },
+    {
+      "sample_id": "sqli-login",
+      "finding_id": "semgrep:sqli-login-py-l6",
+      "verdict": "matches_positive",
+      "matched_gold_id": "sqli-login:sql-injection-login",
+      "notes": "Duplicate tool id for the already-recorded f-string SQL injection sink."
+    }
+  ]
+}
