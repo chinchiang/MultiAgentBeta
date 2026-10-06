@@ -167,7 +167,7 @@ agents:
     # 身分限 model_selectable（policy.py:135-139）；目標 IP 釘選。
     # 這些是程式碼層控制，VibeSec 目前只能驗證 claude_permission 類證據，所以沒有 mitigation_evidence。
     # 2026-10-06 由 @chinchiang 決定：以上控制視為切斷對外通訊這隻腳。can_communicate_externally 仍標 true，因為請求確實會送出；
-    # 切腳靠的是上述程式碼層控制。接受的殘留：fixture profile 的 JSON body 仍由模型決定（見 decisions、t-indirect-injection）。
+    # 切腳靠的是上述程式碼層控制。接受的殘留：fixture profile 的 JSON body 仍由模型決定，以及低頻寬的選擇通道（見 decisions、t-indirect-injection）。
     mitigations: [egress_allowlist, tool_allowlist]
     trifecta_leg_cut: external_comms
   - id: c-reporter
@@ -194,7 +194,8 @@ threats:
       model_selectable 的測試身分（見 t-model-identity）。
       殘留：(1) fixture profile 路徑（例如 ai_http 的 prompt）的 JSON body 仍由模型決定，只送往操作者宣告的 fixture 目標；
       (2) 低頻寬的選擇通道：模型仍可在允許範圍內選擇 path、身分、各 header 的值與是否帶上、請求的次序與次數，每個請求的 header
-      約十餘 bits；2026-10-06 G4 架構審查指出原先允許 q 值與多項列表時頻寬更高，已改為單一值。
+      約十餘 bits；2026-10-06 G4 架構審查指出原先允許 q 值與多項列表時頻寬更高，已改為單一值。兩項殘留皆由 @chinchiang 接受
+      （見 decisions）。
     status: mitigated
     gate: G6
   - id: t-model-identity
@@ -415,6 +416,7 @@ decisions:
   - >-
     c-test-designer 的致命三要素以 external_comms 切腳（2026-10-06，@chinchiang 決定）。理由：模型設計的請求只能送往操作者
     明列的 origin 與 IP，method/path（含 query）須完全符合 allowed_requests；POST 除 fixture profile 外一律 blocked；header 值限
-    固定詞彙、身分限 model_selectable；目標回應不回饋給任何模型。接受的殘留：fixture profile 路徑（例如 ai_http 的 prompt）的
-    JSON body 仍由模型決定，只送往操作者宣告的 fixture 目標。
+    固定詞彙中的單一值、身分限 model_selectable；目標回應不回饋給任何模型。接受的殘留：(1) fixture profile 路徑（例如 ai_http
+    的 prompt）的 JSON body 仍由模型決定，只送往操作者宣告的 fixture 目標；(2) 低頻寬的選擇通道：模型在允許範圍內選擇 path、
+    身分、header 值與是否帶上、請求的次序與次數，每個請求的 header 約十餘 bits（同日 G4 架構審查後補記，@chinchiang 接受）。
   - 本模型為 AI 草稿（2026-10-06，依 commit f9d9cf1 起草、同日依本分支修正更新），待 AppSec 與 Red Team 簽核（docs/01「驗證方式」第 4 項）。
