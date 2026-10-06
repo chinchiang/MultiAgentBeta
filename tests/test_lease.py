@@ -122,3 +122,19 @@ def test_postgres_claim_budget_and_durable_journal():
         store.revoke(cap["id"],"Synthetic controller crash")
         assert store.task(cap["task_id"])["state"]=="outcome_unknown"
     finally:store.close()
+
+
+def test_postgres_lease_store_refuses_a_non_utf8_database(monkeypatch):
+    import psycopg
+    closed=[]
+    class Info:
+        @staticmethod
+        def parameter_status(name):return "SQL_ASCII" if name=="server_encoding" else None
+    class Conn:
+        info=Info()
+        def close(self):closed.append(True)
+        def execute(self,*_):raise AssertionError("No statement may run on a non-UTF8 database")
+    monkeypatch.setattr(psycopg,"connect",lambda *a,**k:Conn())
+    with pytest.raises(LeaseError,match="UTF8"):
+        LeaseStore(database_url="postgresql://synthetic/db")
+    assert closed==[True]

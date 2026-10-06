@@ -61,6 +61,10 @@ class Store:
         if database_url:
             import psycopg
             self.conn = psycopg.connect(database_url, autocommit=True)
+            # A SQL_ASCII database hands every text column back as undecoded bytes.
+            if self.conn.info.parameter_status("server_encoding") != "UTF8":
+                self.conn.close()
+                raise ValueError("The PostgreSQL database must use UTF8 encoding")
         else:
             self.conn = sqlite3.connect(str(self.root / "demo.sqlite3"), check_same_thread=False, isolation_level=None)
             self.conn.execute("PRAGMA journal_mode=WAL")

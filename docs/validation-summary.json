@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-04T22:17:18.735585+00:00",
+  "generated_at": "2026-10-06T15:26:47.786744+00:00",
   "model_endpoints_tested": false,
   "efficacy_established": false,
   "note": "Suites overlap; do not add counts as distinct tests. JUnit successful records include subtests where emitted. Docker, database and synthetic model contracts are separate evidence.",
@@ -22,15 +22,33 @@
       "failures_detail": []
     },
     {
+      "file": "docs/linux-docker-integration-2026-10-06.xml",
+      "tests": 523,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 15,
+      "passed": 508,
+      "seconds": 278.16,
+      "timestamp": [
+        "2026-10-06T15:22:05.903102+00:00"
+      ],
+      "skip_reasons": [
+        "Explicit pinned Docker tool image required",
+        "Pinned Docker tool image required",
+        "Windows redirector process-tree fallback"
+      ],
+      "failures_detail": []
+    },
+    {
       "file": "docs/linux-docker-integration.xml",
-      "tests": 386,
+      "tests": 388,
       "failures": 0,
       "errors": 0,
       "skipped": 1,
-      "passed": 385,
-      "seconds": 467.379,
+      "passed": 387,
+      "seconds": 885.537,
       "timestamp": [
-        "2026-10-05T05:47:16.318651+08:00"
+        "2026-10-05T12:39:49.021476+08:00"
       ],
       "skip_reasons": [
         "Windows redirector process-tree fallback"
@@ -39,14 +57,14 @@
     },
     {
       "file": "docs/linux-regression.xml",
-      "tests": 386,
+      "tests": 388,
       "failures": 0,
       "errors": 0,
       "skipped": 21,
-      "passed": 365,
-      "seconds": 272.81,
+      "passed": 367,
+      "seconds": 352.202,
       "timestamp": [
-        "2026-10-05T06:12:21.682709+08:00"
+        "2026-10-05T12:33:38.207495+08:00"
       ],
       "skip_reasons": [
         "Explicit pinned Docker tool image required",
@@ -176,14 +194,14 @@
     },
     {
       "file": "docs/windows-regression.xml",
-      "tests": 386,
+      "tests": 388,
       "failures": 0,
       "errors": 0,
       "skipped": 25,
-      "passed": 361,
-      "seconds": 329.062,
+      "passed": 363,
+      "seconds": 435.186,
       "timestamp": [
-        "2026-10-04T22:55:08.690979+08:00"
+        "2026-10-05T11:30:35.368661+08:00"
       ],
       "skip_reasons": [
         "Explicit pinned Docker tool image required",

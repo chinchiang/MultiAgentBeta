@@ -7,7 +7,7 @@ VALIDATION.md 的「重跑」只示範 tests/test_tool_runners.py。本文記錄
 沒有資料庫管理權限時，以一般使用者啟動只聽 unix socket 的實例。`--auth=trust` 只適用於這種僅供本機測試、用完即丟的實例。
 
 ```sh
-/usr/lib/postgresql/18/bin/initdb -D /tmp/va-pg -U vibeaudit_test --auth=trust
+/usr/lib/postgresql/18/bin/initdb -D /tmp/va-pg -U vibeaudit_test --auth=trust -E UTF8
 mkdir -p /tmp/va-pgsock
 /usr/lib/postgresql/18/bin/pg_ctl -D /tmp/va-pg -l /tmp/va-pg.log -o "-k /tmp/va-pgsock -p 55432 -c listen_addresses=''" start
 # initdb 只建立角色，不會建立同名資料庫；測試 URL 指向的資料庫要自己建：
@@ -53,6 +53,14 @@ export VIBEAUDIT_TEST_NODE="$(command -v node)"   # 必須是 Node 24
 
 前四項是測試環境設定不完整；最後一項是測試本身依賴外部環境變數，已在程式碼中修正。結果與收據見 VALIDATION.md。
 
+## 2026-10-06 遇到的問題
+
+| 現象 | 原因 | 處理 |
+|---|---|---|
+| PostgreSQL 相關測試出現 `TypeError: a bytes-like object is required, not 'str'` | 在 C／POSIX locale 下執行 initdb 而沒有指定編碼，叢集預設為 SQL_ASCII；psycopg 會把這種資料庫的每個 text 欄位以 bytes 傳回 | 第 1 節的 initdb 已加上 `-E UTF8`。舊叢集可以用 `CREATE DATABASE … ENCODING 'UTF8' TEMPLATE template0` 重建資料庫。現在連到非 UTF8 資料庫時，LeaseStore 與 Store 會直接以「must use UTF8 encoding」拒絕 |
+| 黑箱案例全部是 blocked，原因為 Supervisor could not prepare the worker | work_root 太長，`<work_root>/w-XXXXXXXX/broker/broker.sock` 超過 Linux unix socket 路徑上限 107 bytes | work_root 最多 77 bytes，例如第 2 節的 /tmp/va-workers。現在 preflight 會直接以「work_root is too long for the worker broker socket」回報不可用 |
+| 完整 pipeline 測試停在 whitebox，錯誤為 Incomplete review or source mismatch | cabb124 把審查輸入的 `focus` 改為 `core_questions` 與 `untrusted_commander_focus`，這個只在真實 Docker 下執行的測試沒有跟著改 | 已修正 tests/test_local_pipeline.py |
+
 ## 清理
 
 ```sh
@@ -71,7 +79,7 @@ The "re-run" in VALIDATION.md only demonstrates tests/test_tool_runners.py. This
 Without database administration rights, start, as a regular user, an instance that listens only on a unix socket. `--auth=trust` is suitable only for this kind of local-test-only, use-and-discard instance.
 
 ```sh
-/usr/lib/postgresql/18/bin/initdb -D /tmp/va-pg -U vibeaudit_test --auth=trust
+/usr/lib/postgresql/18/bin/initdb -D /tmp/va-pg -U vibeaudit_test --auth=trust -E UTF8
 mkdir -p /tmp/va-pgsock
 /usr/lib/postgresql/18/bin/pg_ctl -D /tmp/va-pg -l /tmp/va-pg.log -o "-k /tmp/va-pgsock -p 55432 -c listen_addresses=''" start
 # initdb creates only the role, not a database with the same name; the database the test URL points to must be created yourself:
@@ -116,6 +124,14 @@ The whole local run takes about 7 minutes. When receipts are needed, add `--juni
 | Three API tests read runs left behind by other tests; another test cannot read the run it just stored | create_app reads VIBEAUDIT_DATABASE_URL, so these tests connect to the shared PostgreSQL instead of the SQLite under their own tmp_path | Fixed: tests/test_engine.py and tests/test_contracts_and_workspace.py remove that variable before each test |
 
 The first four items are incomplete test-environment configuration; the last item was the tests themselves depending on an external environment variable, which has already been fixed in the code. Results and receipts are in VALIDATION.md.
+
+## Problems encountered on 2026-10-06
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| PostgreSQL tests fail with `TypeError: a bytes-like object is required, not 'str'` | initdb ran under the C/POSIX locale without an encoding, so the cluster defaulted to SQL_ASCII; psycopg returns every text column of such a database as bytes | The initdb in section 1 now passes `-E UTF8`. An existing cluster can recreate the database with `CREATE DATABASE … ENCODING 'UTF8' TEMPLATE template0`. LeaseStore and Store now refuse a non-UTF8 database outright with "must use UTF8 encoding" |
+| Every black-box case is blocked with Supervisor could not prepare the worker | work_root is so long that `<work_root>/w-XXXXXXXX/broker/broker.sock` exceeds the 107-byte Linux unix socket path limit | Keep work_root at 77 bytes or less, such as /tmp/va-workers in section 2. Preflight now reports the runtime unavailable with "work_root is too long for the worker broker socket" |
+| The full pipeline test stops at whitebox with Incomplete review or source mismatch | cabb124 renamed the review input `focus` to `core_questions` and `untrusted_commander_focus`; this test runs only under real Docker and was not updated | Fixed in tests/test_local_pipeline.py |
 
 ## Cleanup
 

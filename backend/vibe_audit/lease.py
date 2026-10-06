@@ -38,6 +38,10 @@ class LeaseStore:
         if self.postgres:
             import psycopg
             self.conn = psycopg.connect(database_url, autocommit=True, connect_timeout=3, options="-c statement_timeout=2000 -c lock_timeout=1000")
+            # A SQL_ASCII database hands every text column back as undecoded bytes, so token checks would fail obscurely.
+            if self.conn.info.parameter_status("server_encoding") != "UTF8":
+                self.conn.close()
+                raise LeaseError("The PostgreSQL lease database must use UTF8 encoding")
         else:
             if not self.database_path:
                 raise LeaseError("A durable lease database is required")

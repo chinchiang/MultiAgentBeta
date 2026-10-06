@@ -725,3 +725,22 @@ async def test_real_worker_sees_only_its_view_of_a_model_case(runtime,target):
     assert "model-written" not in json.dumps(result["worker_observations"])
     # The supervisor's own records keep the sealed case's names.
     assert [o["name"] for o in result["observations"] if o["kind"]=="precondition"]==["model-written control name"]
+
+
+async def test_docker_runtime_rejects_a_work_root_too_long_for_the_broker_socket(tmp_path,monkeypatch):
+    import vibe_audit.worker_entry as worker_entry_module
+    class Leases:
+        postgres=True
+    def info(method,path,timeout=5):
+        return 200,{"OSType":"linux","SecurityOptions":["name=seccomp,profile=builtin"]}
+    monkeypatch.setattr(worker_entry_module,"docker_api",info)
+    tmp_path=tmp_path.resolve()
+    base=len(os.fsencode(tmp_path))+1
+    deep=tmp_path/("d"*max(1,78-base))
+    assert len(os.fsencode(deep))>=78
+    result=await WorkerRuntime(deep,lease_store=Leases(),docker_binary="/usr/bin/docker").capabilities()
+    assert result["available"] is False and "work_root" in result["reason"]
+    if base<77:
+        fits=tmp_path/("d"*(77-base))
+        assert len(os.fsencode(fits))==77
+        assert (await WorkerRuntime(fits,lease_store=Leases(),docker_binary="/usr/bin/docker").capabilities())["available"] is True

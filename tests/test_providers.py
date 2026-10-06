@@ -490,7 +490,8 @@ async def test_retry_policy_denial_retains_previous_billed_usage(profile, policy
     assert error.value.usage["model_calls"] == len(calls) == 1
 
 
-@pytest.mark.parametrize("content", [
+# Ids are positional so that test receipts (JUnit names) never spell out a synthetic credential.
+SECRET_FORMATS = [
     "DATABASE_URL = postgres://app:synthetic-secret@db:5432/app",
     'uri = "mongodb+srv://app:synthetic-secret@cluster0.example.net/db"',
     "redis://:synthetic-secret@cache:6379/0",
@@ -515,7 +516,10 @@ async def test_retry_policy_denial_retains_previous_billed_usage(profile, policy
     "DefaultEndpointsProtocol=https;AccountName=demo;AccountKey=synthetic-secret;EndpointSuffix=core.windows.net",
     "hf = hf_" + "s" * 34, "aws = ASIA" + "S" * 16, "mail = SG." + "s" * 22 + "." + "s" * 43, "google = ya29." + "s" * 30,
     "hook = https://hooks.slack.com/services/T0000/B0000/" + "s" * 24,
-])
+]
+
+
+@pytest.mark.parametrize("content", SECRET_FORMATS, ids=[f"format-{i}" for i in range(len(SECRET_FORMATS))])
 def test_redaction_covers_common_secret_formats(content):
     redacted = redact_text(content)
     assert "synthetic-secret" not in redacted

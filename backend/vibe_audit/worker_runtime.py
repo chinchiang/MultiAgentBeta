@@ -258,6 +258,9 @@ class WorkerRuntime:
             return {"available":False,"reason":"Production workers require the local Linux Docker runtime"}
         if not self.leases.postgres:
             return {"available":False,"reason":"Production worker leases require PostgreSQL"}
+        # Each supervisor binds <work_root>/w-XXXXXXXX/broker/broker.sock, and Linux caps a socket path at 107 bytes.
+        if len(os.fsencode(self.root/"w-xxxxxxxx"/"broker"/"broker.sock"))>107:
+            return {"available":False,"reason":"work_root is too long for the worker broker socket; use a path of at most 77 bytes"}
         try:
             from .worker_entry import docker_api
             status,info=await asyncio.to_thread(docker_api,"GET","/info")
