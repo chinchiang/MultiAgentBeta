@@ -34,6 +34,7 @@ RESERVED_ENV = frozenset({
     "VIBEAUDIT_UI_ORIGINS", "VIBEAUDIT_RUNTIME_CONFIG", "VIBEAUDIT_FIXTURE_CONFIG", "VIBEAUDIT_CATALOG_ROOT",
     "VIBEAUDIT_PYTHON", "VIBEAUDIT_RELAY_ORIGIN", "VIBEAUDIT_POSTGRES_PASSWORD", "VIBEAUDIT_POSTGRES_IMAGE",
     "VIBEAUDIT_TEST_DATABASE_URL", "VIBEAUDIT_TEST_POSTGRES", "VIBEAUDIT_TEST_RUNTIME_CONFIG",
+    "VIBEAUDIT_MODEL_CREDENTIAL_ORIGINS",
 })
 
 
@@ -56,6 +57,21 @@ def credential_env_allowed(name, environ=None):
     if "://" in value:
         return False
     return not any(environ.get(key) == value for key in RESERVED_ENV)
+
+
+def shared_credentials(manifest, environ=None):
+    """Test identities whose credential is also a model credential, by variable name or by value.
+
+    Either way the target would receive a model key, or the model provider a target credential.
+    """
+    environ = os.environ if environ is None else environ
+    def names(key):
+        return {p.get("credential_env") for p in manifest.get(key) or [] if isinstance(p, dict)
+                and isinstance(p.get("credential_env"), str) and p.get("credential_env")}
+    model_names = names("models")
+    model_values = {environ.get(name) for name in model_names} - {None, ""}
+    return sorted(name for name in names("auth_profiles")
+                  if name in model_names or environ.get(name) in model_values)
 _HEADER_NAME = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
 _FORBIDDEN_HEADERS = {
     "host", "authorization", "cookie", "proxy-authorization", "connection",
@@ -71,6 +87,30 @@ _FORBIDDEN_HEADERS = {
 RELAY_HEADERS = frozenset({"x-vibe-case", "x-vibe-identity", "x-schemathesis-testcaseid"})
 # Model-designed cases need no custom routing, tenant or identity signal; operators write those cases.
 MODEL_CASE_HEADERS = frozenset({"accept", "accept-language", "content-type", "if-match", "if-none-match", "x-requested-with"})
+# A model reads the snapshot and operator notes, so a free-form header value could carry them to the target.
+# Its header values come from small fixed vocabularies instead, one value per header with no list or q parameter:
+# every extra choice is room to encode snapshot text. Operator-written cases keep free values.
+_MEDIA_TYPES = ("*/*", "text/*", "image/*", "application/*", "application/json", "application/problem+json",
+                "application/xml", "application/x-www-form-urlencoded", "application/octet-stream", "application/pdf",
+                "multipart/form-data", "text/html", "text/plain", "text/csv", "text/xml", "text/event-stream",
+                "image/png", "image/jpeg")
+_LANGUAGES = ("*", "en", "en-US", "en-GB", "zh", "zh-TW", "zh-CN", "zh-HK", "ja", "ja-JP", "ko", "ko-KR", "fr", "de",
+              "es", "pt", "pt-BR", "it", "nl", "ru", "ar", "he", "tr", "vi", "th", "id")
+
+
+def _one_of(options):
+    return re.compile("|".join(re.escape(option) for option in options))
+
+
+_MODEL_HEADER_VALUES = {
+    "accept": _one_of(_MEDIA_TYPES),
+    "accept-language": _one_of(_LANGUAGES),
+    "content-type": re.compile(r"(?:application/json|application/x-www-form-urlencoded|application/xml|text/plain)(?:; ?charset=utf-8)?"),
+    # The model never sees a target response, so it holds no real entity tag: only the wildcard means anything.
+    "if-match": re.compile(r"\*"),
+    "if-none-match": re.compile(r"\*"),
+    "x-requested-with": re.compile(r"XMLHttpRequest"),
+}
 
 
 def case_headers_allowed(headers, *, model_designed=False, relay=False):
@@ -79,13 +119,16 @@ def case_headers_allowed(headers, *, model_designed=False, relay=False):
         return True
     if not isinstance(headers, dict) or len(headers) > 24:
         return False
-    def allowed(name):
+    def allowed(name, value):
         lower = name.lower()
         if lower in RELAY_HEADERS:
             return relay
-        return lower not in _FORBIDDEN_HEADERS and (not model_designed or lower in MODEL_CASE_HEADERS)
-    return all(isinstance(name, str) and _HEADER_NAME.fullmatch(name) and allowed(name)
+        if not model_designed:
+            return lower not in _FORBIDDEN_HEADERS
+        return lower in MODEL_CASE_HEADERS and bool(_MODEL_HEADER_VALUES[lower].fullmatch(value))
+    return all(isinstance(name, str) and _HEADER_NAME.fullmatch(name)
                and isinstance(value, str) and len(value) <= 4096 and all(32 <= ord(c) <= 126 for c in value)
+               and allowed(name, value)
                for name, value in headers.items())
 
 
@@ -143,6 +186,63 @@ def _origin(manifest):
         raise AdapterBlocked("Target must be a single exact HTTP(S) origin without credentials, path or query.") from None
 
 
+# Cloud instance metadata services; the link-local check below covers the rest of 169.254.0.0/16.
+_METADATA_IPS = frozenset(ipaddress.ip_address(item) for item in ("169.254.169.254", "fd00:ec2::254", "100.100.100.200"))
+
+
+def _unmapped(address):
+    return address.ipv4_mapped if address.version == 6 and address.ipv4_mapped else address
+
+
+def target_ip_refused(address):
+    """An address no target may use, whatever the operator lists: metadata, link-local, unspecified or multicast.
+
+    Loopback and private addresses stay allowed, since local and internal staging targets use them.
+    """
+    address = _unmapped(address)
+    if (address in _METADATA_IPS or address.is_link_local or address.is_unspecified or address.is_multicast
+            or (address.version == 6 and address.is_site_local)):
+        return True
+    # 240.0.0.0/4 and the broadcast address. IPv6 "reserved" would also cover ::1, so it is not used.
+    return address.version == 4 and address.is_reserved
+
+
+_DEFAULT_PORTS = {"http": 80, "https": 443, "postgres": 5432, "postgresql": 5432}
+
+
+def control_plane_target(manifest, endpoints):
+    """The console or database endpoint (host:port) the target would reach, or None.
+
+    The supervisor connects from the console's own host, so a loopback target can be the console itself.
+    """
+    _, host, port = _origin(manifest)
+    try:
+        ips = {_unmapped(ipaddress.ip_address(item)) for item in manifest.get("allowed_target_ips", [])}
+    except (TypeError, ValueError):
+        raise AdapterBlocked("Allowed target IPs must be explicit IP addresses, not hostnames or ranges.") from None
+    for url in endpoints:
+        try:
+            parts = urlsplit(url)
+            other = (parts.hostname or "").lower()
+            other_port = parts.port or _DEFAULT_PORTS.get(parts.scheme)
+        except (TypeError, ValueError):
+            continue
+        if not other or other_port != port:
+            continue
+        try:
+            address = _unmapped(ipaddress.ip_address(other))
+        except ValueError:
+            address = None
+        if other == "localhost" or (address is not None and address.is_loopback):
+            hit = any(item.is_loopback for item in ips)
+        else:
+            hit = address in ips if address is not None else other == host
+        if hit:
+            # Never echo the URL itself: a database URL can carry its password.
+            return f"[{other}]:{port}" if ":" in other else f"{other}:{port}"
+    return None
+
+
 def _pinned_address(host, port, allowed_ips):
     try:
         if not isinstance(allowed_ips, list) or any(not isinstance(item, str) for item in allowed_ips):
@@ -152,6 +252,8 @@ def _pinned_address(host, port, allowed_ips):
         raise AdapterBlocked("Allowed target IPs must be explicit IP addresses, not hostnames or ranges.") from None
     if not allowed:
         raise AdapterBlocked("No target IP addresses were explicitly authorized.")
+    if any(target_ip_refused(item) for item in allowed):
+        raise AdapterBlocked("Target IPs cannot be cloud metadata, link-local, unspecified or multicast addresses.")
     try:
         literal = ipaddress.ip_address(host)
     except ValueError:
@@ -229,6 +331,8 @@ def _prepare_request(manifest, case):
         secret = os.environ.get(env_name)
         if not secret or len(secret) > 8192 or any(ord(c) < 33 or ord(c) > 126 for c in secret):
             raise AdapterBlocked("Authentication credential is missing or invalid.")
+        if env_name in shared_credentials(manifest):
+            raise AdapterBlocked("A test identity credential cannot also be a model credential.")
         header = profile.get("header", "Authorization")
         scheme = profile.get("scheme", "Bearer")
         if header not in {"Authorization", "X-API-Key"} or scheme not in {"Bearer", "", "Basic"}:
@@ -423,7 +527,7 @@ async def execute_case(manifest: dict, case: dict, *, cancel_event, request_hook
                     or any(not isinstance(t, str) or not t for t in control["required_text"])):
                 raise AdapterBlocked("Positive controls require a name, GET path, expected 2xx status and explicit required text.")
             request = {"method": "GET", "path": control.get("path"), "headers": control.get("headers") or {},
-                       "identity": control.get("identity"), "body": None}
+                       "identity": control.get("identity"), "body": None, "designed_by": case.get("designed_by")}
             _prepare_request(manifest, request)
             controls.append((control, request))
 

@@ -32,8 +32,8 @@ The API listens on 127.0.0.1 only. A browser gets a session by sending the start
 2. Probe exact model endpoints. Each of three independent reviewers receives identical core questions and source context. Static scanners can run concurrently; initial reviewers cannot see their conclusions.
 3. Seal all reviews, retain the union, preserve individual claims, inspect exact source references and run at most one challenger round. Votes cannot establish or dismiss a finding.
 4. Establish assets, actors, trust boundaries, dataflows, threats and security requirements. Model-derived requirements retain derived provenance. Existing controls need evidence; unknowns remain visible.
-5. Validate threat completeness and canonical standard IDs. Compile only traceable, scoped cases with positive controls, explicit oracle, allowed identities and cleanup.
-6. Execute externally through a source-free worker. Every request checks capability, lease, run/case binding, method/path, identity, IP and budget. Deployment header mismatch stops the branch.
+5. Validate threat completeness and canonical standard IDs. Compile only traceable, scoped cases with positive controls, explicit oracle, allowed identities and cleanup. A model-designed case may use only test identities the operator marked model_selectable, and its header values are single values from fixed vocabularies with no lists or q parameters, so it cannot pick a privileged account or carry snapshot text to the target beyond a few bits of choice.
+6. Execute externally through a source-free worker. Every request checks capability, lease, run/case binding, method/path, identity, IP and budget. Deployment header mismatch stops the branch. Target IPs are never cloud metadata, link-local, unspecified or multicast addresses; preflight refuses a target that is this console or its database, and a test identity whose credential is also a model key.
 7. Evaluate actual observations. Distinguish pass/fail, inconclusive, blocked, execution_error and outcome_unknown. Preserve evidence and counter-evidence; export only run-owned verified artifacts.
 8. A fix creates a new linked run with new source/deployment identification. Unknown side effects require reconciliation/reset rather than replay.
 
@@ -41,7 +41,7 @@ Standards classify threats and requirements; they do not create compliance autom
 
 ## Isolation and recovery
 
-Linux Docker workers use nonroot UID 65532 for whitebox and 65533 for blackbox, dropped capabilities, read-only filesystems, resource/output limits and network none. Only whitebox receives the immutable source staging mount. Tool output goes to a size-bounded in-container tmpfs, not a host directory. The private staging copy (which keeps the repository's secret files for the scanners) is deleted when the whitebox stage completes and whenever an attempt ends, blocked, failed or cancelled; at startup any copy left on disk is removed. A resumed scan restages the source and must match the frozen intake exactly, or the run stops. Directories the intake skips (build output, dependencies, .git, links) are recorded as omissions, because neither scanners nor models see them. Each worker's host work directory is deleted after confirmed cleanup. Neither worker gets the Docker socket or target credentials. The privileged operator provisions images and offline data separately; scans never pull images or install dependencies.
+Linux Docker workers use nonroot UID 65532 for whitebox and 65533 for blackbox, dropped capabilities, read-only filesystems, resource/output limits and network none. The runtime refuses a Docker daemon that applies no seccomp profile, and records which daemon security options (AppArmor, user namespaces, rootless) were active; a kernel vulnerability can still break out of a container. Only whitebox receives the immutable source staging mount. Tool output goes to a size-bounded in-container tmpfs, not a host directory. The private staging copy (which keeps the repository's secret files for the scanners) is deleted when the whitebox stage completes and whenever an attempt ends, blocked, failed or cancelled; at startup any copy left on disk is removed. A resumed scan restages the source and must match the frozen intake exactly, or the run stops. Directories the intake skips (build output, dependencies, .git, links) are recorded as omissions, because neither scanners nor models see them. Each worker's host work directory is deleted after confirmed cleanup. Neither worker gets the Docker socket or target credentials. The privileged operator provisions images and offline data separately; scans never pull images or install dependencies.
 
 The independent Python supervisor uses a Unix socket relay and owns target credentials, IP-pinned transport and dispatch ledger. It survives controller loss long enough to revoke communication and terminate the worker. Lease expiry, cancellation or controller EOF revoke sockets before process/container cleanup. It does not claim to undo an already completed remote side effect.
 
@@ -92,8 +92,8 @@ API 只監聽 127.0.0.1。瀏覽器透過將啟動權杖——以啟動 URL 的 
 2. 探測確切的模型端點。三名獨立 reviewer 各自收到相同的核心問題與原始碼情境。靜態掃描器可並行執行；初始 reviewer 看不到掃描器的結論。
 3. 封存所有審查、保留聯集、保存個別主張、檢視確切的原始碼參照，並執行至多一輪 challenger。表決無法確立或駁回任何發現。
 4. 建立資產、角色、信任邊界、資料流、威脅與安全需求。由模型衍生的需求保留「衍生」的來源標記。既有控制措施需要證據；未知項目保持可見。
-5. 驗證威脅完整性與標準 ID。只編譯可追溯、有範圍限制的 case，並附上 positive control、明確的 oracle、允許的身分與 cleanup。
-6. 透過不含原始碼的 worker 對外執行。每個請求都檢查 capability、lease、run/case 綁定、method/path、身分、IP 與預算。部署標頭不符時停止該分支。
+5. 驗證威脅完整性與標準 ID。只編譯可追溯、有範圍限制的 case，並附上 positive control、明確的 oracle、允許的身分與 cleanup。模型設計的 case 只能使用操作者標記 model_selectable 的測試身分，header 值只能取固定詞彙中的單一值、不得列多項或帶 q 參數，因此無法挑選高權限帳號，帶到目標的資訊也只剩少量的選擇空間。
+6. 透過不含原始碼的 worker 對外執行。每個請求都檢查 capability、lease、run/case 綁定、method/path、身分、IP 與預算。部署標頭不符時停止該分支。目標 IP 一律不能是雲端 metadata、link-local、unspecified 或 multicast 位址；預檢會拒絕指向本控制台或其資料庫的目標，以及憑證同時是模型金鑰的測試身分。
 7. 評估實際的 observations。區分 pass/fail、inconclusive、blocked、execution_error 與 outcome_unknown。保留證據與反證；只匯出 run 所擁有且經驗證的 artifact。
 8. 修復會建立一個新的連結 run，並附帶新的原始碼／部署識別。未知的副作用需要 reconciliation/reset，而不是重播。
 
@@ -101,7 +101,7 @@ API 只監聽 127.0.0.1。瀏覽器透過將啟動權杖——以啟動 URL 的 
 
 ## 隔離與復原
 
-Linux Docker worker 的 whitebox 使用非 root 的 UID 65532，blackbox 使用 UID 65533，並搭配移除的 capabilities、唯讀檔案系統、資源／輸出上限與 network none。只有 whitebox 會收到不可變的原始碼 staging 掛載。工具輸出寫入容器內有大小上限的 tmpfs，而非主機目錄。私密的 staging 副本（為掃描器保留儲存庫的機密檔案）會在 whitebox 階段完成時以及每次嘗試結束、blocked、failed 或 cancelled 時刪除；啟動時，磁碟上留下的任何副本都會被移除。恢復執行的掃描會重新 stage 原始碼，且必須與凍結的 intake 完全一致，否則 run 會停止。intake 略過的目錄（建置輸出、相依套件、.git、連結）會記錄為省略項目，因為掃描器和模型都看不到它們。每個 worker 在主機上的工作目錄會在確認清理後刪除。兩種 worker 都不會取得 Docker socket 或目標憑證。具特權的操作者分別供應映像與離線資料；掃描絕不會拉取映像或安裝相依套件。
+Linux Docker worker 的 whitebox 使用非 root 的 UID 65532，blackbox 使用 UID 65533，並搭配移除的 capabilities、唯讀檔案系統、資源／輸出上限與 network none。Docker daemon 沒有套用 seccomp profile 時，runtime 拒絕使用，並記錄 daemon 啟用了哪些安全選項（AppArmor、user namespace、rootless）；kernel 漏洞仍可能逃出容器。只有 whitebox 會收到不可變的原始碼 staging 掛載。工具輸出寫入容器內有大小上限的 tmpfs，而非主機目錄。私密的 staging 副本（為掃描器保留儲存庫的機密檔案）會在 whitebox 階段完成時以及每次嘗試結束、blocked、failed 或 cancelled 時刪除；啟動時，磁碟上留下的任何副本都會被移除。恢復執行的掃描會重新 stage 原始碼，且必須與凍結的 intake 完全一致，否則 run 會停止。intake 略過的目錄（建置輸出、相依套件、.git、連結）會記錄為省略項目，因為掃描器和模型都看不到它們。每個 worker 在主機上的工作目錄會在確認清理後刪除。兩種 worker 都不會取得 Docker socket 或目標憑證。具特權的操作者分別供應映像與離線資料；掃描絕不會拉取映像或安裝相依套件。
 
 獨立的 Python supervisor 使用 Unix socket relay，並持有目標憑證、IP 釘選的傳輸層與 dispatch 帳本。它能在 controller 失聯後存活足夠久的時間，以撤銷通訊並終止 worker。lease 到期、取消或 controller EOF 會在 process／container 清理之前先撤銷 socket。它不宣稱能復原已經完成的遠端副作用。
 

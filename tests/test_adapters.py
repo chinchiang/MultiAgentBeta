@@ -176,6 +176,20 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["status"], "blocked")
         self.assertEqual(self.events, [])
 
+    async def test_metadata_and_link_local_targets_are_never_contacted(self):
+        # Even listed beside the real target, a metadata or link-local address blocks the case.
+        for allowed in [["127.0.0.1", "169.254.169.254"], ["127.0.0.1", "fe80::1"], ["127.0.0.1", "::ffff:169.254.169.254"]]:
+            self.manifest["allowed_target_ips"] = allowed
+            result = await self.run_case()
+            self.assertEqual((result["status"], result["requests"]), ("blocked", 0), allowed)
+        self.manifest["target_url"] = "http://metadata.invalid"
+        self.manifest["allowed_target_ips"] = ["169.254.169.254"]
+        answer = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("169.254.169.254", 80))]
+        with patch.object(socket, "getaddrinfo", return_value=answer):
+            result = await self.run_case()
+        self.assertEqual((result["status"], result["requests"]), ("blocked", 0))
+        self.assertEqual(self.events, [])
+
     async def test_rebinding_between_repetitions_is_blocked(self):
         self.manifest["target_url"] = f"http://fixture.invalid:{self.server.server_port}"
         self.case["repetitions"] = 2
@@ -280,6 +294,23 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
                 result = await self.run_case()
             self.assertEqual((result["status"], result["requests"]), ("blocked", 0))
 
+    async def test_model_credential_is_never_a_target_credential(self):
+        self.case.update({"path": "/echo", "identity": "reader"})
+        self.manifest["auth_profiles"] = [{"id": "reader", "credential_env": "VIBEAUDIT_FIXTURE_TOKEN"}]
+        environ = {"VIBEAUDIT_FIXTURE_TOKEN": "model-key-value", "VIBEAUDIT_MODEL_KEY": "model-key-value"}
+        # The same variable, or another variable holding the same key, reaches no target.
+        for model_env in ["VIBEAUDIT_FIXTURE_TOKEN", "VIBEAUDIT_MODEL_KEY"]:
+            self.manifest["models"] = [{"id": "reviewer-a", "credential_env": model_env}]
+            with patch.dict(os.environ, environ):
+                self.assertEqual(adapters.shared_credentials(self.manifest), ["VIBEAUDIT_FIXTURE_TOKEN"])
+                result = await self.run_case()
+            self.assertEqual((result["status"], result["requests"]), ("blocked", 0))
+            self.assertNotIn(("request", "/echo"), [event[:2] for event in self.events])
+        with patch.dict(os.environ, {**environ, "VIBEAUDIT_MODEL_KEY": "another-key"}):
+            self.assertEqual(adapters.shared_credentials(self.manifest), [])
+            result = await self.run_case()
+        self.assertEqual(result["requests"], 1)
+
     async def test_ai_http_does_not_promote_response_claims_to_ledger(self):
         self.case.update({"adapter": "ai_http", "path": "/fake-tool", "method": "POST", "body": {"message": "fixture"}, "preconditions": []})
         self.case["oracle"] = {"kind": "no_unauthorized_commit", "required_observations": ["tool_ledger", "trace_complete"]}
@@ -301,6 +332,16 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result["observations"][0]["kind"], "precondition")
             self.assertNotIn("body", result["observations"][0])
             self.assertEqual(scoped[-2:], [{"method": "GET", "path": "/leak"}, {"method": "GET", "path": path}])
+
+    async def test_model_designed_control_headers_use_fixed_vocabularies(self):
+        control = {"name": "fixture_exists", "method": "GET", "path": "/leak", "identity": None,
+                   "expected_status": 200, "required_text": ["TENANT_B_CANARY"], "headers": {"If-None-Match": '"snapshot-text"'}}
+        self.case.update(designed_by="model", path="/ok", preconditions=[control])
+        result = await self.run_case()
+        self.assertEqual((result["status"], result["requests"]), ("blocked", 0))
+        control["headers"] = {"If-None-Match": "*"}
+        result = await self.run_case()
+        self.assertEqual((result["status"], result["requests"]), ("pass", 2))
 
     async def test_failed_positive_control_does_not_send_main_request(self):
         self.case["preconditions"] = [{"name": "fixture_exists", "method": "GET", "path": "/ok",
@@ -351,6 +392,36 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result["status"], "blocked", change)
             self.assertEqual(result["requests"], 0)
         self.assertEqual(self.events, [])
+
+
+class TargetAddressTests(unittest.TestCase):
+    def test_refused_target_addresses(self):
+        import ipaddress
+        refused = ["169.254.169.254", "169.254.1.1", "fe80::1", "fd00:ec2::254", "100.100.100.200", "0.0.0.0", "::",
+                   "224.0.0.1", "ff02::1", "255.255.255.255", "240.0.0.1", "::ffff:169.254.169.254", "fec0::1"]
+        allowed = ["127.0.0.1", "127.0.0.2", "::1", "::ffff:127.0.0.1", "10.0.0.5", "192.168.1.5", "172.16.0.9",
+                   "100.64.0.1", "93.184.216.34", "2001:db8::1", "fd12:3456::1"]
+        self.assertEqual([a for a in refused if not adapters.target_ip_refused(ipaddress.ip_address(a))], [])
+        self.assertEqual([a for a in allowed if adapters.target_ip_refused(ipaddress.ip_address(a))], [])
+
+    def test_control_plane_target_names_the_endpoint_without_secrets(self):
+        console = ["http://127.0.0.1:8000", "http://localhost:8000", "http://[::1]:8000"]
+        database = "postgresql://vibeaudit:db-password@localhost/vibeaudit"
+        def hit(target, ips, endpoints):
+            return adapters.control_plane_target({"target_url": target, "allowed_target_ips": ips}, endpoints)
+        self.assertEqual(hit("http://127.0.0.1:8000", ["127.0.0.1"], console), "127.0.0.1:8000")
+        # Every loopback address reaches the same listener, under any name.
+        self.assertEqual(hit("http://staging.test:8000", ["127.0.0.2"], console[1:2]), "localhost:8000")
+        self.assertEqual(hit("http://[::1]:5432", ["::1"], [database]), "localhost:5432")
+        self.assertNotIn("db-password", hit("http://127.0.0.1:5432", ["127.0.0.1"], [database]))
+        self.assertEqual(hit("https://db.internal:5432", ["10.0.0.9"], ["postgresql://u:p@10.0.0.9/x"]), "10.0.0.9:5432")
+        self.assertEqual(hit("https://db.internal:5432", ["10.0.0.8"], ["postgresql://u:p@db.internal:5432/x"]), "db.internal:5432")
+        # Another port, another host, or a Unix-socket database is not the control plane.
+        self.assertIsNone(hit("http://127.0.0.1:9000", ["127.0.0.1"], [*console, database]))
+        self.assertIsNone(hit("http://10.0.0.5:8000", ["10.0.0.5"], console))
+        self.assertIsNone(hit("http://127.0.0.1:5432", ["127.0.0.1"], ["postgresql:///vibeaudit?host=/run/postgresql", ""]))
+        with self.assertRaises(adapters.AdapterBlocked):
+            hit("http://127.0.0.1:9000", ["localhost"], console)
 
 
 class StateChangeTests(unittest.TestCase):

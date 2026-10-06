@@ -24,7 +24,9 @@ _TEXT_SUFFIXES = {".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json", 
 _SECRET_SUFFIXES = {".pem", ".key", ".p12", ".pfx", ".jks", ".keystore", ".kdbx", ".crt", ".cer"}
 _SECRET_NAMES = {"credentials", "credentials.json", "credential.json", "secrets.json", "secrets.yaml", "secrets.yml", "id_rsa", "id_ed25519", "id_ecdsa", "id_dsa", ".npmrc", ".pypirc", ".netrc", "service-account.json", "service_account.json"}
 _PRIVATE_KEY = re.compile(r"-----BEGIN [^-\r\n]*PRIVATE KEY(?: BLOCK)?-----.*?(?:-----END [^-\r\n]*PRIVATE KEY(?: BLOCK)?-----|\Z)", re.S)
-_SECRET_WORDS = r"api[_-]?key|password|passwd|secret|access[_-]?token|auth[_-]?token|refresh[_-]?token|client[_-]?secret|private[_-]?key"
+# Short forms count only as a whole name segment (DB_PASS, smtp-pwd), so bypass or compass stay readable.
+_SECRET_WORDS = (r"api[_-]?key|password|passwd|secret|access[_-]?token|auth[_-]?token|refresh[_-]?token|client[_-]?secret|private[_-]?key"
+                 r"|(?<![a-z])(?:pass(?:[_-]?phrase)?|pwd)(?![a-z])|(?:signing|encryption|hmac|master|webhook)[_-]?key")
 # SECRET_KEY / SECRET_KEY_BASE style names; password_hash and similar code stay readable for reviewers.
 _KEY_SUFFIX = r"(?:[_-]?key(?:[_-]?base)?)?"
 # Every pattern stays linear in the snapshot size; hostile sources can be megabytes of one token.
@@ -36,11 +38,11 @@ _UNQUOTED_SECRET = re.compile(rf"(?im)^([^\S\n]*[A-Za-z0-9_.-]*?(?:{_SECRET_WORD
 # The lookahead finds the word once; the name is then consumed without backtracking.
 _ENV_DECLARATION = re.compile(rf"(?im)^([^\S\n]*(?:export|ENV|ARG|set|setx)\s+(?=[A-Za-z0-9_.-]*?(?:{_SECRET_WORDS}|token))[A-Za-z0-9_.-]*+\s*=\s*)([^\r\n#]+)")
 _DEFINE_SECRET = re.compile(rf'''(?i)(\bdefine\(\s*(["'])(?=[A-Za-z0-9_-]*?(?:{_SECRET_WORDS}|token))[A-Za-z0-9_-]*+\2\s*,\s*)(["'])([^\r\n]*?)(\3)''')
-_CONNECTION_PASSWORD = re.compile(r'''(?im)((?:^|[;"'])[^\S\n]*(?:password|pwd)\s*=\s*)([^;"'\r\n]+)''')
+_CONNECTION_PASSWORD = re.compile(r'''(?im)((?:^|[;"'])[^\S\n]*(?:password|pwd|accountkey|sharedaccesskey)\s*=\s*)([^;"'\r\n]+)''')
 _AUTH_FIELD = re.compile(r'''(?i)(["'](?:auth|identitytoken|registrytoken)["']\s*:\s*)(["'])([^"'\r\n]*)(\2)''')
 # A token character before the match is ruled out first, so a long run of them is scanned once,
 # not once per "eyJ" or "sk-" inside it.
-_KNOWN_SECRET = re.compile(r"(?<![A-Za-z0-9_-])(?:sk-(?:proj-|ant-)?[A-Za-z0-9_-]{16,}|[sr]k_(?:live|test)_[A-Za-z0-9]{16,}|gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{20,}|xox[abposr]-[A-Za-z0-9-]{10,}|AKIA[A-Z0-9]{16}|AIza[0-9A-Za-z_-]{35}|npm_[A-Za-z0-9]{36}|eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})\b")
+_KNOWN_SECRET = re.compile(r"(?<![A-Za-z0-9_-])(?:sk-(?:proj-|ant-)?[A-Za-z0-9_-]{16,}|[sr]k_(?:live|test)_[A-Za-z0-9]{16,}|gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{20,}|xox[abposr]-[A-Za-z0-9-]{10,}|AKIA[A-Z0-9]{16}|AIza[0-9A-Za-z_-]{35}|npm_[A-Za-z0-9]{36}|hf_[A-Za-z0-9]{30,}|ASIA[A-Z0-9]{16}|SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}|ya29\.[A-Za-z0-9_-]{20,}|shp(?:at|ss|ca|pa)_[a-fA-F0-9]{32}|dop_v1_[a-f0-9]{64}|pypi-[A-Za-z0-9_-]{50,}|hooks\.slack\.com/services/[A-Za-z0-9_/-]{20,}|eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})\b")
 _BEARER = re.compile(r"(?i)\b(Bearer\s+)[A-Za-z0-9._~+/=-]{8,}")
 # Any scheme: postgres://, mongodb+srv://, redis://:password@ and so on. The bounded scheme
 # keeps runs like a.a.a.a from being rescanned after every dot.

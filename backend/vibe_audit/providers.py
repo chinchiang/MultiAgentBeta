@@ -87,6 +87,33 @@ def _origin(value: str) -> tuple[str, str]:
         raise ProviderError("Invalid model endpoint/origin", code="invalid_endpoint") from None
 
 
+CREDENTIAL_ORIGINS_ENV = "VIBEAUDIT_MODEL_CREDENTIAL_ORIGINS"
+# The vendor keys the workbench pre-fills go to their vendors; the operator's environment can rebind them.
+DEFAULT_CREDENTIAL_ORIGINS = {"VIBEAUDIT_OPENAI_API_KEY": "https://api.openai.com",
+                              "VIBEAUDIT_ANTHROPIC_API_KEY": "https://api.anthropic.com"}
+
+
+def credential_origins(environ=None) -> dict[str, set[str]]:
+    """The origins each model credential may be sent to, as the operator's environment states them.
+
+    A request names the endpoint and its origin allowlist, so a session holder could otherwise send
+    any configured key to a host of their choosing. Format: NAME=origin entries, comma-separated.
+    """
+    environ = os.environ if environ is None else environ
+    bound = {name: {origin} for name, origin in DEFAULT_CREDENTIAL_ORIGINS.items()}
+    rebound = {}
+    for entry in filter(None, (item.strip() for item in environ.get(CREDENTIAL_ORIGINS_ENV, "").split(","))):
+        name, _, value = entry.partition("=")
+        try:
+            if not re.fullmatch(r"VIBEAUDIT_[A-Z0-9_]+", name.strip()) or urlsplit(value.strip()).path not in {"", "/"}:
+                raise ValueError
+            origin = _origin(value.strip())[0]
+        except (ValueError, ProviderError):
+            raise ProviderError(f"{CREDENTIAL_ORIGINS_ENV} entries must be VIBEAUDIT_NAME=scheme://host[:port]", code="invalid_credential_binding") from None
+        rebound.setdefault(name.strip(), set()).add(origin)
+    return {**bound, **rebound}
+
+
 def _is_loopback(host: str) -> bool:
     try:
         return ipaddress.ip_address(host).is_loopback
@@ -132,6 +159,9 @@ def _validate_profile(profile: dict, policy: dict) -> tuple[str, str, str]:
     credential = os.environ.get(credential_env, "") if credential_env else ""
     if credential_env and not credential:
         raise ProviderError("Configured model credential is unavailable", code="missing_credential")
+    # Loopback is not exempt: another local user's listener would receive the key just the same.
+    if credential and origin not in credential_origins().get(credential_env, set()):
+        raise ProviderError(f"{credential_env} is not bound to {origin}; bind model keys to their origins in {CREDENTIAL_ORIGINS_ENV}", code="credential_origin_denied")
     if not credential and not local:
         raise ProviderError("Cloud model calls require an explicit credential reference", code="missing_credential")
     # A nonempty inert local key prevents upstream ambient API-key discovery.

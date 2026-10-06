@@ -356,6 +356,18 @@ def test_controller_redacts_decoded_artifacts_and_escaped_credentials(monkeypatc
     assert result["observations"][0]["body"]=="raw [REDACTED_CREDENTIAL]"
 
 
+def test_supervisor_never_receives_a_model_key_as_a_target_credential(monkeypatch):
+    from vibe_audit.worker_runtime import _client_env
+    monkeypatch.setenv("VIBEAUDIT_ALICE_TOKEN","alice-token")
+    monkeypatch.setenv("VIBEAUDIT_BOB_TOKEN","shared-model-key")
+    monkeypatch.setenv("VIBEAUDIT_MODEL_KEY","shared-model-key")
+    scope={"auth_profiles":[{"id":"alice","credential_env":"VIBEAUDIT_ALICE_TOKEN"},{"id":"bob","credential_env":"VIBEAUDIT_BOB_TOKEN"}],
+           "models":[{"id":"m","credential_env":"VIBEAUDIT_MODEL_KEY"}]}
+    env=_client_env(scope)
+    assert env["VIBEAUDIT_ALICE_TOKEN"]=="alice-token"
+    assert "VIBEAUDIT_BOB_TOKEN" not in env and "VIBEAUDIT_MODEL_KEY" not in env
+
+
 def test_supervisor_that_cannot_start_reports_nothing_to_clean_up(tmp_path):
     from vibe_audit.worker_entry import read_frame
     entry=Path(__file__).resolve().parents[1]/"backend"/"vibe_audit"/"worker_entry.py"
@@ -592,6 +604,29 @@ def test_docker_control_confirms_absent_container_and_reports_real_failures(monk
     monkeypatch.setattr(worker_entry_module,"docker_api",raising)
     assert sup.docker_control("kill",sup.task["container_name"]) is False
     assert sup.docker_control("invent",sup.task["container_name"]) is False
+
+
+@pytest.mark.parametrize("options,available",[
+    (["name=apparmor","name=seccomp,profile=builtin","name=cgroupns"],True),
+    (["name=seccomp,profile=default","name=userns"],True),
+    (["name=apparmor","name=seccomp,profile=unconfined"],False),
+    (["name=apparmor"],False),
+    (None,False),
+])
+async def test_docker_runtime_requires_a_seccomp_profile(tmp_path,monkeypatch,options,available):
+    import vibe_audit.worker_entry as worker_entry_module
+    class Leases:
+        postgres=True
+    def info(method,path,timeout=5):
+        return 200,{"OSType":"linux",**({"SecurityOptions":options} if options is not None else {})}
+    monkeypatch.setattr(worker_entry_module,"docker_api",info)
+    rt=WorkerRuntime(tmp_path,lease_store=Leases(),docker_binary="/usr/bin/docker")
+    result=await rt.capabilities()
+    assert result["available"] is available
+    if available:
+        assert result["production_ready"] is True and "seccomp" in result["security_options"]
+    else:
+        assert "seccomp" in result["reason"] and "production_ready" not in result
 
 
 def test_docker_namespace_identity_mounts_are_fixed(tmp_path):

@@ -1,0 +1,422 @@
+# MultiAgentBeta（Vibe Audit 0.2.1）的 G0 威脅模型 —— 草稿，尚未經人工簽核
+#
+# 格式：chinchiang/MultiAgentDelta 的 schemas/threat-model.schema.json。VibeSec G0
+#   （MultiAgentDelta 的 scripts/g0_threat_model.py --target <本 repo>）預設讀取本檔。
+# 來源：AI 起草（Claude Code，2026-10-06），依據 README.md、docs/ARCHITECTURE.md、docs/LINUX_SETUP.md 與
+#   backend/vibe_audit/ 的程式碼（commit f9d9cf1，再依本分支的修正更新）；括號內的 file:line 皆相對 backend/vibe_audit/。
+# 範圍：Linux／WSL2 的 live 部署（PostgreSQL + Docker workers + supervisor）。Windows demo、process_test 與
+#   SQLite 屬合成／測試路徑（ARCHITECTURE.md「Isolation and recovery」），不在範圍內。
+#
+# 已由人類決定：
+#   - 2026-10-06 @chinchiang：c-test-designer 的致命三要素以 trifecta_leg_cut: external_comms 切腳，理由與接受的殘留見 decisions。
+#   - 2026-10-06 @chinchiang：risk_tier 維持 L3（高於決策樹推導的 L2），理由見 risk_tier_rationale。
+#   - 2026-10-06 @chinchiang：保留兩項行為變更（模型金鑰的 origin 綁定、model_selectable 身分），見 decisions。
+#   - 2026-10-06 @chinchiang：t-redaction-gap、t-container-escape、t-supply-chain 接受殘留，改為 accepted，見 decisions。
+#
+# 待辦：docs/01 要求 AppSec 與 Red Team 各一人簽核本模型（分歧保留少數意見）。
+#
+# 修訂：同日依本分支的程式修正，把 t-indirect-injection、t-model-identity、t-probe-key-exfil、t-credential-crossuse、
+#   t-target-internal、t-sarif-injection 改為 mitigated（各條的「殘留」仍待人工確認）；file:line 已對應修正後的程式碼。
+
+system:
+  name: multiagentbeta
+  description: >-
+    Vibe Audit 0.2.1：本機單一使用者的 Multi-Agent 資安測試工具。三模型白箱審查 → 威脅建模 → 案例與 oracle →
+    隔離黑箱執行 → 證據裁決；AI Commander 派工，程式 harness 強制範圍、階段、權限、預算與證據。
+  exposure: internal                          # 控制台只監聽 127.0.0.1（__main__.py:27）；單一使用者、無租戶（store.py:49、workspace_api.py:138）；README 明示不得公開到網際網路
+  data_sensitivity: sensitive_pii_or_secrets  # 受測原始碼與保留機密檔的 raw staging、目標憑證、模型 API 金鑰、資料庫 URL
+  methodologies: [STRIDE, MAESTRO]
+
+assets:
+  - id: a-target-source
+    name: 受測原始碼與 raw staging 副本（保留受測 repo 的機密檔供掃描器使用）
+    sensitivity: secret
+    store: "<data_dir>/scanner-inputs/<id>：父目錄 0700、檔案 0444（staging.py:40-49）；whitebox 結束、每次 attempt 結束與啟動時刪除"
+  - id: a-snapshot
+    name: 給模型的去識別化快照（啟發式遮罩，snapshot.py:53、209）
+    sensitivity: confidential
+    store: 送往 model profile 的端點；並以 evidence 保存（service.py:409）
+  - id: a-target-creds
+    name: 目標認證（auth_profiles 引用的 VIBEAUDIT_* 環境變數）
+    sensitivity: secret
+    store: 只在 host 上的 supervisor 環境（worker_runtime.py:62-72），不進容器
+  - id: a-model-keys
+    name: 模型 API 金鑰（model profile 引用的 VIBEAUDIT_* 環境變數）
+    sensitivity: secret
+    store: controller 程序環境（providers.py:157-159）
+  - id: a-db
+    name: VIBEAUDIT_DATABASE_URL 與 job／lease 帳本、LangGraph checkpoint
+    sensitivity: secret
+    store: PostgreSQL（deploy/postgres.compose.yml 綁 127.0.0.1:5432，密碼須由 VIBEAUDIT_POSTGRES_PASSWORD 提供）
+  - id: a-session
+    name: 啟動權杖、session cookie 與 CSRF token
+    sensitivity: secret
+    store: 終端機輸出或 VIBEAUDIT_SESSION_TOKEN；瀏覽器 HttpOnly cookie 與工作台分頁的 sessionStorage
+  - id: a-evidence
+    name: 證據、發現、威脅模型與報告匯出（JSON／Markdown／SARIF）
+    sensitivity: confidential
+    store: PostgreSQL + data_dir；SHA-256 存於同一資料庫（store.py:144-160），非防竄改
+  - id: a-config
+    name: 執行設定（runtime.json、manifest 的 allowed_requests／allowed_target_ips／allowed_model_origins、image ID）
+    sensitivity: internal
+    store: VIBEAUDIT_RUNTIME_CONFIG 與 run manifest（PostgreSQL）
+  - id: a-docker
+    name: Docker daemon 存取（等同 host root）
+    sensitivity: secret
+    store: 控制帳號與 supervisor（/var/run/docker.sock，worker_entry.py:39-49）
+
+components:
+  - { id: c-operator,     name: 操作者瀏覽器（React 工作台）,                                         kind: browser,          zone: z-operator }
+  - { id: c-console,      name: FastAPI 控制台 + LangGraph controller（含 LiteLLM 模型閘道）,          kind: api,              zone: z-control }
+  - { id: c-db,           name: PostgreSQL（job／lease 帳本、checkpoint、證據）,                        kind: db,               zone: z-control }
+  - { id: c-supervisor,   name: 獨立 supervisor／broker（持有目標憑證、IP 釘選、dispatch 帳本、lease）, kind: worker,           zone: z-control }
+  - { id: c-collector,    name: 獨立 effect collector／mock sink（操作者另行註冊的受信任綁定）,         kind: worker,           zone: z-control }
+  - { id: c-docker,       name: Docker Engine（supervisor 經 /var/run/docker.sock 建立與清理 worker）, kind: tool,             zone: z-host }
+  - { id: c-wb-worker,    name: whitebox worker（semgrep、gitleaks、OSV；唯讀 /src、UID 65532、network none）, kind: worker,  zone: z-sandbox }
+  - { id: c-bb-worker,    name: blackbox worker（ZAP、Schemathesis、Playwright、promptfoo、PyRIT；UID 65533、network none、Unix socket relay）, kind: worker, zone: z-sandbox }
+  - { id: c-target,       name: 操作者提供的 staging 目標（target_url + allowed_target_ips）,          kind: external_service, zone: z-target }
+  - { id: c-source,       name: 受測儲存庫（VIBEAUDIT_SOURCE_ROOTS 之下）,                              kind: external_service, zone: z-untrusted }
+  - { id: c-llm-local,    name: 本機模型端點（local_only 預設：只接受 literal loopback IP）,            kind: llm,              zone: z-local-llm, maestro_layer: 1 }
+  - { id: c-llm-cloud,    name: 雲端模型（openai、anthropic、nvidia_nim；需 cloud_allowed 與 allowed_model_origins）, kind: llm, zone: z-vendor, maestro_layer: 1 }
+  - { id: c-commander,    name: AI Commander（每個 run 一次規劃呼叫：reviewer 順序與額外 focus 問題）, kind: agent,            zone: z-agent, maestro_layer: 3 }
+  - { id: c-reviewers,    name: reviewer A／B／C（三模型獨立白箱審查）,                                kind: agent,            zone: z-agent, maestro_layer: 3 }
+  - { id: c-challenger,   name: challenger（至多一輪質疑）,                                           kind: agent,            zone: z-agent, maestro_layer: 3 }
+  - { id: c-arch-mapper,  name: architecture_mapper（資產、資料流、信任邊界）,                         kind: agent,            zone: z-agent, maestro_layer: 3 }
+  - { id: c-threat-modeler, name: threat_modeler（威脅與安全需求）,                                    kind: agent,            zone: z-agent, maestro_layer: 3 }
+  - { id: c-test-designer, name: test_designer（設計送往目標的黑箱案例）,                              kind: agent,            zone: z-agent, maestro_layer: 3 }
+  - { id: c-reporter,     name: reporter（只重排發現順序）,                                           kind: agent,            zone: z-agent, maestro_layer: 3 }
+  - { id: c-provisioning, name: provisioning 來源（PyPI、npm、OSV archive、映像 registry；只在管理者 provisioning 時）, kind: external_service, zone: z-vendor }
+  - { id: c-ci,           name: GitHub Actions ci.yml（push／pull_request、contents read、無 secrets）, kind: ci,              zone: z-github }
+
+flows:
+  - { from: c-operator,    to: c-console,     data: [startup_token, session_cookie, csrf_token, manifest, source_path, auth_profile_refs], protocol: http-loopback, authenticated: true,  crosses_boundary: true }
+  - { from: c-console,     to: c-operator,    data: [run_status, findings, evidence, exports],                        protocol: http-loopback, authenticated: true,  crosses_boundary: true }
+  - { from: c-source,      to: c-console,     data: [repository_files],                                               protocol: file,          authenticated: null,  crosses_boundary: true }
+  - { from: c-console,     to: c-wb-worker,   data: [raw_staging_readonly_mount],                                     protocol: bind-mount,    authenticated: null,  crosses_boundary: true }
+  - { from: c-wb-worker,   to: c-console,     data: [scanner_rule_file_line_title],                                   protocol: file,          authenticated: null,  crosses_boundary: true }
+  - { from: c-console,     to: c-llm-local,   data: [redacted_snapshot, prompts, operator_notes, model_outputs],      protocol: http-loopback, authenticated: null,  crosses_boundary: true }
+  - { from: c-console,     to: c-llm-cloud,   data: [redacted_snapshot, prompts, operator_notes, model_outputs, model_api_key], protocol: https, authenticated: true, crosses_boundary: true }
+  - { from: c-llm-cloud,   to: c-console,     data: [model_json_output],                                              protocol: https,         authenticated: true,  crosses_boundary: true }
+  - { from: c-console,     to: c-db,          data: [runs, jobs, leases, checkpoints, evidence],                      protocol: postgresql,    authenticated: true,  crosses_boundary: false }
+  - { from: c-console,     to: c-supervisor,  data: [sealed_cases, manifest, database_url],                           protocol: stdin,         authenticated: null,  crosses_boundary: false }
+  - { from: c-supervisor,  to: c-docker,      data: [container_create, container_cleanup],                            protocol: unix-socket,   authenticated: null,  crosses_boundary: true }
+  - { from: c-bb-worker,   to: c-supervisor,  data: [relay_requests, broker_token],                                   protocol: unix-socket,   authenticated: true,  crosses_boundary: true }
+  - { from: c-supervisor,  to: c-target,      data: [http_requests, target_credentials],                              protocol: https,         authenticated: true,  crosses_boundary: true }
+  - { from: c-target,      to: c-supervisor,  data: [http_responses_max_256kib],                                      protocol: https,         authenticated: true,  crosses_boundary: true }
+  - { from: c-target,      to: c-collector,   data: [side_effect_events],                                             protocol: http,          authenticated: null,  crosses_boundary: true }
+  - { from: c-collector,   to: c-supervisor,  data: [effect_receipts],                                                protocol: http,          authenticated: null,  crosses_boundary: false }
+  - { from: c-provisioning, to: c-docker,     data: [images_by_digest, hash_locked_packages, osv_archive],            protocol: https,         authenticated: null,  crosses_boundary: true }
+
+trust_boundaries:
+  - { id: tb-browser,   name: 瀏覽器 ↔ 控制台（啟動權杖、CSRF、Host／Origin、Sec-Fetch-Site；api.py:81-152）,               zones: [z-operator, z-control] }
+  - { id: tb-input,     name: 受測 repo ↔ 控制平面（repo 內容一律視為不受信任資料）,                                     zones: [z-untrusted, z-control] }
+  - { id: tb-agent,     name: 模型輸出 ↔ 控制平面（JSON schema、Pydantic 契約與確定性閘門；模型 prompt 不是安全邊界）,   zones: [z-agent, z-control] }
+  - { id: tb-model,     name: 控制平面 ↔ 模型端點（local_only 預設；cloud 需 allowlist、HTTPS、全域 IP；無 OS 層出向限制）, zones: [z-control, z-local-llm, z-vendor] }
+  - { id: tb-sandbox,   name: 控制平面 ↔ worker 容器（network none、cap-drop ALL、唯讀、分開的 UID、不掛 docker socket）, zones: [z-control, z-sandbox] }
+  - { id: tb-host,      name: 控制平面 ↔ Docker daemon（能操作 daemon 即等同 host root）,                               zones: [z-control, z-host] }
+  - { id: tb-target,    name: supervisor ↔ staging 目標（逐請求檢查 method/path、身分、IP 釘選、lease、預算）,           zones: [z-control, z-target] }
+  - { id: tb-supply,    name: provisioning 來源 ↔ host（hash 鎖定、image digest；掃描時不拉映像、不安裝套件）,           zones: [z-vendor, z-host] }
+
+agents:
+  # 所有模型呼叫都經 providers.generate_json()：不傳 tools，回覆含 tool_calls 即拒絕（providers.py:342-351、465-466），
+  # 輸出須過 JSON schema 與 Pydantic（extra=forbid）。所以除了 test_designer，模型的輸出只被確定性程式讀取，不觸發動作。
+  # 目標回應從不送回任何模型（service.py:711；observation 不進模型輸入）。
+  - id: c-commander
+    accesses_private_data: true          # 快照的檔案路徑清單與操作者備註（service.py:490）
+    exposed_to_untrusted_content: true   # 路徑來自受測 repo
+    can_communicate_externally: false    # 輸出只有 reviewer 順序（必須恰為三位 reviewer，service.py:491-492）與 focus 文字
+    tools: []
+    mitigations: [tool_allowlist]
+    trifecta_leg_cut: null
+  - id: c-reviewers
+    accesses_private_data: true          # 完整的去識別化快照（service.py:508）
+    exposed_to_untrusted_content: true   # 受測 repo 的文字（可夾帶提示注入）
+    can_communicate_externally: false    # 無工具；來源引用須與快照相符（contracts.py:223-235）
+    tools: []
+    mitigations: [tool_allowlist]
+    trifecta_leg_cut: null
+  - id: c-challenger
+    accesses_private_data: true          # 快照與匿名化後的發現（service.py:572-573）
+    exposed_to_untrusted_content: true
+    can_communicate_externally: false    # 只能引用既有發現 ID（service.py:575）
+    tools: []
+    mitigations: [tool_allowlist]
+    trifecta_leg_cut: null
+  - id: c-arch-mapper
+    accesses_private_data: true          # 快照、操作者需求與備註（service.py:579）
+    exposed_to_untrusted_content: true
+    can_communicate_externally: false
+    tools: []
+    mitigations: [tool_allowlist]
+    trifecta_leg_cut: null
+  - id: c-threat-modeler
+    accesses_private_data: true          # 架構圖（模型輸出）、發現、需求、快照（service.py:592-593）
+    exposed_to_untrusted_content: true
+    can_communicate_externally: false    # 輸出經 threat_gate（policy.py:61-100）
+    tools: []
+    mitigations: [tool_allowlist]
+    trifecta_leg_cut: null
+  - id: c-test-designer
+    accesses_private_data: true          # 威脅模型（由快照衍生）、target_url、操作者備註（service.py:631）；不直接拿到原始碼
+    exposed_to_untrusted_content: true   # 間接：威脅模型由讀過受測 repo 的模型產生（repo → reviewers → threat_modeler → test_designer）
+    can_communicate_externally: true     # 它設計的案例經 case_gate、authorize 與 supervisor 後真的送到目標（service.py:630-635、policy.py:102-200、worker_entry.py:236-298）
+    tools: []                            # 沒有函式工具；「送出」發生在確定性程式依它的輸出派發請求
+    high_impact_tools: []
+    # 設計上的控制（見 t-indirect-injection、t-model-identity）：method/path（含 query）須完全符合操作者的 allowed_requests；
+    # 模型設計的 POST 一律 blocked（fixture profile 除外，service.py:671-697）；header 名稱只允許 6 個、值限固定詞彙中的單一值（adapters.py:89、105-113）；
+    # 身分限 model_selectable（policy.py:135-139）；目標 IP 釘選。
+    # 這些是程式碼層控制，VibeSec 目前只能驗證 claude_permission 類證據，所以沒有 mitigation_evidence。
+    # 2026-10-06 由 @chinchiang 決定：以上控制視為切斷對外通訊這隻腳。can_communicate_externally 仍標 true，因為請求確實會送出；
+    # 切腳靠的是上述程式碼層控制。接受的殘留：fixture profile 的 JSON body 仍由模型決定，以及低頻寬的選擇通道（見 decisions、t-indirect-injection）。
+    mitigations: [egress_allowlist, tool_allowlist]
+    trifecta_leg_cut: external_comms
+  - id: c-reporter
+    accesses_private_data: true          # 發現（含檔案、行號與標題，service.py:736）
+    exposed_to_untrusted_content: true   # 發現文字源自模型與受測 repo
+    can_communicate_externally: false    # 輸出必須恰為發現 ID 的排列（service.py:738-739）
+    tools: []
+    mitigations: [tool_allowlist]
+    trifecta_leg_cut: null
+
+threats:
+  - id: t-indirect-injection
+    category: MAESTRO-L3
+    target: c-test-designer
+    description: >-
+      受測 repo 的文字（註解、文件）對 reviewer／threat_modeler 注入指令，經威脅模型傳到 test_designer，使它設計的請求把
+      快照或操作者備註的內容帶到目標：放在案例或 positive control 的 header 值，或 fixture profile 路徑的 JSON body（至多 64 KiB）。
+    mitigation: >-
+      模型無工具、輸出須過 schema 與 Pydantic；method/path（含 query）須完全符合 allowed_requests；模型設計的 POST 一律
+      blocked（fixture profile 除外）；目標 IP 釘選；目標回應不回饋給模型。模型設計的案例（含其 positive control）header 只允許
+      6 個名稱，值只能是固定詞彙中的單一值、不得列多項或帶 q 參數：Accept 18 種、Accept-Language 26 種、Content-Type 4 種、
+      If-Match／If-None-Match 只能是 *（模型看不到目標回應，沒有真的 ETag）、X-Requested-With 只能是 XMLHttpRequest
+      （adapters.py:105-113、128）；case_gate 先擋（policy.py:132-134），送出前再檢查（adapters.py:530）；身分只能是
+      model_selectable 的測試身分（見 t-model-identity）。
+      殘留：(1) fixture profile 路徑（例如 ai_http 的 prompt）的 JSON body 仍由模型決定，只送往操作者宣告的 fixture 目標；
+      (2) 低頻寬的選擇通道：模型仍可在允許範圍內選擇 path、身分、各 header 的值與是否帶上、請求的次序與次數，每個請求的 header
+      約十餘 bits；2026-10-06 G4 架構審查指出原先允許 q 值與多項列表時頻寬更高，已改為單一值。兩項殘留皆由 @chinchiang 接受
+      （見 decisions）。
+    status: mitigated
+    gate: G6
+  - id: t-model-identity
+    category: STRIDE-E
+    target: c-test-designer
+    description: >-
+      case.identity 會讓 supervisor 附上對應 auth profile 的憑證（adapters.py:322-343）；若模型可任選已設定的身分，注入或誤判
+      就能讓案例以高權限身分送出。
+    mitigation: >-
+      測試身分新增 model_selectable，預設 false（domain.py:73-75）；case_gate 拒絕模型設計的案例（含 positive control、retest
+      複製的模型案例）使用未標記的身分（policy.py:135-139）；test_designer 只收到可選的身分清單（service.py:631）。模型設計的案例
+      只能是 GET（state-changing 一律 blocked）；supervisor 逐請求比對 sealed case 的身分。操作者自填的案例不受此限。
+      殘留：操作者若把高權限帳號標成 model_selectable，限制即失效（工作台在勾選處提示不要這樣做）。
+    status: mitigated
+    gate: G4
+  - id: t-redaction-gap
+    category: STRIDE-I
+    target: a-snapshot
+    description: >-
+      快照遮罩是啟發式（snapshot.py:53、209），漏掉的寫法（例如無前綴的隨機 token、camelCase 的 dbPass、未知前綴的金鑰）會進入
+      模型輸入；啟用 cloud_allowed 時送到雲端 provider，並以 evidence 保存。scanner 回報的檔案路徑（例如被 gitleaks 標記的 .env）也會送給模型。
+    mitigation: >-
+      預設 local_only（只接受 literal loopback IP，providers.py:117-141）；機密檔與 .ssh、.aws、.git 整個排除；PEM、已知 token
+      前綴、Bearer、連線字串密碼遮罩；gitleaks 的 Secret／Match 欄位丟棄（sandbox.py:108-110）。名稱片段 pass／pwd／passphrase、
+      signing／encryption／HMAC／master／webhook key、Azure AccountKey／SharedAccessKey，以及 Hugging Face、SendGrid、AWS STS、
+      Google OAuth、Shopify、DigitalOcean、PyPI token 與 Slack webhook 也會遮罩（snapshot.py:28-29、41、45）。
+      殘留：遮罩不保證完整，無前綴的高熵 token 無法可靠辨識。2026-10-06 由 @chinchiang 接受此殘留。
+    status: accepted
+    gate: G2
+  - id: t-cloud-disclosure
+    category: STRIDE-I
+    target: c-llm-cloud
+    description: 啟用 cloud_allowed 時，去識別化後的受測原始碼、發現與操作者備註會送往第三方模型供應商。
+    mitigation: >-
+      預設 local_only；cloud 需操作者列出 allowed_model_origins，且須 HTTPS、全域 IP、IP 釘選、不跟隨 redirect、trust_env=False、
+      關閉 LiteLLM telemetry 與 callback（providers.py:152-332）。由操作者依資料分級逐 run 決定。
+    status: accepted
+    gate: null
+  - id: t-probe-key-exfil
+    category: STRIDE-I
+    target: c-console
+    description: >-
+      POST /api/models/probe 與建立 run 都由請求本文決定模型端點與 allowed_model_origins（api.py:278）；若金鑰跟著端點走，
+      持有 session 的人可把任一 VIBEAUDIT_* 金鑰送到自己的主機，或本機其他使用者監聽的 loopback 埠。
+    mitigation: >-
+      只監聽 127.0.0.1；啟動權杖、CSRF、Host／Origin、Sec-Fetch-Site 檢查；CSP script-src 'self'；憑證引用拒絕工具自身設定。
+      模型金鑰只會送到操作者在環境變數 VIBEAUDIT_MODEL_CREDENTIAL_ORIGINS 綁定的 origin，loopback 也不例外，請求本文無法改變
+      （providers.py:90-114、162-164）；VIBEAUDIT_OPENAI_API_KEY 與 VIBEAUDIT_ANTHROPIC_API_KEY 預設綁定官方端點；該變數列為保留
+      設定，不能被當成憑證引用（adapters.py:37）。殘留：持有 session 的人仍可在已綁定的 origin 使用金鑰（耗用額度）。
+    status: mitigated
+    gate: G5
+  - id: t-credential-crossuse
+    category: STRIDE-I
+    target: a-model-keys
+    description: >-
+      credential_env_allowed 只擋工具自身設定與其別名（adapters.py:48-59）；測試身分若引用模型金鑰（同名或同值的變數），設定錯誤時
+      模型金鑰會被當成目標憑證送到目標，或目標憑證被送到模型供應商。
+    mitigation: >-
+      只能引用 VIBEAUDIT_* 名稱；拒絕 URL 值與工具設定的別名。建立 run 時拒絕模型與測試身分引用同名變數（domain.py:142-144）；
+      live 預檢拒絕同名或同值（service.py:344-347，shared_credentials 見 adapters.py:62-74）；送出前再擋（adapters.py:334-335）；
+      supervisor 的環境不帶與模型金鑰同值的目標憑證（worker_runtime.py:62-72）。
+    status: mitigated
+    gate: G4
+  - id: t-target-internal
+    category: STRIDE-E
+    target: c-supervisor
+    description: >-
+      supervisor 在 host 上連線；allowed_target_ips 若可列 link-local，或目標指向控制台與資料庫，設定錯誤時可對控制台
+      （127.0.0.1:8000）、資料庫或 169.254.169.254 送出帶目標憑證的請求。沒有「目標已授權」的驗證，只依操作者宣告。
+    mitigation: >-
+      目標須是單一 origin 加操作者明列的 literal IP；DNS 結果須是其子集；連線用釘選的 IP 並驗證 TLS SNI；method/path 精確白名單。
+      雲端 metadata（169.254.169.254、fd00:ec2::254、100.100.100.200）、link-local、unspecified、multicast 與 IPv4 保留位址一律拒絕，
+      建立 run 時與每次連線前都檢查（adapters.py:190-207、255-256；domain.py:107-117）；live 預檢拒絕會連到控制台 origin、
+      VIBEAUDIT_DATABASE_URL 或 lease 資料庫 host:port 的目標（adapters.py:213-243、service.py:349-358、api.py:47）。
+      殘留：loopback 與私有位址仍允許（本機與內部 staging 需要），本機其他服務、經主機 LAN IP 連到資料庫的情況不在比對範圍；
+      目標是否已授權仍依操作者宣告。
+    status: mitigated
+    gate: G4
+  - id: t-session-cookie-port
+    category: STRIDE-S
+    target: c-console
+    description: cookie 不依 port 隔離，操作者在同一瀏覽器開的 staging 服務會收到 session cookie（docs/ARCHITECTURE.md）。
+    mitigation: >-
+      每個 /api 請求（含讀取）都須帶 CSRF token；CSRF token 只在工作台分頁的 sessionStorage，/api/session 不回給只有 cookie
+      的呼叫者（api.py:104-142）；Sec-Fetch-Site 為 cross-site／same-site 一律拒絕。
+    status: mitigated
+    gate: G5
+  - id: t-token-in-logs
+    category: STRIDE-I
+    target: a-session
+    description: 啟動權杖印在 stdout（__main__.py:26），由服務管理器或 scripts/verify-linux.sh 擷取 stdout 時會留在日誌。
+    mitigation: 只監聽 loopback；可用 VIBEAUDIT_SESSION_TOKEN 固定並由操作者保護；前端以 history.replaceState 移除網址列的 token。
+    status: accepted
+    gate: null
+  - id: t-container-escape
+    category: MAESTRO-L4
+    target: c-wb-worker
+    description: 受測 repo 是惡意輸入，可利用 semgrep、gitleaks、OSV 的解析器漏洞在 whitebox 容器內執行程式並嘗試逃逸。
+    mitigation: >-
+      UID 65532、--cap-drop ALL、no-new-privileges、--read-only、network none、pids／記憶體／CPU 限制、不掛 docker socket、
+      --pull never（worker_runtime.py:168-195）。Docker daemon 沒有套用 seccomp profile（或為 unconfined）時 runtime 拒絕上線，
+      並把 AppArmor、userns、rootless 等安全選項記入 run（worker_runtime.py:226-233）。殘留：沒有自訂 seccomp 或 AppArmor profile、
+      未要求 userns；/tmp tmpfs 可執行；kernel 漏洞仍可逃逸。2026-10-06 由 @chinchiang 接受此殘留；日後若改用 gVisor／userns-remap，
+      須在真 Docker 上重驗。
+    status: accepted
+    gate: G3
+  - id: t-docker-root
+    category: STRIDE-E
+    target: c-docker
+    description: supervisor 與控制帳號能操作 Docker daemon，等同 host root；控制平面被入侵即主機淪陷。
+    mitigation: 專用控制帳號；worker 不掛 docker socket；README 將容器、資料庫與控制程序的管理者列為受信任邊界。
+    status: accepted
+    gate: null
+  - id: t-broker-token
+    category: STRIDE-S
+    target: c-bb-worker
+    description: >-
+      broker socket 為 0666，broker token 放在工具可讀的 0444 task 檔（worker_entry.py:353-466），容器內任何程序都能向
+      supervisor 送請求。
+    mitigation: supervisor 對每個請求比對 sealed case 的 method、path、header、body 與身分，並檢查 lease 與預算；token 不是防線。
+    status: mitigated
+    gate: G4
+  - id: t-outcome-unknown
+    category: STRIDE-T
+    target: c-target
+    description: 改變狀態的請求在中斷時結果未知，自動重送可能重複副作用。
+    mitigation: I/O 前先記為 sent；中斷即 outcome_unknown，resume 拒絕；需 reconciliation／reset，不自動重播（docs/ARCHITECTURE.md）。
+    status: mitigated
+    gate: G5
+  - id: t-evidence-forgery
+    category: STRIDE-R
+    target: a-evidence
+    description: 目標回應的文字偽造受信任來源或 collector 綁定；或有資料庫權限者竄改證據。
+    mitigation: >-
+      collector 綁定需操作者另外註冊，目標文字無法註冊或偽造來源（docs/ARCHITECTURE.md）；匯出前驗證證據雜湊。
+      殘留：雜湊與證據存在同一資料庫（store.py:144-160），不是防竄改。
+    status: accepted
+    gate: G5
+  - id: t-sarif-injection
+    category: STRIDE-T
+    target: a-evidence
+    description: >-
+      發現標題可能源自模型或掃描器輸出；SARIF 檢視器會把純文字裡的 [文字](目標) 呈現為連結，控制字元與 bidi 標記可隱藏或重排
+      文字，下游若以 Markdown／HTML 呈現還可能被注入內容。
+    mitigation: >-
+      SARIF 的 message.text、logicalLocation 名稱與 suppression 理由都經 sarif_text（service.py:779-789）：依 SARIF 2.1.0 §3.11.6
+      以反斜線跳脫方括號、移除控制字元與 bidi／零寬字元、上限 1000 字。Markdown 匯出有跳脫（service.py:747-772）；React 工作台
+      以 <pre> 呈現 JSON，沒有 dangerouslySetInnerHTML。殘留：不合規的檢視器若把純文字當 HTML 渲染，< > 仍原樣保留。
+    status: mitigated
+    gate: G3
+  - id: t-supply-chain
+    category: MAESTRO-L7
+    target: c-provisioning
+    description: 掃描器與工具映像、Python／npm 相依在 provisioning 時被竄改。
+    mitigation: >-
+      根目錄 requirements.lock.txt 以 --require-hashes 安裝；runtime 只接受 sha256 image ID；工具映像 FROM 釘 digest；
+      工具映像 npm ci --ignore-scripts；OSV 離線 archive 有雜湊；掃描時不拉映像、不安裝套件。殘留：
+      deploy/worker/locks/python-requirements.txt 沒有 hash；apt-get 未釘版（docs/VALIDATION.md）；deploy/worker/Dockerfile
+      的 BASE_IMAGE 由操作者提供。補 hash 會改動已驗收的 Dockerfile.tools.locked，須在有 Docker 的環境重建工具映像並重跑工具
+      契約（docs/image-validation.json）後才能宣告，本次未改。2026-10-06 由 @chinchiang 接受此殘留。
+    status: accepted
+    gate: G1
+  - id: t-raw-staging-retention
+    category: STRIDE-I
+    target: a-target-source
+    description: raw staging 副本保留受測 repo 的機密檔；程序被強制終止後到下次啟動之間仍留在磁碟。
+    mitigation: >-
+      whitebox 結束、每次 attempt 結束（finally）與啟動時都會刪除（service.py:63-88、215-254）；父目錄 0700；resume 須與凍結摘要相符。
+      殘留：data_dir 以預設 umask 建立（store.py:38-40）。
+    status: mitigated
+    gate: G2
+  - id: t-controller-egress
+    category: STRIDE-I
+    target: c-console
+    description: controller 沒有 OS 層出向限制；模型端點的 origin 釘選是應用層邊界（providers.py:4-5）。
+    mitigation: 預設 local_only；文件要求以 OS／網路層另行隔離（README）。
+    status: accepted
+    gate: null
+  - id: t-denial-of-wallet
+    category: MAESTRO-L5
+    target: c-console
+    description: 模型呼叫次數或 token 用量失控。
+    mitigation: 每個 run 與 probe 都有明確預算（max_model_calls、max_tokens、max_seconds；api.py:269-277、policy.authorize）。
+    status: mitigated
+    gate: null
+  - id: t-ci-fork
+    category: STRIDE-E
+    target: c-ci
+    description: fork PR 在 CI 執行不受信任的程式碼並取得寫入權或 secrets。
+    mitigation: >-
+      只用 push／pull_request（無 pull_request_target）；contents: read；不用 secrets；actions 釘 SHA 且 persist-credentials: false；
+      Postgres 服務釘 digest；pip --require-hashes。殘留：frontend 的 npm ci 未加 --ignore-scripts（runner 內沒有 secrets）。
+    status: mitigated
+    gate: G3
+
+risk_tier: L3
+risk_tier_rationale: >-
+  docs/01 §4 決策樹推導為 L2：exposure internal（只監聽 127.0.0.1、單一使用者），data_sensitivity
+  sensitive_pii_or_secrets，沒有同時對外暴露又有高影響工具的 agent。草稿依 docs/01「建議 L3 若 sensitive_pii_or_secrets」
+  提為 L3：本工具持有受測專案的目標憑證與原始碼（含機密檔），操作 Docker daemon（等同 host root），且模型輸出會驅動送往
+  外部系統的請求。2026-10-06 由 @chinchiang 決定維持 L3。
+
+decisions:
+  - 控制台只供本機單一使用者，不提供多人或遠端存取（README「安全政策」）。
+  - 預設 local_only；雲端模型須由操作者逐 run 明確允許並列出 origin。
+  - 主機管理者、Docker daemon、資料庫與控制程序屬受信任邊界。
+  - 不自動重播 outcome_unknown 的請求；需人工 reconciliation／reset。
+  - 模型設計的 state-changing 案例一律 blocked，除非有註冊的 reset／cleanup fixture protocol。
+  - 模型設計的案例只能使用操作者標記 model_selectable 的測試身分，header 值限固定詞彙（2026-10-06，@chinchiang 確認保留此行為變更）。
+  - >-
+    模型金鑰只送到操作者以 VIBEAUDIT_MODEL_CREDENTIAL_ORIGINS 綁定的 origin，loopback 也不例外；請求本文無法改變金鑰的去向
+    （2026-10-06，@chinchiang 確認保留此行為變更）。
+  - 證據雜湊用於一致性檢查，不宣稱法證級不可竄改。
+  - >-
+    接受三條威脅的殘留（2026-10-06，@chinchiang 決定）：t-redaction-gap（快照遮罩是啟發式，無前綴的高熵 token 無法可靠辨識）、
+    t-container-escape（已要求 seccomp，但沒有自訂 seccomp／AppArmor profile 或 userns，kernel 漏洞仍可逃逸）、
+    t-supply-chain（工具映像的 Python lock 沒有 hash、apt-get 未釘版、Dockerfile 的 BASE_IMAGE 由操作者提供）。
+  - >-
+    c-test-designer 的致命三要素以 external_comms 切腳（2026-10-06，@chinchiang 決定）。理由：模型設計的請求只能送往操作者
+    明列的 origin 與 IP，method/path（含 query）須完全符合 allowed_requests；POST 除 fixture profile 外一律 blocked；header 值限
+    固定詞彙中的單一值、身分限 model_selectable；目標回應不回饋給任何模型。接受的殘留：(1) fixture profile 路徑（例如 ai_http
+    的 prompt）的 JSON body 仍由模型決定，只送往操作者宣告的 fixture 目標；(2) 低頻寬的選擇通道：模型在允許範圍內選擇 path、
+    身分、header 值與是否帶上、請求的次序與次數，每個請求的 header 約十餘 bits（同日 G4 架構審查後補記，@chinchiang 接受）。
+  - 本模型為 AI 草稿（2026-10-06，依 commit f9d9cf1 起草、同日依本分支修正更新），待 AppSec 與 Red Team 簽核（docs/01「驗證方式」第 4 項）。

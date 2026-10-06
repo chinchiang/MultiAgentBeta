@@ -1,6 +1,7 @@
 import asyncio
 import copy
 import json
+import re
 import shutil
 import time
 from pathlib import Path
@@ -87,6 +88,22 @@ async def test_sarif_level_follows_evidence_and_keeps_blackbox_findings(engine):
     assert osv["locations"][0]["physicalLocation"]=={"artifactLocation":{"uri":"package-lock.json"}}
     loose=[r for r in report_sarif(extra)["runs"][0]["results"] if "logicalLocations" in r["locations"][0] and "physicalLocation" not in r["locations"][0]]
     assert loose and loose[0]["ruleId"]=="security-hypothesis"
+
+
+async def test_sarif_text_cannot_carry_links_or_hidden_text(engine):
+    # Finding titles come from models and scanners; a SARIF viewer must show them as inert text.
+    run=await finished_demo(engine)
+    run=copy.deepcopy(run)
+    run["name"]="[run](https://evil.example)"
+    run["findings"][0]["title"]="See [details](https://evil.example)\nfor\u202emore \\[x] C:\\temp"
+    run["findings"][0].update(file=None,evidence_ids=[])
+    run["findings"].append({**run["findings"][0],"id":"long","title":"A"*5000})
+    results=report_sarif(run)["runs"][0]["results"]
+    text=results[0]["message"]["text"]
+    assert text=="See \\[details\\](https://evil.example) for more \\\\\\[x\\] C:\\temp"
+    assert not re.search(r"(?<!\\)(?:\\\\)*\[",text)
+    assert results[0]["locations"][0]["logicalLocations"][0]["name"]=="\\[run\\](https://evil.example)"
+    assert len(results[-1]["message"]["text"])==1000
 
 
 async def test_catalog_failure_names_the_file(engine,tmp_path,monkeypatch):
@@ -411,6 +428,30 @@ def authorize(client):
     return csrf
 
 
+def test_probe_request_cannot_choose_where_a_model_key_goes(tmp_path,monkeypatch):
+    # A session holder names the endpoint and the origin allowlist; the key's origin binding is the operator's.
+    monkeypatch.setenv("VIBEAUDIT_OPENAI_API_KEY","sk-synthetic-not-a-key")
+    monkeypatch.delenv("VIBEAUDIT_MODEL_CREDENTIAL_ORIGINS",raising=False)
+    profile={"id":"reviewer-a","role":"reviewer","provider":"openai","model_id":"gpt-test","family":"gpt",
+             "endpoint":"https://collector.example/v1","credential_env":"VIBEAUDIT_OPENAI_API_KEY"}
+    budget={"max_seconds":30,"max_requests":1,"max_model_calls":1,"max_tokens":1000}
+    with TestClient(create_app(tmp_path,testing=True)) as client:
+        authorize(client)
+        response=client.post("/api/models/probe",json={"profile":profile,"budget":budget,"data_policy":"cloud_allowed",
+                                                       "allowed_model_origins":["https://collector.example"]})
+    assert response.status_code==409 and response.json()["code"]=="credential_origin_denied"
+    assert "sk-synthetic-not-a-key" not in response.text
+
+
+def test_engine_knows_the_console_origins_a_target_must_not_reach(tmp_path,monkeypatch):
+    monkeypatch.setenv("VIBEAUDIT_UI_ORIGINS","http://127.0.0.1:8123")
+    app=create_app(tmp_path,testing=True)
+    try:
+        assert {"http://127.0.0.1:8000","http://127.0.0.1:8123"}<=app.state.engine.console_origins
+    finally:
+        app.state.store.close()
+
+
 def test_local_api_session_csrf_origin_host_and_source_boundary(tmp_path):
     with TestClient(create_app(tmp_path,testing=True)) as client:
         assert client.get("/api/runs").status_code==401
@@ -623,6 +664,45 @@ async def test_trace_marks_the_current_version_of_each_entity(engine):
 
 def test_live_requires_diversity_and_no_demo():
     with pytest.raises(ValueError): RunInput(mode="live",source_path=".",target_url="http://127.0.0.1",allowed_target_ips=["127.0.0.1"])
+
+
+def test_run_input_refuses_metadata_and_named_target_ips():
+    for ips in [["169.254.169.254"],["fe80::1"],["0.0.0.0"],["staging.local"],["10.0.0.0/8"]]:
+        with pytest.raises(ValueError,match="[Tt]arget IPs"): RunInput(allowed_target_ips=ips)
+    assert RunInput(allowed_target_ips=["10.0.0.5","127.0.0.1","::1"]).allowed_target_ips==["10.0.0.5","127.0.0.1","::1"]
+
+
+@pytest.mark.parametrize("mutation",["accepted","console","database","lease_database","shared_name","shared_value"])
+async def test_live_preflight_refuses_control_plane_targets_and_shared_keys(engine,monkeypatch,mutation):
+    run=await finished_demo(engine)
+    run["mode"]="live"
+    manifest=run["manifest"]
+    manifest.update(mode="live",target_url="http://127.0.0.1:9000",allowed_target_ips=["127.0.0.1"],
+                    auth_profiles=[{"id":"alice","credential_env":"VIBEAUDIT_ALICE_TOKEN"}])
+    manifest["models"][0]["credential_env"]="VIBEAUDIT_MODEL_KEY"
+    monkeypatch.setenv("VIBEAUDIT_ALICE_TOKEN","alice-token")
+    monkeypatch.setenv("VIBEAUDIT_MODEL_KEY","model-key")
+    engine.console_origins={"http://127.0.0.1:8000","http://localhost:8000"}
+    engine.database_url="postgresql://vibeaudit:db-password@localhost:55432/vibeaudit"
+    if mutation=="console": manifest["target_url"]="http://127.0.0.1:8000"
+    elif mutation=="database": manifest["target_url"]="http://127.0.0.1:55432"
+    elif mutation=="lease_database":
+        manifest["target_url"]="http://127.0.0.1:6543"
+        run["runtime_config_hash"]="leases"
+        engine.runtime_configs["leases"]={"database_url":"postgresql://u:p@127.0.0.1:6543/leases"}
+    elif mutation=="shared_name": manifest["auth_profiles"][0]["credential_env"]="VIBEAUDIT_MODEL_KEY"
+    elif mutation=="shared_value": monkeypatch.setenv("VIBEAUDIT_ALICE_TOKEN","model-key")
+    run["manifest_hash"]=digest(manifest)
+    class Runtime:
+        async def capabilities(self): return {"available":False,"reason":"Synthetic runtime stops here"}
+    monkeypatch.setattr(engine.store,"postgres",True)
+    monkeypatch.setattr(engine,"runtime",lambda run:Runtime())
+    expected={"accepted":"Synthetic runtime stops here","console":r"console or its database \(127\.0\.0\.1:8000\)",
+              "database":r"\(localhost:55432\)","lease_database":r"\(127\.0\.0\.1:6543\)",
+              "shared_name":"VIBEAUDIT_ALICE_TOKEN|VIBEAUDIT_MODEL_KEY","shared_value":"VIBEAUDIT_ALICE_TOKEN"}[mutation]
+    with pytest.raises(PolicyError,match=expected) as err:
+        await engine._preflight(run)
+    assert "db-password" not in str(err.value)
 
 
 def test_artifact_cannot_be_reassigned_to_other_run(tmp_path):
@@ -865,6 +945,15 @@ def as_get_case(run,headers=None):
     ("model",{"X-Tenant":"tenant-b"},False),
     ("operator",{"X-Tenant":"tenant-b"},True),
     ("model",{"Accept":"application/json"},True),
+    ("model",{"Accept-Language":"zh-TW","If-None-Match":"*"},True),
+    # One plain value per header: a list or a q parameter is room to encode snapshot text.
+    ("model",{"Accept":"application/json;q=0.9"},False),
+    ("model",{"Accept-Language":"zh-TW,en"},False),
+    ("operator",{"Accept-Language":"zh-TW,en;q=0.5"},True),
+    # A model-chosen value could carry snapshot text to the target; operator values stay free.
+    ("model",{"Accept":"application/x-sk-live-0123456789"},False),
+    ("model",{"If-None-Match":'"copied-from-the-snapshot"'},False),
+    ("operator",{"If-None-Match":'"etag-from-a-fixture"'},True),
 ])
 async def test_case_headers_cannot_override_method_path_or_relay(engine,monkeypatch,provenance,headers,allowed):
     run=await live_post_case(engine,adapter="http",provenance=provenance)
@@ -882,6 +971,62 @@ async def test_case_headers_cannot_override_method_path_or_relay(engine,monkeypa
         with pytest.raises(PolicyError,match="method/path overrides"):
             await engine._blackbox(run)
         assert dispatched==[] and run["executions"]==[]
+
+
+@pytest.mark.parametrize("provenance,selectable,control_identity,allowed",[
+    ("model",False,None,False),
+    ("model",True,None,True),
+    # A positive control is part of the case: it cannot borrow an identity the case could not.
+    ("model",True,"admin",False),
+    ("retest",False,None,False),
+    ("operator",False,"admin",True),
+])
+async def test_model_designed_case_uses_only_opted_in_identities(engine,monkeypatch,provenance,selectable,control_identity,allowed):
+    run=await live_post_case(engine,adapter="http",provenance=provenance)
+    run["manifest"]["auth_profiles"]=[{"id":"alice","credential_env":"VIBEAUDIT_ALICE_TOKEN","model_selectable":selectable},
+                                      {"id":"admin","credential_env":"VIBEAUDIT_ADMIN_TOKEN"}]
+    control=[{"name":"fixture","method":"GET","path":"/orders/private","identity":control_identity,"expected_status":200,"required_text":["x"]}]
+    for item in [run["cases"][0],*run["manifest"]["cases"]]:
+        item.update(identity="alice",preconditions=control if control_identity else [])
+    as_get_case(run)
+    dispatched=[]
+    class Runtime:
+        async def run_case(self,manifest,case,**kwargs):
+            dispatched.append(case["identity"])
+            return {"status":"pass","reason":"synthetic","observations":[],"evidence":[],"cleanup_confirmed":True}
+    monkeypatch.setattr(engine,"runtime",lambda _:Runtime())
+    if allowed:
+        await engine._blackbox(run)
+        assert dispatched==["alice"]
+    else:
+        with pytest.raises(PolicyError,match="model-selectable"):
+            await engine._blackbox(run)
+        assert dispatched==[] and run["executions"]==[]
+
+
+async def test_test_designer_is_told_which_identities_and_headers_it_may_use(engine,monkeypatch):
+    run=await finished_demo(engine)
+    run["mode"]="live"
+    run["manifest"].update(mode="live",cases=[],auth_profiles=[
+        {"id":"alice","credential_env":"VIBEAUDIT_ALICE_TOKEN","model_selectable":True},
+        {"id":"admin","credential_env":"VIBEAUDIT_ADMIN_TOKEN"}])
+    seen=[]
+    async def model(run,profile,instruction,payload,contract=None):
+        seen.append((instruction,payload))
+        return {"cases":[],"gaps":[]}
+    monkeypatch.setattr(engine,"model",model)
+    # No case comes back, so the case gate stops the run; only the designer's input matters here.
+    with pytest.raises(PolicyError):
+        await engine._case_design(run)
+    instruction,payload=seen[0]
+    assert payload["identities"]==["alice"]
+    assert "one of the given identities" in instruction and "If-None-Match: *" in instruction
+    assert "without lists or q parameters" in instruction
+
+
+def test_test_identities_are_not_model_selectable_by_default():
+    from vibe_audit.domain import AuthProfile
+    assert AuthProfile(id="alice",credential_env="VIBEAUDIT_ALICE_TOKEN").model_selectable is False
 
 
 async def test_violation_with_unconfirmed_target_state_stops_and_never_resumes(engine,monkeypatch):

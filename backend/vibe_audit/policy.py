@@ -131,7 +131,12 @@ class Policy:
                 raise PolicyError("Invalid repetition count")
             model_designed=case.get("designed_by")=="model"
             if not all(case_headers_allowed(r.get("headers"),model_designed=model_designed) for r in [case,*[p for p in case.get("preconditions",[]) if isinstance(p,dict)]]):
-                raise PolicyError("Case headers cannot carry credentials, relay controls or method/path overrides")
+                raise PolicyError("Case headers cannot carry credentials, relay controls or method/path overrides; model-designed values come from fixed vocabularies")
+            if model_designed:
+                selectable={p.get("id") for p in run["manifest"].get("auth_profiles",[]) if p.get("model_selectable") is True}
+                identities={case.get("identity")}|{p.get("identity") for p in case.get("preconditions",[]) if isinstance(p,dict)}
+                if identities-{None}-selectable:
+                    raise PolicyError("A model-designed case can use only test identities the operator marked as model-selectable")
             if run["mode"]=="live":
                 scope={(r["method"],r["path"]) for r in run["manifest"]["allowed_requests"]}
                 requests=[case]+[p for p in case.get("preconditions",[]) if isinstance(p,dict)]+case.get("allowed_requests",[])

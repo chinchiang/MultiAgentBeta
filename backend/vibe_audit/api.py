@@ -44,6 +44,7 @@ def create_app(data_dir=None, database_url=None, testing=False, session_token=No
     allowed_origins|={s.rstrip("/") for s in os.getenv("VIBEAUDIT_UI_ORIGINS","").split(",") if s}
     if testing:
         allowed_origins.add("http://testserver")
+    engine.console_origins=set(allowed_origins)
     allowed_hosts={s.split("://",1)[1] for s in allowed_origins}
     source_roots=[Path(p).resolve() for p in os.getenv("VIBEAUDIT_SOURCE_ROOTS",str(ROOT/"fixtures")).split(os.pathsep) if p]
 

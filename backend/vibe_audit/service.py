@@ -33,6 +33,8 @@ class Engine:
     def __init__(self, store: Store, database_url: str | None = None):
         self.store=store
         self.database_url=database_url
+        # The app sets the workbench's own origins; a live target must not be the console itself.
+        self.console_origins=set()
         self.policy=Policy()
         self.tasks={}
         self.cancel_flags={}
@@ -339,10 +341,22 @@ class Engine:
         else:
             if not self.store.postgres:
                 raise PolicyError("Live runs require VIBEAUDIT_DATABASE_URL (PostgreSQL); SQLite is demo-only")
+            from .adapters import AdapterBlocked,control_plane_target,shared_credentials
+            shared=shared_credentials(run["manifest"])
+            if shared:
+                raise PolicyError("A test identity credential has the same variable or value as a model credential: "+", ".join(shared))
             from .snapshot import snapshot_source
             from .staging import stage_source
             from .providers import probe_model
-            capabilities=await self.runtime(run).capabilities()
+            runtime=self.runtime(run)
+            lease_database=(self.runtime_configs.get(run.get("runtime_config_hash")) or {}).get("database_url")
+            try:
+                endpoint=control_plane_target(run["manifest"],[*sorted(self.console_origins),self.database_url or "",lease_database or ""])
+            except AdapterBlocked as exc:
+                raise PolicyError(str(exc)) from None
+            if endpoint:
+                raise PolicyError(f"The target would reach this console or its database ({endpoint}); point it at the application under test")
+            capabilities=await runtime.capabilities()
             if not capabilities.get("available"):
                 raise PolicyError(capabilities.get("reason","Isolated runtime unavailable"))
             if not capabilities.get("production_ready"):
@@ -614,7 +628,7 @@ class Engine:
             cases=copy.deepcopy(run["manifest"]["cases"])
         else:
             commander=self.profile(run,"test_designer")
-            data=await self.model(run,commander,'Return {"cases":[{id,threat_ids,requirement_id,title,adapter:"http"|"ai_http",method:"GET"|"POST",path,headers:{},body:null,identity:null,preconditions:[],oracle:{kind:"deny_sensitive"|"canary_absent"|"no_unauthorized_commit",forbidden_text:[],allowed_statuses:[],required_observations:["http_response"],expected_role:null},cleanup:null,side_effects:false,repetitions:1,observation_mode:"external_observation"}],"gaps":[]}. Use only provided fixtures and business requirements, do not invent canary values or authentication. No generic shell or arbitrary scripts. Mark untestable requirements in gaps.',{"threat_model":run["threat_model"],"target":run["manifest"]["target_url"],"requirements":run["manifest"]["notes"]},CaseDesignProposal)
+            data=await self.model(run,commander,'Return {"cases":[{id,threat_ids,requirement_id,title,adapter:"http"|"ai_http",method:"GET"|"POST",path,headers:{},body:null,identity:null,preconditions:[],oracle:{kind:"deny_sensitive"|"canary_absent"|"no_unauthorized_commit",forbidden_text:[],allowed_statuses:[],required_observations:["http_response"],expected_role:null},cleanup:null,side_effects:false,repetitions:1,observation_mode:"external_observation"}],"gaps":[]}. Use only provided fixtures and business requirements, do not invent canary values or authentication. identity is null or one of the given identities. headers may hold only Accept, Accept-Language, Content-Type, If-Match: *, If-None-Match: * and X-Requested-With: XMLHttpRequest, one plain value each without lists or q parameters. No generic shell or arbitrary scripts. Mark untestable requirements in gaps.',{"threat_model":run["threat_model"],"target":run["manifest"]["target_url"],"requirements":run["manifest"]["notes"],"identities":[p["id"] for p in run["manifest"]["auth_profiles"] if p.get("model_selectable") is True]},CaseDesignProposal)
             cases=data.get("cases",[])
             # Overwrite any provenance the model claims; retests carry it into their copied manifest cases.
             for case in cases:
@@ -758,6 +772,21 @@ def report_markdown(run:dict)->str:
 
 
 SARIF_LEVELS={"validated_dynamic":"error","corroborated_static":"warning","hypothesis":"note","inconclusive":"note","refuted":"none"}
+# Line breaks, other controls and bidi or zero-width marks, which can hide or reorder text in a viewer.
+_SARIF_HIDDEN=re.compile("[\x00-\x1f\x7f-\x9f\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]")
+
+
+def sarif_text(value,limit=1000):
+    """Plain SARIF message text: titles come from models and scanners, so they cannot carry embedded links.
+
+    SARIF 2.1.0 (3.11.6) reads [text](target) in plain text as a link and requires a literal
+    bracket to be escaped with a backslash. Backslashes before a bracket are doubled, so none
+    can cancel that escape; other backslashes, as in Windows paths, stay as they are.
+    """
+    text=" ".join(_SARIF_HIDDEN.sub(" ",str(value)).split())
+    if len(text)>limit:
+        text=text[:limit-1]+"\u2026"
+    return re.sub(r"(\\*)([\[\]])",lambda m:m.group(1)*2+"\\"+m.group(2),text)
 
 
 def report_sarif(run:dict)->dict:
@@ -780,10 +809,10 @@ def report_sarif(run:dict)->dict:
             location={"physicalLocation":{"artifactLocation":{"uri":run["manifest"].get("target_url","").rstrip("/")+path}},"logicalLocations":[{"name":case.get("method","GET")+" "+path,"kind":"resource"}]}
         else:
             # No file or endpoint is known, but the finding is reported rather than dropped.
-            location={"logicalLocations":[{"name":run["name"],"kind":"module"}]}
-        result={"ruleId":rule or "security-hypothesis","level":SARIF_LEVELS.get(f["state"],"warning"),"message":{"text":f["title"]},"locations":[location],"properties":{"evidenceState":f["state"],"severity":f["severity"],"runId":run["id"],"synthetic":run["mode"]=="demo"}}
+            location={"logicalLocations":[{"name":sarif_text(run["name"]),"kind":"module"}]}
+        result={"ruleId":rule or "security-hypothesis","level":SARIF_LEVELS.get(f["state"],"warning"),"message":{"text":sarif_text(f["title"])},"locations":[location],"properties":{"evidenceState":f["state"],"severity":f["severity"],"runId":run["id"],"synthetic":run["mode"]=="demo"}}
         if f["state"]=="refuted":
-            result["suppressions"]=[{"kind":"external","status":"accepted","justification":"Refuted by the local operator citing black-box evidence "+", ".join(f.get("counterevidence",[]))}]
+            result["suppressions"]=[{"kind":"external","status":"accepted","justification":sarif_text("Refuted by the local operator citing black-box evidence "+", ".join(map(str,f.get("counterevidence",[]))))}]
         results.append(result)
     manifest=run.get("manifest") or {}
     properties={"runId":run["id"]}
