@@ -10,6 +10,7 @@
 # 已由人類決定：
 #   - 2026-10-06 @chinchiang：c-test-designer 的致命三要素以 trifecta_leg_cut: external_comms 切腳，理由與接受的殘留見 decisions。
 #   - 2026-10-06 @chinchiang：risk_tier 維持 L3（高於決策樹推導的 L2），理由見 risk_tier_rationale。
+#   - 2026-10-06 @chinchiang：保留兩項行為變更（模型金鑰的 origin 綁定、model_selectable 身分），見 decisions。
 #
 # 待維護者決定（docs/01 要求 AppSec 與 Red Team 各一人簽核，分歧保留少數意見）：
 #   1. 仍為 open 的 3 條（t-redaction-gap、t-container-escape、t-supply-chain）是否接受殘留、修正或轉移。
@@ -398,8 +399,10 @@ decisions:
   - 主機管理者、Docker daemon、資料庫與控制程序屬受信任邊界。
   - 不自動重播 outcome_unknown 的請求；需人工 reconciliation／reset。
   - 模型設計的 state-changing 案例一律 blocked，除非有註冊的 reset／cleanup fixture protocol。
-  - 模型設計的案例只能使用操作者標記 model_selectable 的測試身分，header 值限固定詞彙。
-  - 模型金鑰只送到操作者以環境變數綁定的 origin；請求本文無法改變金鑰的去向。
+  - 模型設計的案例只能使用操作者標記 model_selectable 的測試身分，header 值限固定詞彙（2026-10-06，@chinchiang 確認保留此行為變更）。
+  - >-
+    模型金鑰只送到操作者以 VIBEAUDIT_MODEL_CREDENTIAL_ORIGINS 綁定的 origin，loopback 也不例外；請求本文無法改變金鑰的去向
+    （2026-10-06，@chinchiang 確認保留此行為變更）。
   - 證據雜湊用於一致性檢查，不宣稱法證級不可竄改。
   - >-
     c-test-designer 的致命三要素以 external_comms 切腳（2026-10-06，@chinchiang 決定）。理由：模型設計的請求只能送往操作者
