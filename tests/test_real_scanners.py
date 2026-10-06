@@ -3,6 +3,8 @@ import asyncio
 import json
 import os
 from pathlib import Path
+import secrets
+import string
 import uuid
 
 import pytest
@@ -21,8 +23,10 @@ async def test_real_offline_scanner_finds_seeded_issue_without_egress(tmp_path,t
     source=tmp_path/"source"
     source.mkdir()
     (source/"app.py").write_text("def unsafe(value):\n    return eval(value)\n")
-    # Deliberately synthetic, invalid credential matching an upstream detector.
-    (source/".env").write_text("GITHUB_TOKEN=ghp_4n2U7v9L0z6P3j8K5w1X4m7R9d2F6s0A8q3B\n")
+    # Generated per run so the repository holds no realistic-looking credential; it only has to match
+    # gitleaks' GitHub token detector, which wants ghp_ followed by 36 high-entropy alphanumerics.
+    canary="ghp_"+"".join(secrets.choice(string.ascii_letters+string.digits) for _ in range(36))
+    (source/".env").write_text(f"GITHUB_TOKEN={canary}\n")
     (source/"requirements.txt").write_text("urllib3==1.26.4\n")
     staged=stage_source(str(source),tmp_path/"private")
     resource_manifest(config,[tool])
@@ -37,6 +41,6 @@ async def test_real_offline_scanner_finds_seeded_issue_without_egress(tmp_path,t
         assert result["cleanup_confirmed"] is True and result["isolation"]=="docker_network_none"
         assert result.get("findings"),json.dumps(result,default=str)
         assert result.get("broker_observations",[])==[]
-        assert "ghp_4n2U7v9L0z6P3j8K5w1X4m7R9d2F6s0A8q3B" not in json.dumps(result,default=str)
+        assert canary not in json.dumps(result,default=str)
     finally:
         runtime.leases.close()
