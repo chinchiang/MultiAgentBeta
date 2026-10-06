@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from pathlib import PurePosixPath
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -213,7 +213,8 @@ class ReportOrderProposal(Contract):
 
 class CommanderProposal(Contract):
     reviewer_order: list[str] = Field(min_length=3, max_length=3)
-    focus: list[str] = Field(default_factory=list, max_length=30)
+    # Model-derived additions to the core questions: short, and passed on only as labelled untrusted data.
+    focus: list[Annotated[str, Field(max_length=300)]] = Field(default_factory=list, max_length=30)
     rationale: str = Field(min_length=1, max_length=3000)
 
 
