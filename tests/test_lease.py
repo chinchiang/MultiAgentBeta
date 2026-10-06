@@ -124,12 +124,14 @@ def test_postgres_claim_budget_and_durable_journal():
     finally:store.close()
 
 
-def test_postgres_lease_store_refuses_a_non_utf8_database(monkeypatch):
+@pytest.mark.parametrize("server,client",[("SQL_ASCII","ascii"),("UTF8","ascii")])
+def test_postgres_lease_store_refuses_a_non_utf8_database(monkeypatch,server,client):
     import psycopg
     closed=[]
     class Info:
+        encoding=client
         @staticmethod
-        def parameter_status(name):return "SQL_ASCII" if name=="server_encoding" else None
+        def parameter_status(name):return server if name=="server_encoding" else None
     class Conn:
         info=Info()
         def close(self):closed.append(True)

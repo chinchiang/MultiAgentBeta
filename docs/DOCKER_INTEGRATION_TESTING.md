@@ -57,7 +57,7 @@ export VIBEAUDIT_TEST_NODE="$(command -v node)"   # 必須是 Node 24
 
 | 現象 | 原因 | 處理 |
 |---|---|---|
-| PostgreSQL 相關測試出現 `TypeError: a bytes-like object is required, not 'str'` | 在 C／POSIX locale 下執行 initdb 而沒有指定編碼，叢集預設為 SQL_ASCII；psycopg 會把這種資料庫的每個 text 欄位以 bytes 傳回 | 第 1 節的 initdb 已加上 `-E UTF8`。舊叢集可以用 `CREATE DATABASE … ENCODING 'UTF8' TEMPLATE template0` 重建資料庫。現在連到非 UTF8 資料庫時，LeaseStore 與 Store 會直接以「must use UTF8 encoding」拒絕 |
+| PostgreSQL 相關測試出現 `TypeError: a bytes-like object is required, not 'str'` | 在 C／POSIX locale 下執行 initdb 而沒有指定編碼，叢集預設為 SQL_ASCII；psycopg 會把這種資料庫的每個 text 欄位以 bytes 傳回 | 第 1 節的 initdb 已加上 `-E UTF8`。舊叢集可以用 `CREATE DATABASE … ENCODING 'UTF8' TEMPLATE template0` 重建資料庫。現在資料庫或連線的 client_encoding 不是 UTF8 時，LeaseStore 與 Store 會直接以「must use UTF8 encoding」拒絕 |
 | 黑箱案例全部是 blocked，原因為 Supervisor could not prepare the worker | work_root 太長，`<work_root>/w-XXXXXXXX/broker/broker.sock` 超過 Linux unix socket 路徑上限 107 bytes | work_root 最多 77 bytes，例如第 2 節的 /tmp/va-workers。現在 preflight 會直接以「work_root is too long for the worker broker socket」回報不可用 |
 | 完整 pipeline 測試停在 whitebox，錯誤為 Incomplete review or source mismatch | cabb124 把審查輸入的 `focus` 改為 `core_questions` 與 `untrusted_commander_focus`，這個只在真實 Docker 下執行的測試沒有跟著改 | 已修正 tests/test_local_pipeline.py |
 
@@ -129,7 +129,7 @@ The first four items are incomplete test-environment configuration; the last ite
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| PostgreSQL tests fail with `TypeError: a bytes-like object is required, not 'str'` | initdb ran under the C/POSIX locale without an encoding, so the cluster defaulted to SQL_ASCII; psycopg returns every text column of such a database as bytes | The initdb in section 1 now passes `-E UTF8`. An existing cluster can recreate the database with `CREATE DATABASE … ENCODING 'UTF8' TEMPLATE template0`. LeaseStore and Store now refuse a non-UTF8 database outright with "must use UTF8 encoding" |
+| PostgreSQL tests fail with `TypeError: a bytes-like object is required, not 'str'` | initdb ran under the C/POSIX locale without an encoding, so the cluster defaulted to SQL_ASCII; psycopg returns every text column of such a database as bytes | The initdb in section 1 now passes `-E UTF8`. An existing cluster can recreate the database with `CREATE DATABASE … ENCODING 'UTF8' TEMPLATE template0`. LeaseStore and Store now refuse a database or connection client_encoding other than UTF8 outright with "must use UTF8 encoding" |
 | Every black-box case is blocked with Supervisor could not prepare the worker | work_root is so long that `<work_root>/w-XXXXXXXX/broker/broker.sock` exceeds the 107-byte Linux unix socket path limit | Keep work_root at 77 bytes or less, such as /tmp/va-workers in section 2. Preflight now reports the runtime unavailable with "work_root is too long for the worker broker socket" |
 | The full pipeline test stops at whitebox with Incomplete review or source mismatch | cabb124 renamed the review input `focus` to `core_questions` and `untrusted_commander_focus`; this test runs only under real Docker and was not updated | Fixed in tests/test_local_pipeline.py |
 

@@ -639,7 +639,8 @@ STRONG_TOKEN=secrets.token_urlsafe(32)
 
 
 # A length and character-set check alone accepts one repeated letter or a short repeated pattern.
-@pytest.mark.parametrize("token",["x"*31,"x"*32+" ","x"*32+"#","s"*40,"ab"*20,"abcdefgh"*5,"Kq7vX2mN"*4,"Kq7vX2mN9pR4tW8y"*2])
+@pytest.mark.parametrize("token",["x"*31,"x"*32+" ","x"*32+"#","s"*40,"ab"*20,"abcdefgh"*5,"Kq7vX2mN"*4,"Kq7vX2mN9pR4tW8y"*2],
+                         ids=["short","trailing-space","trailing-hash","one-letter","two-letter-pattern","eight-letter-pattern","short-cycle","long-cycle"])
 def test_weak_startup_token_is_refused(tmp_path,monkeypatch,token):
     monkeypatch.setenv("VIBEAUDIT_SESSION_TOKEN",token)
     with pytest.raises(ValueError,match="VIBEAUDIT_SESSION_TOKEN"):

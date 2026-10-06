@@ -62,7 +62,8 @@ async def test_local_only_denies_nonliteral_loopback(profile, policy, fake_provi
     assert not fake_provider[0]
 
 
-@pytest.mark.parametrize("endpoint", ["http://user:secret@127.0.0.1:11434/v1", "http://127.0.0.1:11434/v1?key=secret", "http://127.0.0.1:11434/v1#fragment", "http://127.0.0.1:11434\\@evil.test/"])
+@pytest.mark.parametrize("endpoint", ["http://user:secret@127.0.0.1:11434/v1", "http://127.0.0.1:11434/v1?key=secret", "http://127.0.0.1:11434/v1#fragment", "http://127.0.0.1:11434\\@evil.test/"],
+                         ids=["userinfo", "query", "fragment", "backslash"])
 @pytest.mark.asyncio
 async def test_endpoint_ambiguity_rejected(profile, policy, fake_provider, endpoint):
     profile["endpoint"] = endpoint
@@ -142,7 +143,7 @@ def test_credential_origin_bindings_and_defaults(monkeypatch):
     ("VIBEAUDIT_SESSION_TOKEN", "s" * 40),
     ("VIBEAUDIT_LEASE_DB", "postgresql://vibe:db-secret@127.0.0.1/leases"),
     ("VIBEAUDIT_COPY", "s" * 40),
-])
+], ids=["database-url", "session-token", "lease-db", "copied-value"])
 @pytest.mark.asyncio
 async def test_credentials_never_name_the_tools_own_settings(profile, policy, fake_provider, monkeypatch, name, value):
     # The probe would send the value as a bearer token; the session token and database URLs never leave.
@@ -491,6 +492,7 @@ async def test_retry_policy_denial_retains_previous_billed_usage(profile, policy
 
 
 # Ids are positional so that test receipts (JUnit names) never spell out a synthetic credential.
+# The same applies to every parametrize below and in test_engine.py whose values look like credentials.
 SECRET_FORMATS = [
     "DATABASE_URL = postgres://app:synthetic-secret@db:5432/app",
     'uri = "mongodb+srv://app:synthetic-secret@cluster0.example.net/db"',
