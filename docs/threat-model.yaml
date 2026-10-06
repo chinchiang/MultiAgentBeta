@@ -94,8 +94,8 @@ flows:
   - { from: c-source,      to: c-console,     data: [repository_files],                                               protocol: file,          authenticated: null,  crosses_boundary: true }
   - { from: c-console,     to: c-wb-worker,   data: [raw_staging_readonly_mount],                                     protocol: bind-mount,    authenticated: null,  crosses_boundary: true }
   - { from: c-wb-worker,   to: c-console,     data: [scanner_rule_file_line_title],                                   protocol: file,          authenticated: null,  crosses_boundary: true }
-  - { from: c-console,     to: c-llm-local,   data: [redacted_snapshot, prompts, operator_notes, model_outputs],      protocol: http-loopback, authenticated: null,  crosses_boundary: true }
-  - { from: c-console,     to: c-llm-cloud,   data: [redacted_snapshot, prompts, operator_notes, model_outputs, model_api_key], protocol: https, authenticated: true, crosses_boundary: true }
+  - { from: c-console,     to: c-llm-local,   data: [redacted_snapshot, prompts, operator_notes, scanner_findings, model_outputs],      protocol: http-loopback, authenticated: null,  crosses_boundary: true }
+  - { from: c-console,     to: c-llm-cloud,   data: [redacted_snapshot, prompts, operator_notes, scanner_findings, model_outputs, model_api_key], protocol: https, authenticated: true, crosses_boundary: true }
   - { from: c-llm-cloud,   to: c-console,     data: [model_json_output],                                              protocol: https,         authenticated: true,  crosses_boundary: true }
   - { from: c-console,     to: c-db,          data: [runs, jobs, leases, checkpoints, evidence],                      protocol: postgresql,    authenticated: true,  crosses_boundary: false }
   - { from: c-console,     to: c-supervisor,  data: [sealed_cases, manifest, database_url],                           protocol: stdin,         authenticated: null,  crosses_boundary: false }
@@ -124,7 +124,8 @@ trust_boundaries:
 agents:
   # 所有模型呼叫都經 providers.generate_json()：不傳 tools，回覆含 tool_calls 即拒絕（providers.py:337-346、460-461），
   # 輸出須過 JSON schema 與 Pydantic（extra=forbid）。所以除了 test_designer，模型的輸出不觸發動作；但會成為下一個模型的輸入
-  # （commander → reviewers、reviewers → challenger／threat_modeler／reporter、architecture_mapper → threat_modeler），見 t-agent-trust-propagation。
+  # （commander → reviewers、reviewers → challenger／threat_modeler／reporter、architecture_mapper → threat_modeler；retest 時上一個 run 的
+  # test_designer 案例 → 新 run 的 threat_modeler），見 t-agent-trust-propagation。
   # 目標回應從不送回任何模型（service.py:758；observation 不進模型輸入）。
   - id: c-commander
     accesses_private_data: true          # 快照的檔案路徑清單與操作者備註（service.py:513）
@@ -234,7 +235,7 @@ threats:
       模型輸入；啟用 cloud_allowed 時送到雲端 provider，並以 evidence 保存。scanner 回報的檔案路徑（例如被 gitleaks 標記的 .env）也會送給模型。
     mitigation: >-
       預設 local_only（只接受 literal loopback IP，providers.py:111-135）；機密檔與 .ssh、.aws、.git 整個排除；PEM、已知 token
-      前綴、Bearer、連線字串密碼遮罩；gitleaks 的 Secret／Match 欄位丟棄（sandbox.py:108-110）。名稱片段 pass／pwd／passphrase、
+      前綴、Bearer、連線字串密碼遮罩；gitleaks 的 Secret／Match 欄位丟棄（sandbox.py:148-151）。名稱片段 pass／pwd／passphrase、
       signing／encryption／HMAC／master／webhook key、Azure AccountKey／SharedAccessKey，以及 Hugging Face、SendGrid、AWS STS、
       Google OAuth、Shopify、DigitalOcean、PyPI token 與 Slack webhook 也會遮罩（snapshot.py:28-29、41、45）。
       殘留：遮罩不保證完整，無前綴的高熵 token 無法可靠辨識。2026-10-06 由 @chinchiang 接受此殘留。
@@ -319,12 +320,18 @@ threats:
   - id: t-container-escape
     category: MAESTRO-L4
     target: c-wb-worker
-    description: 受測 repo 是惡意輸入，可利用 semgrep、gitleaks、OSV 的解析器漏洞在 whitebox 容器內執行程式並嘗試逃逸。
+    description: >-
+      受測 repo 是惡意輸入，可利用 semgrep、gitleaks、OSV 的解析器漏洞在 whitebox 容器內執行程式並嘗試逃逸；不逃逸也能讀取掛載的
+      raw staging（含機密檔），把內容寫進掃描結果，經控制台送進模型輸入與匯出。
     mitigation: >-
       UID 65532、--cap-drop ALL、no-new-privileges、--read-only、network none、pids／記憶體／CPU 限制、不掛 docker socket、
       --pull never（worker_runtime.py:178-205）。Docker daemon 沒有套用 seccomp profile（或為 unconfined）時 runtime 拒絕上線，
-      並把 AppArmor、userns、rootless 等安全選項記入 run（worker_runtime.py:236-243）。殘留：沒有自訂 seccomp 或 AppArmor profile、
-      未要求 userns；/tmp tmpfs 可執行；kernel 漏洞仍可逃逸。2026-10-06 由 @chinchiang 接受此殘留；日後若改用 gVisor／userns-remap，
+      並把 AppArmor、userns、rootless 等安全選項記入 run（worker_runtime.py:236-243）。掃描結果只是聲明：標題由 harness 依自己的規則檔
+      或固定文字產生，不採用容器回傳的訊息；rule ID 須符合該掃描器的格式，semgrep 須是 harness 規則集內的規則，否則記為
+      unrecognized-rule 並列為缺口；檔案路徑須在 staging 清單內並經遮罩（sandbox.py:81-128、169-171；service.py:586-593）。
+      殘留：沒有自訂 seccomp 或 AppArmor profile、
+      未要求 userns；/tmp tmpfs 可執行；kernel 漏洞仍可逃逸；容器內的程式仍可藉由選擇回報哪些檔案、行號與已知規則帶出少量資訊。
+      2026-10-06 由 @chinchiang 接受此殘留；日後若改用 gVisor／userns-remap，
       須在真 Docker 上重驗。
     status: accepted
     gate: G3
@@ -360,12 +367,14 @@ threats:
     description: >-
       模型的輸出會成為下一個模型的輸入：commander 讀過受測 repo 的檔名後寫的 focus 送給三位 reviewer（common-mode），reviewer 的
       發現送給 challenger、threat_modeler 與 reporter，architecture_mapper 的架構圖送給 threat_modeler。受測 repo 若能左右上游模型，
-      就能把文字從資料通道帶進下游模型的指示，影響審查與威脅模型的完整性（漏報、威脅模型偏斜）。
+      就能把文字從資料通道帶進下游模型的指示，影響審查與威脅模型的完整性（漏報、威脅模型偏斜）。retest 也是一條跨 run 的鏈：上一個 run
+      由 test_designer 設計的案例原樣複製進新 run 的 manifest（workspace_api.py:92-94），新 run 的 threat_modeler 以 provided_cases 讀到。
     mitigation: >-
       核心審查問題由 harness 持有，commander 不能刪減；commander 的 focus 每項最多 300 字，放在獨立欄位並標為不受信任的模型衍生
       資料交給 reviewer（contracts.py:215-218、service.py:516-518、532）。所有模型的系統提示都把受測 repo、工具內容與其他 agent 的
       輸出標為資料、不是指示（service.py:25、providers.py:410）。三位 reviewer 須屬不同 family（policy.py:47-59）；這些 agent 沒有
-      工具，輸出不觸發動作，所以影響限於審查完整性，不打開對外通訊（見 t-indirect-injection）。殘留：標記是提示層級，不是硬邊界；
+      工具，輸出不觸發動作，所以影響限於審查完整性，不打開對外通訊（見 t-indirect-injection）。retest 複製的模型案例保留 designed_by，
+      照樣受 case_gate 的詞彙與身分限制，也要操作者重新核准才送出。殘留：標記是提示層級，不是硬邊界；
       common-mode 影響仍可能讓三位 reviewer 同時漏報，靠 challenger、靜態掃描器與人工審查補足。
     status: mitigated
     gate: G6

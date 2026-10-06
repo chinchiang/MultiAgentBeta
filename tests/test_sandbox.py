@@ -103,6 +103,8 @@ def test_gitleaks_findings_discard_secret_content():
     assert findings[0]["file"] == "app.py" and findings[0]["state"] == "corroborated_static"
     dumped = json.dumps(findings)
     assert "NEVER_RETURN_RAW_SECRET" not in dumped and "source-line-with-secret" not in dumped
+    # The scanner's own description is not imported either; the harness writes the title.
+    assert findings[0]["title"] == "Potential secret exposure" and "Synthetic secret candidate" not in dumped
     assert gaps == []
 
 
@@ -145,3 +147,25 @@ def test_finding_import_is_bounded():
     rows = [{"RuleID": "r", "File": "/src/app.py", "StartLine": 1, "Description": "d"}] * 1200
     findings, gaps = sandbox._parse("gitleaks", json.dumps(rows).encode(), 0)
     assert len(findings) == 1000 and any("bounded limit" in gap for gap in gaps)
+
+
+def test_scanner_text_is_a_claim_titles_come_from_the_harness():
+    # A compromised scanner could copy staged secret files into any free-text field it returns.
+    leaked = "AKIA" + "Z" * 16
+    semgrep = json.dumps({"results": [
+        {"check_id": "inputs.rules.vibe-python-dynamic-eval", "path": "/src/app.py", "start": {"line": 2},
+         "extra": {"message": "copied secret " + leaked}},
+        {"check_id": "attacker." + leaked, "path": "/src/app.py", "start": {"line": 3}, "extra": {"message": leaked}}],
+        "paths": {"scanned": ["/src/app.py"]}})
+    findings, gaps = sandbox._parse("semgrep", semgrep.encode(), 1)
+    assert findings[0]["rule_id"] == "vibe-python-dynamic-eval"
+    assert findings[0]["title"] == "Dynamic evaluation requires manual input and trust-boundary review."
+    assert findings[1]["rule_id"] == sandbox.UNRECOGNIZED and any("does not recognize" in gap for gap in gaps)
+    gitleaks = json.dumps([{"RuleID": "aws-access-token", "File": "/src/.env", "StartLine": 1, "Description": leaked},
+                           {"RuleID": leaked, "File": "/src/.env", "StartLine": 2, "Description": "d"}])
+    findings += sandbox._parse("gitleaks", gitleaks.encode(), 1)[0]
+    osv = json.dumps({"results": [{"source": {"path": "/src/package-lock.json"},
+                                   "packages": [{"vulnerabilities": [{"id": "GHSA-abcd-efgh-ijkl"}, {"id": "secret text " + leaked}]}]}]})
+    findings += sandbox._parse("osv", osv.encode(), 1)[0]
+    assert [f["rule_id"] for f in findings[2:]] == ["aws-access-token", sandbox.UNRECOGNIZED, "GHSA-abcd-efgh-ijkl", sandbox.UNRECOGNIZED]
+    assert leaked not in json.dumps(findings)

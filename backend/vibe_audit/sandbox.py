@@ -78,13 +78,53 @@ def _safe_text(value, limit=240):
     return value
 
 
-def _finding(scanner_id, rule, path, line, title):
+# The scanner runs on hostile source with the raw staging copy (secret files included) mounted. Its JSON is a claim,
+# like a black-box worker's: rule IDs must have the shape their scanner uses, and titles come from the harness, not
+# from the container, so code running inside the container cannot pass file contents on as finding text.
+_RULE_SHAPES = {
+    "gitleaks": re.compile(r"[a-z0-9]+(?:-[a-z0-9]+){0,12}"),
+    "osv": re.compile(r"[A-Z]{2,10}-[A-Za-z0-9]+(?:-[A-Za-z0-9]+){0,6}"),
+}
+_FIXED_TITLES = {"gitleaks": "Potential secret exposure",
+                 "osv": "Dependency vulnerability reported by the provisioned offline database"}
+UNRECOGNIZED = "unrecognized-rule"
+
+
+def _semgrep_messages():
+    """Rule ID -> message from the harness's own rule file (fixtures/semgrep-rules.yml)."""
+    text = (Path(__file__).resolve().parents[2] / "fixtures" / "semgrep-rules.yml").read_text(encoding="utf-8")
+    messages, current = {}, None
+    for line in text.splitlines():
+        match = re.match(r"\s*-\s+id:\s*(\S+)\s*$", line)
+        if match:
+            current = match[1]
+            continue
+        match = re.match(r"\s+message:\s*(.+?)\s*$", line)
+        if match and current:
+            messages[current] = match[1]
+    return messages
+
+
+def _trusted_rule(scanner_id, rule, messages):
+    """The rule ID the harness recognizes and the title it writes for it, ignoring any text the scanner returned."""
+    rule = str(rule)
+    if scanner_id == "semgrep":
+        # Semgrep prefixes a local rule's ID with its config path (for example inputs.rules.<id>).
+        known = next((rid for rid in messages if rule == rid or rule.endswith("." + rid)), None)
+        return (known, messages[known]) if known else (UNRECOGNIZED, "Semgrep finding from a rule outside the harness rule set")
+    shape = _RULE_SHAPES[scanner_id]
+    return (rule if len(rule) <= 80 and shape.fullmatch(rule) else UNRECOGNIZED), _FIXED_TITLES[scanner_id]
+
+
+def _finding(scanner_id, rule, path, line, messages=None):
+    from .snapshot import redact_text
     safe_path = _safe_text(path)
     if safe_path.startswith("/src/"):
         safe_path = safe_path[5:]
-    return {"scanner_id": scanner_id, "rule_id": _safe_text(rule), "file": safe_path,
+    rule_id, title = _trusted_rule(scanner_id, rule, messages or {})
+    return {"scanner_id": scanner_id, "rule_id": rule_id, "file": redact_text(safe_path),
             "line": line if type(line) is int and line > 0 else None,
-            "title": _safe_text(title), "state": "corroborated_static"}
+            "title": title, "state": "corroborated_static"}
 
 
 def _parse(scanner_id, output, exit_code):
@@ -95,8 +135,9 @@ def _parse(scanner_id, output, exit_code):
     if scanner_id == "semgrep":
         if not isinstance(data, dict) or not isinstance(data.get("results"), list):
             raise ValueError("schema")
+        messages = _semgrep_messages()
         for row in data["results"][:1000]:
-            findings.append(_finding(scanner_id, row["check_id"], row["path"], row.get("start", {}).get("line"), row.get("extra", {}).get("message", "Semgrep candidate finding")))
+            findings.append(_finding(scanner_id, row["check_id"], row["path"], row.get("start", {}).get("line"), messages))
         if data.get("errors"):
             gaps.append("Semgrep reported analysis errors; affected coverage is incomplete.")
         if not data.get("paths", {}).get("scanned"):
@@ -107,7 +148,7 @@ def _parse(scanner_id, output, exit_code):
         for row in data[:1000]:
             # Secret, Match, Entropy, Commit content and source snippets are
             # deliberately discarded even when upstream --redact is enabled.
-            findings.append(_finding(scanner_id, row["RuleID"], row["File"], row.get("StartLine"), row.get("Description", "Potential secret exposure")))
+            findings.append(_finding(scanner_id, row["RuleID"], row["File"], row.get("StartLine")))
     else:
         if not isinstance(data, dict) or not isinstance(data.get("results"), list):
             raise ValueError("schema")
@@ -115,7 +156,7 @@ def _parse(scanner_id, output, exit_code):
             path = source.get("source", {}).get("path", "")
             for package in source.get("packages", [])[:1000]:
                 for vuln in package.get("vulnerabilities", [])[:1000]:
-                    findings.append(_finding(scanner_id, vuln["id"], path, None, "Dependency vulnerability reported by the provisioned offline database"))
+                    findings.append(_finding(scanner_id, vuln["id"], path, None))
                     if len(findings) >= 1000:
                         break
                 if len(findings) >= 1000:
@@ -125,6 +166,9 @@ def _parse(scanner_id, output, exit_code):
         gaps.append("Offline OSV results depend on the supplied database age and ecosystem coverage; commit-level matching is unsupported offline.")
     if len(findings) >= 1000:
         gaps.append("Finding import reached its bounded limit; the full result was not imported.")
+    unrecognized = sum(f["rule_id"] == UNRECOGNIZED for f in findings)
+    if unrecognized:
+        gaps.append(f"{unrecognized} {scanner_id} finding(s) named a rule the harness does not recognize; their rule text was not imported.")
     if exit_code == 1 and not findings:
         raise ValueError("nonzero exit with no parsed findings")
     return findings, gaps
