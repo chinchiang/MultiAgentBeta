@@ -32,7 +32,7 @@ The API listens on 127.0.0.1 only. A browser gets a session by sending the start
 2. Probe exact model endpoints. Each of three independent reviewers receives identical core questions and source context. Static scanners can run concurrently; initial reviewers cannot see their conclusions.
 3. Seal all reviews, retain the union, preserve individual claims, inspect exact source references and run at most one challenger round. Votes cannot establish or dismiss a finding.
 4. Establish assets, actors, trust boundaries, dataflows, threats and security requirements. Model-derived requirements retain derived provenance. Existing controls need evidence; unknowns remain visible.
-5. Validate threat completeness and canonical standard IDs. Compile only traceable, scoped cases with positive controls, explicit oracle, allowed identities and cleanup. A model-designed case may use only test identities the operator marked model_selectable, and its header values come from fixed vocabularies, so it cannot pick a privileged account or carry snapshot text to the target.
+5. Validate threat completeness and canonical standard IDs. Compile only traceable, scoped cases with positive controls, explicit oracle, allowed identities and cleanup. A model-designed case may use only test identities the operator marked model_selectable, and its header values are single values from fixed vocabularies with no lists or q parameters, so it cannot pick a privileged account or carry snapshot text to the target beyond a few bits of choice.
 6. Execute externally through a source-free worker. Every request checks capability, lease, run/case binding, method/path, identity, IP and budget. Deployment header mismatch stops the branch. Target IPs are never cloud metadata, link-local, unspecified or multicast addresses; preflight refuses a target that is this console or its database, and a test identity whose credential is also a model key.
 7. Evaluate actual observations. Distinguish pass/fail, inconclusive, blocked, execution_error and outcome_unknown. Preserve evidence and counter-evidence; export only run-owned verified artifacts.
 8. A fix creates a new linked run with new source/deployment identification. Unknown side effects require reconciliation/reset rather than replay.
@@ -92,7 +92,7 @@ API 只監聽 127.0.0.1。瀏覽器透過將啟動權杖——以啟動 URL 的 
 2. 探測確切的模型端點。三名獨立 reviewer 各自收到相同的核心問題與原始碼情境。靜態掃描器可並行執行；初始 reviewer 看不到掃描器的結論。
 3. 封存所有審查、保留聯集、保存個別主張、檢視確切的原始碼參照，並執行至多一輪 challenger。表決無法確立或駁回任何發現。
 4. 建立資產、角色、信任邊界、資料流、威脅與安全需求。由模型衍生的需求保留「衍生」的來源標記。既有控制措施需要證據；未知項目保持可見。
-5. 驗證威脅完整性與標準 ID。只編譯可追溯、有範圍限制的 case，並附上 positive control、明確的 oracle、允許的身分與 cleanup。模型設計的 case 只能使用操作者標記 model_selectable 的測試身分，header 值只能取固定詞彙，因此無法挑選高權限帳號，也無法把快照內容帶到目標。
+5. 驗證威脅完整性與標準 ID。只編譯可追溯、有範圍限制的 case，並附上 positive control、明確的 oracle、允許的身分與 cleanup。模型設計的 case 只能使用操作者標記 model_selectable 的測試身分，header 值只能取固定詞彙中的單一值、不得列多項或帶 q 參數，因此無法挑選高權限帳號，帶到目標的資訊也只剩少量的選擇空間。
 6. 透過不含原始碼的 worker 對外執行。每個請求都檢查 capability、lease、run/case 綁定、method/path、身分、IP 與預算。部署標頭不符時停止該分支。目標 IP 一律不能是雲端 metadata、link-local、unspecified 或 multicast 位址；預檢會拒絕指向本控制台或其資料庫的目標，以及憑證同時是模型金鑰的測試身分。
 7. 評估實際的 observations。區分 pass/fail、inconclusive、blocked、execution_error 與 outcome_unknown。保留證據與反證；只匯出 run 所擁有且經驗證的 artifact。
 8. 修復會建立一個新的連結 run，並附帶新的原始碼／部署識別。未知的副作用需要 reconciliation/reset，而不是重播。

@@ -945,7 +945,11 @@ def as_get_case(run,headers=None):
     ("model",{"X-Tenant":"tenant-b"},False),
     ("operator",{"X-Tenant":"tenant-b"},True),
     ("model",{"Accept":"application/json"},True),
-    ("model",{"Accept-Language":"zh-TW,en;q=0.5","If-None-Match":"*"},True),
+    ("model",{"Accept-Language":"zh-TW","If-None-Match":"*"},True),
+    # One plain value per header: a list or a q parameter is room to encode snapshot text.
+    ("model",{"Accept":"application/json;q=0.9"},False),
+    ("model",{"Accept-Language":"zh-TW,en"},False),
+    ("operator",{"Accept-Language":"zh-TW,en;q=0.5"},True),
     # A model-chosen value could carry snapshot text to the target; operator values stay free.
     ("model",{"Accept":"application/x-sk-live-0123456789"},False),
     ("model",{"If-None-Match":'"copied-from-the-snapshot"'},False),
@@ -1017,6 +1021,7 @@ async def test_test_designer_is_told_which_identities_and_headers_it_may_use(eng
     instruction,payload=seen[0]
     assert payload["identities"]==["alice"]
     assert "one of the given identities" in instruction and "If-None-Match: *" in instruction
+    assert "without lists or q parameters" in instruction
 
 
 def test_test_identities_are_not_model_selectable_by_default():

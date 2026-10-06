@@ -88,7 +88,8 @@ RELAY_HEADERS = frozenset({"x-vibe-case", "x-vibe-identity", "x-schemathesis-tes
 # Model-designed cases need no custom routing, tenant or identity signal; operators write those cases.
 MODEL_CASE_HEADERS = frozenset({"accept", "accept-language", "content-type", "if-match", "if-none-match", "x-requested-with"})
 # A model reads the snapshot and operator notes, so a free-form header value could carry them to the target.
-# Its header values come from small fixed vocabularies instead; operator-written cases keep free values.
+# Its header values come from small fixed vocabularies instead, one value per header with no list or q parameter:
+# every extra choice is room to encode snapshot text. Operator-written cases keep free values.
 _MEDIA_TYPES = ("*/*", "text/*", "image/*", "application/*", "application/json", "application/problem+json",
                 "application/xml", "application/x-www-form-urlencoded", "application/octet-stream", "application/pdf",
                 "multipart/form-data", "text/html", "text/plain", "text/csv", "text/xml", "text/event-stream",
@@ -97,14 +98,13 @@ _LANGUAGES = ("*", "en", "en-US", "en-GB", "zh", "zh-TW", "zh-CN", "zh-HK", "ja"
               "es", "pt", "pt-BR", "it", "nl", "ru", "ar", "he", "tr", "vi", "th", "id")
 
 
-def _listed(options, limit=4):
-    item = "(?:" + "|".join(re.escape(option) for option in options) + r")(?:;q=(?:0(?:\.[0-9]{1,3})?|1(?:\.0{1,3})?))?"
-    return re.compile(f"{item}(?:, ?{item}){{0,{limit - 1}}}")
+def _one_of(options):
+    return re.compile("|".join(re.escape(option) for option in options))
 
 
 _MODEL_HEADER_VALUES = {
-    "accept": _listed(_MEDIA_TYPES),
-    "accept-language": _listed(_LANGUAGES),
+    "accept": _one_of(_MEDIA_TYPES),
+    "accept-language": _one_of(_LANGUAGES),
     "content-type": re.compile(r"(?:application/json|application/x-www-form-urlencoded|application/xml|text/plain)(?:; ?charset=utf-8)?"),
     # The model never sees a target response, so it holds no real entity tag: only the wildcard means anything.
     "if-match": re.compile(r"\*"),

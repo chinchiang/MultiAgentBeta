@@ -163,7 +163,7 @@ agents:
     tools: []                            # 沒有函式工具；「送出」發生在確定性程式依它的輸出派發請求
     high_impact_tools: []
     # 設計上的控制（見 t-indirect-injection、t-model-identity）：method/path（含 query）須完全符合操作者的 allowed_requests；
-    # 模型設計的 POST 一律 blocked（fixture profile 除外，service.py:671-697）；header 名稱只允許 6 個、值限固定詞彙（adapters.py:89、105-113）；
+    # 模型設計的 POST 一律 blocked（fixture profile 除外，service.py:671-697）；header 名稱只允許 6 個、值限固定詞彙中的單一值（adapters.py:89、105-113）；
     # 身分限 model_selectable（policy.py:135-139）；目標 IP 釘選。
     # 這些是程式碼層控制，VibeSec 目前只能驗證 claude_permission 類證據，所以沒有 mitigation_evidence。
     # 2026-10-06 由 @chinchiang 決定：以上控制視為切斷對外通訊這隻腳。can_communicate_externally 仍標 true，因為請求確實會送出；
@@ -188,10 +188,13 @@ threats:
     mitigation: >-
       模型無工具、輸出須過 schema 與 Pydantic；method/path（含 query）須完全符合 allowed_requests；模型設計的 POST 一律
       blocked（fixture profile 除外）；目標 IP 釘選；目標回應不回饋給模型。模型設計的案例（含其 positive control）header 只允許
-      6 個名稱，值只能取固定詞彙：Accept／Accept-Language 至多 4 個列舉值加 q 值、Content-Type 4 種、If-Match／If-None-Match
-      只能是 *（模型看不到目標回應，沒有真的 ETag）、X-Requested-With 只能是 XMLHttpRequest（adapters.py:105-113、128）；
-      case_gate 先擋（policy.py:132-134），送出前再檢查（adapters.py:530）；身分只能是 model_selectable 的測試身分（見 t-model-identity）。
-      殘留：fixture profile 路徑（例如 ai_http 的 prompt）的 JSON body 仍由模型決定，只送往操作者宣告的 fixture 目標。
+      6 個名稱，值只能是固定詞彙中的單一值、不得列多項或帶 q 參數：Accept 18 種、Accept-Language 26 種、Content-Type 4 種、
+      If-Match／If-None-Match 只能是 *（模型看不到目標回應，沒有真的 ETag）、X-Requested-With 只能是 XMLHttpRequest
+      （adapters.py:105-113、128）；case_gate 先擋（policy.py:132-134），送出前再檢查（adapters.py:530）；身分只能是
+      model_selectable 的測試身分（見 t-model-identity）。
+      殘留：(1) fixture profile 路徑（例如 ai_http 的 prompt）的 JSON body 仍由模型決定，只送往操作者宣告的 fixture 目標；
+      (2) 低頻寬的選擇通道：模型仍可在允許範圍內選擇 path、身分、各 header 的值與是否帶上、請求的次序與次數，每個請求的 header
+      約十餘 bits；2026-10-06 G4 架構審查指出原先允許 q 值與多項列表時頻寬更高，已改為單一值。
     status: mitigated
     gate: G6
   - id: t-model-identity
