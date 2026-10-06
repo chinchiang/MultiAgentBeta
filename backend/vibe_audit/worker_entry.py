@@ -255,8 +255,9 @@ class Supervisor:
         """The part of an http_case or request_sequence the untrusted worker needs to send it and judge it.
 
         The worker runs where a hostile target answers; it gets no title, control names or step labels, nothing it
-        would only pass on. The oracle and control texts stay, since a pass needs the worker's verdict and the
-        supervisor's. A tool task runs only operator-written cases and keeps its spec."""
+        would only pass on. An http_case keeps its oracle and control texts, since a pass needs the worker's verdict
+        and the supervisor's; a sequence worker only sends steps (the console judges them) and gets the case ID alone.
+        A tool task runs only operator-written cases and keeps its spec."""
         operation=self.spec.get("operation")
         if operation not in {"http_case","request_sequence"}:
             return self.spec
@@ -267,13 +268,14 @@ class Supervisor:
                for c in self.spec.get("cases",[])]
         view={**self.spec,"cases":cases}
         if operation=="request_sequence":
+            view["cases"]=[{"id":c.get("id")} for c in self.spec.get("cases",[])]
             # supervised_sequence labels each record from the sealed steps, so the worker needs no label of its own.
             view["requests"]=[{**{k:s[k] for k in WORKER_STEP_FIELDS if k in s},"id":f"step-{i}"} for i,s in enumerate(self.spec.get("requests",[]),1)]
         return view
 
     def child_task(self,endpoint):
         """What the worker container reads from /inputs/_worker_task.json."""
-        return {"spec":self.worker_view(),"broker":endpoint,"broker_token":self.task["broker_token"],"backend":self.task["backend"],
+        return {"spec":self.worker_view(),"broker":endpoint,"broker_token":self.task["broker_token"] if endpoint else None,"backend":self.task["backend"],
                 "hard_deadline_unix":time.time()+self.spec["timeout_seconds"]}
 
     def allowed_request(self,request):
@@ -513,7 +515,7 @@ class Supervisor:
         threading.Thread(target=self.guardian,daemon=True).start()
         try:
             # A white-box scanner sends nothing to a target, so its container gets no broker to ask.
-            endpoint=self.start_broker() if self.spec.get("phase")!="whitebox" else None
+            endpoint=self.start_broker() if self.spec.get("phase")=="blackbox" else None
             child_file=Path(self.task["inputs_dir"])/"_worker_task.json"
             child_file.write_text(json.dumps(self.child_task(endpoint)),encoding="utf-8");os.chmod(child_file,0o444)
         except Exception:

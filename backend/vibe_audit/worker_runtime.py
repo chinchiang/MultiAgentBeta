@@ -89,7 +89,8 @@ def _client_env(manifest):
         key=profile.get("credential_env","")
         if credential_env_allowed(key) and key in os.environ and key not in shared and key not in unbound:
             result[key]=os.environ[key]
-    if TARGET_CREDENTIAL_ORIGINS_ENV in os.environ:
+    # The binding names target origins, so only a supervisor that sends as an identity gets it.
+    if manifest.get("auth_profiles") and TARGET_CREDENTIAL_ORIGINS_ENV in os.environ:
         result[TARGET_CREDENTIAL_ORIGINS_ENV]=os.environ[TARGET_CREDENTIAL_ORIGINS_ENV]
     return result
 

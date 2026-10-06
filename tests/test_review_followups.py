@@ -321,6 +321,8 @@ def test_sequence_worker_gets_steps_without_labels_or_case_text(monkeypatch):
     assert [s["id"] for s in view["requests"]] == ["step-1", "step-2"]
     assert all(set(s) <= {"id", "case_id", "method", "path", "headers", "identity", "body", "expected_status", "required_text"} for s in view["requests"])
     assert "secret control name" not in json.dumps(view) and "model title" not in json.dumps(view)
+    # The console judges a sequence from the supervisor's records, so its worker gets the case ID and no oracle.
+    assert view["cases"] == [{"id": "C1"}] and "CANARY" not in json.dumps(view["cases"])
     # The supervisor still checks requests against its own sealed steps.
     assert supervisor.spec["requests"][0]["id"].startswith("control:")
 
@@ -332,3 +334,5 @@ def test_worker_task_file_carries_the_worker_view(monkeypatch):
     task = supervisor.child_task({"tcp": ["127.0.0.1", 1]})
     assert task["spec"] == supervisor.worker_view() and "model title" not in json.dumps(task)
     assert task["broker"] == {"tcp": ["127.0.0.1", 1]} and task["broker_token"] == "t"
+    # Without a broker there is no token to hand over either.
+    assert supervisor.child_task(None)["broker_token"] is None

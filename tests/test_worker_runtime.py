@@ -683,6 +683,9 @@ async def test_white_box_task_gets_no_broker_target_scope_or_credentials(runtime
     white=phase_scope(scope,"whitebox")
     assert not {"target_url","allowed_target_ips","allowed_requests","auth_profiles"}&set(supervisor_manifest(white))
     assert "VIBEAUDIT_ALICE_TOKEN" not in _client_env(white) and _client_env(phase_scope(scope,"blackbox"))["VIBEAUDIT_ALICE_TOKEN"]=="alice-token"
+    # The binding names target origins; a supervisor without identities does not get it.
+    assert "VIBEAUDIT_TARGET_CREDENTIAL_ORIGINS" not in _client_env(white)
+    assert "VIBEAUDIT_TARGET_CREDENTIAL_ORIGINS" in _client_env(phase_scope(scope,"blackbox"))
     offered={}
     for phase in ("whitebox","blackbox"):
         # A fresh run for each phase: the same run and operation would reuse the first task's journaled result.
