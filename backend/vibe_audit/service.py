@@ -364,7 +364,7 @@ class Engine:
         else:
             if not self.store.postgres:
                 raise PolicyError("Live runs require VIBEAUDIT_DATABASE_URL (PostgreSQL); SQLite is demo-only")
-            from .adapters import AdapterBlocked,control_plane_target,shared_credentials
+            from .adapters import AdapterBlocked,TARGET_CREDENTIAL_ORIGINS_ENV,control_plane_target,shared_credentials,unbound_target_credentials
             shared=shared_credentials(run["manifest"])
             if shared:
                 raise PolicyError("A test identity credential has the same variable or value as a model credential: "+", ".join(shared))
@@ -379,6 +379,12 @@ class Engine:
                 raise PolicyError(str(exc)) from None
             if endpoint:
                 raise PolicyError(f"The target would reach this console or its database ({endpoint}); point it at the application under test")
+            try:
+                unbound=unbound_target_credentials(run["manifest"])
+            except AdapterBlocked as exc:
+                raise PolicyError(str(exc)) from None
+            if unbound:
+                raise PolicyError(f"Test identity credentials are not bound to this target in {TARGET_CREDENTIAL_ORIGINS_ENV} (NAME=origin): "+", ".join(unbound))
             capabilities=await runtime.capabilities()
             if not capabilities.get("available"):
                 raise PolicyError(capabilities.get("reason","Isolated runtime unavailable"))
@@ -626,7 +632,9 @@ class Engine:
             tm=dict(id="TM-001",version=1,assets=[{"id":"user","name":"Synthetic caller","kind":"actor"},{"id":"orders","name":"Synthetic private orders","kind":"data"},{"id":"agent","name":"Synthetic agent","kind":"service"}],dataflows=[{"id":"DF-1","source":"user","target":"orders","boundary":"tenant"},{"id":"DF-2","source":"user","target":"agent","boundary":"untrusted content"}],threats=threats,standards=["ASVS-v5.0.0-8.2.2","WSTG-v42-ATHZ-04"])
         else:
             commander=self.profile(run,"threat_modeler")
-            context={"architecture":run.get("architecture"),"findings":run["findings"],"operator_requirements":run["manifest"].get("requirements",[]),"notes":run["manifest"]["notes"],"provided_cases":run["manifest"]["cases"]}
+            context={"architecture":run.get("architecture"),"findings":run["findings"],"operator_requirements":run["manifest"].get("requirements",[]),"notes":run["manifest"]["notes"],
+                     # Tracing needs the case's identity, not its header values or body, which may hold test secrets.
+                     "provided_cases":[{k:c[k] for k in ("id","title","threat_ids","requirement_id","adapter","method","path","identity") if k in c} for c in run["manifest"]["cases"]]}
             tm=await self.model(run,commander,'Build a complete threat model with explicit requirements, roles, attacker-controlled inputs, dataflows and unknowns. Every declared control needs a verifiable source reference. Use blocked with a concrete reason when no fixture/oracle exists. Preserve IDs in operator-provided cases and requirements. Never invent business authorization rules or standard IDs; standards may be empty.',{**context,"source":self.fitted_source(run,context,"Threat modeler")},ThreatModelProposal)
             run["reserved_tokens"]=0
         tm=ThreatModelProposal.model_validate(tm).model_dump()

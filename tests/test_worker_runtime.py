@@ -270,6 +270,7 @@ async def test_broker_and_controller_redact_every_configured_credential(runtime,
     thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
     try:
         scope=manifest(f"http://127.0.0.1:{server.server_port}")
+        monkeypatch.setenv("VIBEAUDIT_TARGET_CREDENTIAL_ORIGINS",",".join(f"{k}={scope['target_url']}" for k in ("VIBEAUDIT_TEST_ALICE","VIBEAUDIT_TEST_BOB")))
         scope["auth_profiles"]=[{"id":"alice","credential_env":"VIBEAUDIT_TEST_ALICE"},{"id":"bob","credential_env":"VIBEAUDIT_TEST_BOB"}]
         scope["models"]=[{"id":"reviewer-a","credential_env":"VIBEAUDIT_TEST_MODEL"}]
         value=case();value.pop("hash");value["identity"]="alice";value["hash"]=canonical_hash(value)
@@ -361,11 +362,20 @@ def test_supervisor_never_receives_a_model_key_as_a_target_credential(monkeypatc
     monkeypatch.setenv("VIBEAUDIT_ALICE_TOKEN","alice-token")
     monkeypatch.setenv("VIBEAUDIT_BOB_TOKEN","shared-model-key")
     monkeypatch.setenv("VIBEAUDIT_MODEL_KEY","shared-model-key")
-    scope={"auth_profiles":[{"id":"alice","credential_env":"VIBEAUDIT_ALICE_TOKEN"},{"id":"bob","credential_env":"VIBEAUDIT_BOB_TOKEN"}],
+    monkeypatch.setenv("VIBEAUDIT_CAROL_TOKEN","carol-token")
+    monkeypatch.setenv("VIBEAUDIT_TARGET_CREDENTIAL_ORIGINS","VIBEAUDIT_ALICE_TOKEN=http://127.0.0.1:9000,VIBEAUDIT_BOB_TOKEN=http://127.0.0.1:9000,"
+                       "VIBEAUDIT_CAROL_TOKEN=http://127.0.0.1:9001")
+    scope={"target_url":"http://127.0.0.1:9000",
+           "auth_profiles":[{"id":p,"credential_env":f"VIBEAUDIT_{p.upper()}_TOKEN"} for p in ("alice","bob","carol")],
            "models":[{"id":"m","credential_env":"VIBEAUDIT_MODEL_KEY"}]}
     env=_client_env(scope)
     assert env["VIBEAUDIT_ALICE_TOKEN"]=="alice-token"
     assert "VIBEAUDIT_BOB_TOKEN" not in env and "VIBEAUDIT_MODEL_KEY" not in env
+    # A credential bound to another origin never enters the supervisor's environment; the binding itself does,
+    # so the supervisor's own last check reads the operator's environment, not the run.
+    assert "VIBEAUDIT_CAROL_TOKEN" not in env and env["VIBEAUDIT_TARGET_CREDENTIAL_ORIGINS"].startswith("VIBEAUDIT_ALICE_TOKEN=")
+    monkeypatch.setenv("VIBEAUDIT_TARGET_CREDENTIAL_ORIGINS","not a binding")
+    assert not {"VIBEAUDIT_ALICE_TOKEN","VIBEAUDIT_CAROL_TOKEN"}&set(_client_env(scope))
 
 
 def test_supervisor_that_cannot_start_reports_nothing_to_clean_up(tmp_path):

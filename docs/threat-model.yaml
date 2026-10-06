@@ -31,15 +31,15 @@ assets:
   - id: a-target-source
     name: 受測原始碼與 raw staging 副本（保留受測 repo 的機密檔供掃描器使用）
     sensitivity: secret
-    store: "<data_dir>/scanner-inputs/<id>：父目錄 0700、檔案 0444（staging.py:40-49）；whitebox 結束、每次 attempt 結束與啟動時刪除"
+    store: "<data_dir>/scanner-inputs/<id>：父目錄 0700、檔案 0444（staging.py:42-51）；whitebox 結束、每次 attempt 結束與啟動時刪除"
   - id: a-snapshot
     name: 給模型的去識別化快照（啟發式遮罩，snapshot.py:53、209）
     sensitivity: confidential
-    store: 送往 model profile 的端點；並以 evidence 保存（service.py:432）
+    store: 送往 model profile 的端點；並以 evidence 保存（service.py:438）
   - id: a-target-creds
     name: 目標認證（auth_profiles 引用的 VIBEAUDIT_* 環境變數）
     sensitivity: secret
-    store: 只在 host 上的 supervisor 環境（worker_runtime.py:72-82），不進容器
+    store: 只在 host 上的 supervisor 環境（worker_runtime.py:72-89），不進容器
   - id: a-model-keys
     name: 模型 API 金鑰（model profile 引用的 VIBEAUDIT_* 環境變數）
     sensitivity: secret
@@ -71,7 +71,7 @@ components:
   - { id: c-db,           name: PostgreSQL（job／lease 帳本、checkpoint、證據）,                        kind: db,               zone: z-control }
   - { id: c-supervisor,   name: 獨立 supervisor／broker（持有目標憑證、IP 釘選、dispatch 帳本、lease）, kind: worker,           zone: z-control }
   - { id: c-collector,    name: effect collector／mock sink（在控制台程序內執行，目標以 bearer capability 送事件；effect_collector.py:188-225）,         kind: worker,           zone: z-control }
-  - { id: c-docker,       name: Docker Engine（supervisor 建立與清理 worker；控制台查詢 /info 與映像，worker_runtime.py:225-266）, kind: tool,             zone: z-host }
+  - { id: c-docker,       name: Docker Engine（supervisor 建立與清理 worker；控制台查詢 /info 與映像，worker_runtime.py:232-273）, kind: tool,             zone: z-host }
   - { id: c-wb-worker,    name: whitebox worker（semgrep、gitleaks、OSV；唯讀 /src、UID 65532、network none）, kind: worker,  zone: z-sandbox }
   - { id: c-bb-worker,    name: blackbox worker（ZAP、Schemathesis、Playwright、promptfoo、PyRIT；UID 65533、network none、Unix socket relay）, kind: worker, zone: z-sandbox }
   - { id: c-target,       name: 操作者提供的 staging 目標（target_url + allowed_target_ips）,          kind: external_service, zone: z-target }
@@ -87,6 +87,7 @@ components:
   - { id: c-reporter,     name: reporter（只重排發現順序）,                                           kind: agent,            zone: z-agent, maestro_layer: 3 }
   - { id: c-provisioning, name: provisioning 來源（PyPI、npm、OSV archive、映像 registry；只在管理者 provisioning 時）, kind: external_service, zone: z-vendor }
   - { id: c-ci,           name: GitHub Actions ci.yml（push／pull_request、contents read、無 secrets）, kind: ci,              zone: z-github }
+  - { id: c-benchmark,    name: benchmark CLI（python -m vibe_audit.benchmark；live 模式以同一個 generate_json 讓三個模型審查資料集並 debate，benchmark.py:247-252、286-366、441-454）, kind: tool, zone: z-control }
 
 flows:
   - { from: c-operator,    to: c-console,     data: [startup_token, session_cookie, csrf_token, manifest, source_path, auth_profile_refs], protocol: http-loopback, authenticated: true,  crosses_boundary: true }
@@ -94,8 +95,10 @@ flows:
   - { from: c-source,      to: c-console,     data: [repository_files],                                               protocol: file,          authenticated: null,  crosses_boundary: true }
   - { from: c-console,     to: c-wb-worker,   data: [raw_staging_readonly_mount],                                     protocol: bind-mount,    authenticated: null,  crosses_boundary: true }
   - { from: c-wb-worker,   to: c-console,     data: [scanner_rule_file_line_title],                                   protocol: file,          authenticated: null,  crosses_boundary: true }
-  - { from: c-console,     to: c-llm-local,   data: [redacted_snapshot, prompts, operator_notes, scanner_findings, model_outputs],      protocol: http-loopback, authenticated: null,  crosses_boundary: true }
-  - { from: c-console,     to: c-llm-cloud,   data: [redacted_snapshot, prompts, operator_notes, scanner_findings, model_outputs, model_api_key], protocol: https, authenticated: true, crosses_boundary: true }
+  - { from: c-console,     to: c-llm-local,   data: [redacted_snapshot, prompts, operator_notes, scanner_findings, model_outputs, provided_case_trace_fields, target_url, selectable_identity_ids],      protocol: http-loopback, authenticated: null,  crosses_boundary: true }
+  - { from: c-console,     to: c-llm-cloud,   data: [redacted_snapshot, prompts, operator_notes, scanner_findings, model_outputs, provided_case_trace_fields, target_url, selectable_identity_ids, model_api_key], protocol: https, authenticated: true, crosses_boundary: true }
+  - { from: c-benchmark,   to: c-llm-local,   data: [benchmark_dataset_code, tool_context, peer_reviews],                                 protocol: http-loopback, authenticated: null,  crosses_boundary: true }
+  - { from: c-benchmark,   to: c-llm-cloud,   data: [benchmark_dataset_code, tool_context, peer_reviews, model_api_key],                  protocol: https,         authenticated: true,  crosses_boundary: true }
   - { from: c-llm-cloud,   to: c-console,     data: [model_json_output],                                              protocol: https,         authenticated: true,  crosses_boundary: true }
   - { from: c-console,     to: c-db,          data: [runs, jobs, leases, checkpoints, evidence],                      protocol: postgresql,    authenticated: true,  crosses_boundary: false }
   - { from: c-console,     to: c-supervisor,  data: [sealed_cases, manifest, database_url],                           protocol: stdin,         authenticated: null,  crosses_boundary: false }
@@ -103,7 +106,7 @@ flows:
   - { from: c-supervisor,  to: c-db,          data: [lease_ledger, dispatch_reservations, worker_results_redacted_responses], protocol: postgresql, authenticated: true, crosses_boundary: false }
   - { from: c-supervisor,  to: c-docker,      data: [container_create, container_cleanup],                            protocol: unix-socket,   authenticated: null,  crosses_boundary: true }
   - { from: c-bb-worker,   to: c-supervisor,  data: [relay_requests, broker_token],                                   protocol: unix-socket,   authenticated: true,  crosses_boundary: true }
-  - { from: c-supervisor,  to: c-bb-worker,   data: [relayed_target_responses, task_file_spec, broker_token],         protocol: unix-socket,   authenticated: true,  crosses_boundary: true }
+  - { from: c-supervisor,  to: c-bb-worker,   data: [relayed_target_responses, task_file_spec_http_case_minimized, broker_token],         protocol: unix-socket,   authenticated: true,  crosses_boundary: true }
   - { from: c-bb-worker,   to: c-console,     data: [worker_result_claims, tool_artifacts_base64],                    protocol: stdout,        authenticated: null,  crosses_boundary: true }
   - { from: c-supervisor,  to: c-target,      data: [http_requests, target_credentials],                              protocol: https,         authenticated: true,  crosses_boundary: true }
   - { from: c-target,      to: c-supervisor,  data: [http_responses_max_256kib],                                      protocol: https,         authenticated: true,  crosses_boundary: true }
@@ -125,62 +128,69 @@ agents:
   # 所有模型呼叫都經 providers.generate_json()：不傳 tools，回覆含 tool_calls 即拒絕（providers.py:337-346、460-461），
   # 輸出須過 JSON schema 與 Pydantic（extra=forbid）。所以除了 test_designer，模型的輸出不觸發動作；但會成為下一個模型的輸入
   # （commander → reviewers、reviewers → challenger／threat_modeler／reporter、architecture_mapper → threat_modeler；retest 時上一個 run 的
-  # test_designer 案例 → 新 run 的 threat_modeler），見 t-agent-trust-propagation。
-  # 目標回應從不送回任何模型（service.py:771；observation 不進模型輸入）。
+  # test_designer 案例 → 新 run 的 threat_modeler；test_designer 寫的案例標題成為黑箱發現的標題 → reporter），見 t-agent-trust-propagation。
+  # 目標回應從不送回任何模型（service.py:779；observation 不進模型輸入）。
   - id: c-commander
-    accesses_private_data: true          # 快照的檔案路徑清單與操作者備註（service.py:526）
+    accesses_private_data: true          # 快照的檔案路徑清單與操作者備註（service.py:532）
     exposed_to_untrusted_content: true   # 路徑來自受測 repo
-    can_communicate_externally: false    # 輸出只有 reviewer 順序（必須恰為三位 reviewer，service.py:527-528）與 focus 文字；focus 每項 ≤ 300 字，以獨立、標為不受信任的欄位交給 reviewer（service.py:529-531、545）
+    can_communicate_externally: false    # 輸出只有 reviewer 順序（必須恰為三位 reviewer，service.py:533-534）與 focus 文字；focus 每項 ≤ 300 字，以獨立、標為不受信任的欄位交給 reviewer（service.py:535-537、551）
     tools: []
     mitigations: [tool_allowlist]
     trifecta_leg_cut: null
   - id: c-reviewers
-    accesses_private_data: true          # 完整的去識別化快照（service.py:545）
+    accesses_private_data: true          # 完整的去識別化快照（service.py:551）
     exposed_to_untrusted_content: true   # 受測 repo 的文字（可夾帶提示注入）
-    can_communicate_externally: false    # 無工具；來源引用須與快照相符（contracts.py:224-236）
+    can_communicate_externally: false    # 無工具；來源引用須與快照相符（contracts.py:234-246）
     tools: []
     mitigations: [tool_allowlist]
     trifecta_leg_cut: null
   - id: c-challenger
-    accesses_private_data: true          # 快照與匿名化後的發現（service.py:609-610）
+    accesses_private_data: true          # 快照與匿名化後的發現（service.py:615-616）
     exposed_to_untrusted_content: true
-    can_communicate_externally: false    # 只能引用既有發現 ID（service.py:612）
+    can_communicate_externally: false    # 只能引用既有發現 ID（service.py:618）
     tools: []
     mitigations: [tool_allowlist]
     trifecta_leg_cut: null
   - id: c-arch-mapper
-    accesses_private_data: true          # 快照、操作者需求與備註（service.py:616）
+    accesses_private_data: true          # 快照、操作者需求與備註（service.py:622）
     exposed_to_untrusted_content: true
     can_communicate_externally: false
     tools: []
     mitigations: [tool_allowlist]
     trifecta_leg_cut: null
   - id: c-threat-modeler
-    accesses_private_data: true          # 架構圖（模型輸出）、發現、需求、快照（service.py:629-630）
+    accesses_private_data: true          # 架構圖（模型輸出）、發現、需求、快照（service.py:635-638）
     exposed_to_untrusted_content: true
     can_communicate_externally: false    # 輸出經 threat_gate（policy.py:61-100）
     tools: []
     mitigations: [tool_allowlist]
     trifecta_leg_cut: null
   - id: c-test-designer
-    accesses_private_data: true          # 威脅模型（由快照衍生）、target_url、操作者備註（service.py:668）；不直接拿到原始碼
+    accesses_private_data: true          # 威脅模型（由快照衍生）、target_url、操作者備註（service.py:676）；不直接拿到原始碼
     exposed_to_untrusted_content: true   # 間接：威脅模型由讀過受測 repo 的模型產生（repo → reviewers → threat_modeler → test_designer）
-    can_communicate_externally: true     # 它設計的案例經 case_gate、authorize 與 supervisor 後真的送到目標（service.py:667-673、policy.py:102-203、worker_entry.py:236-307）
+    can_communicate_externally: true     # 它設計的案例經 case_gate、authorize 與 supervisor 後真的送到目標（service.py:675-681、policy.py:102-203、worker_entry.py:266-337）
     tools: []                            # 沒有函式工具；「送出」發生在確定性程式依它的輸出派發請求
-    high_impact_tools: [sealed_case_http_dispatch]   # 它設計的封存案例由確定性程式派發為送往目標的 HTTP 請求；live 時須經操作者核准（service.py:716-719、policy.py:175-177）
+    high_impact_tools: [sealed_case_http_dispatch]   # 它設計的封存案例由確定性程式派發為送往目標的 HTTP 請求；live 時須經操作者核准（service.py:724-727、policy.py:175-177）
     # 設計上的控制（見 t-indirect-injection、t-model-identity）：method/path（含 query）須完全符合操作者的 allowed_requests；
-    # 模型設計的 POST 一律 blocked（fixture profile 除外）；fixture 路徑的模型本文只送往操作者標 model_body 的端點（service.py:750、807-819）；
-    # header 名稱只允許 6 個、拼法與順序固定、值限固定詞彙中的單一值（adapters.py:109-136、156-172）；身分限 model_selectable（policy.py:135-139）；
-    # 目標 IP 釘選；整組封存案例須經操作者核准才發出第一個請求（service.py:716-719）。
+    # 模型設計的 POST 一律 blocked（fixture profile 除外）；fixture 路徑的模型本文只送往操作者標 model_body 的端點（service.py:758、815-827）；
+    # header 名稱只允許 6 個、拼法與順序固定、值限固定詞彙中的單一值（adapters.py:144-171、191-207）；身分限 model_selectable（policy.py:135-139）；
+    # 目標 IP 釘選；整組封存案例須經操作者核准才發出第一個請求（service.py:724-727）。
     # 這些是程式碼層控制，VibeSec 目前只能驗證 claude_permission 類證據，所以沒有 mitigation_evidence。
     # 2026-10-06 由 @chinchiang 決定：以上控制視為切斷對外通訊這隻腳。can_communicate_externally 仍標 true，因為請求確實會送出；
     # 切腳靠的是上述程式碼層控制。接受的殘留：fixture profile 的 JSON body 仍由模型決定，以及低頻寬的選擇通道（見 decisions、t-indirect-injection）。
     mitigations: [egress_allowlist, tool_allowlist, human_in_the_loop]
     trifecta_leg_cut: external_comms
   - id: c-reporter
-    accesses_private_data: true          # 發現（含檔案、行號與標題，service.py:796）
+    accesses_private_data: true          # 發現（含檔案、行號與標題，service.py:804）
     exposed_to_untrusted_content: true   # 發現文字源自模型與受測 repo
-    can_communicate_externally: false    # 輸出必須恰為發現 ID 的排列（service.py:798-799）
+    can_communicate_externally: false    # 輸出必須恰為發現 ID 的排列（service.py:806-807）
+    tools: []
+    mitigations: [tool_allowlist]
+    trifecta_leg_cut: null
+  - id: c-benchmark
+    accesses_private_data: true          # --dataset 可指向任何資料集；內建的是本 repo 的合成案例（benchmark.py:441-454）
+    exposed_to_untrusted_content: true   # 資料集程式碼與前幾個模型的 peer_reviews（debate，benchmark.py:351-352）
+    can_communicate_externally: false    # 同樣只經 generate_json（benchmark.py:295、307、366）：不帶 tools，沿用模型 origin 與金鑰綁定；輸出只寫入本機結果檔
     tools: []
     mitigations: [tool_allowlist]
     trifecta_leg_cut: null
@@ -198,12 +208,12 @@ threats:
       6 個名稱，值只能是固定詞彙中的單一值、不得列多項或帶 q 參數：Accept 18 種（不帶與明列預設的 application/json 在線路上相同）、Accept-Language 26 種、Content-Type 4 種（charset 參數只有
       `; charset=utf-8` 一種寫法）、
       If-Match／If-None-Match 只能是 *（模型看不到目標回應，沒有真的 ETag）、X-Requested-With 只能是 XMLHttpRequest
-      （adapters.py:127-136）。header 名稱只有一種拼法（Accept、Accept-Language…），大小寫不同的重複名稱在設計階段即拒絕，
-      依名稱排序送出（adapters.py:109-111、139-172、363-365；service.py:672-682）：大小寫、重複與順序都不再是模型的選擇。
+      （adapters.py:162-171）。header 名稱只有一種拼法（Accept、Accept-Language…），大小寫不同的重複名稱在設計階段即拒絕，
+      依名稱排序送出（adapters.py:144-146、174-207、398-400；service.py:680-690）：大小寫、重複與順序都不再是模型的選擇。
       case_gate 先擋（policy.py:132-134）；目標前最後一個受信任的節點 supervisor 依 sealed case 的來源標記，再以模型詞彙重驗
-      （worker_entry.py:286-297），不只靠不受信任容器內的檢查。fixture 路徑上，模型撰寫的本文只送往操作者在 allowed_requests
-      標 model_body 的端點（service.py:750、807-819；supervisor 再擋一次，worker_entry.py:288-290）。整組封存案例須經操作者
-      核准（核准綁定案例雜湊收據），之後才發出第一個請求（service.py:183-197、716-719）；執行 capability 本身也要求這份核准
+      （worker_entry.py:316-327），不只靠不受信任容器內的檢查。fixture 路徑上，模型撰寫的本文只送往操作者在 allowed_requests
+      標 model_body 的端點（service.py:758、815-827；supervisor 再擋一次，worker_entry.py:318-320）。整組封存案例須經操作者
+      核准（核准綁定案例雜湊收據），之後才發出第一個請求（service.py:183-197、724-727）；執行 capability 本身也要求這份核准
       （policy.py:175-177），不只靠 black-box 階段的順序。身分只能是 model_selectable 的測試身分
       （見 t-model-identity）。
       殘留：(1) 操作者標 model_body 的端點上，JSON 本文仍由模型決定，操作者在核准前可看到完整本文；(2) 低頻寬的選擇通道：模型
@@ -218,11 +228,11 @@ threats:
     category: STRIDE-E
     target: c-test-designer
     description: >-
-      case.identity 會讓 supervisor 附上對應 auth profile 的憑證（adapters.py:367-388）；若模型可任選已設定的身分，注入或誤判
+      case.identity 會讓 supervisor 附上對應 auth profile 的憑證（adapters.py:402-426）；若模型可任選已設定的身分，注入或誤判
       就能讓案例以高權限身分送出。
     mitigation: >-
       測試身分新增 model_selectable，預設 false（domain.py:73-75）；case_gate 拒絕模型設計的案例（含 positive control、retest
-      複製的模型案例）使用未標記的身分（policy.py:135-139）；test_designer 只收到可選的身分清單（service.py:668）。模型設計的案例
+      複製的模型案例）使用未標記的身分（policy.py:135-139）；test_designer 只收到可選的身分清單（service.py:676）。模型設計的案例
       只能是 GET（state-changing 一律 blocked）；supervisor 逐請求比對 sealed case 的身分。操作者自填的案例不受此限。
       殘留：操作者若把高權限帳號標成 model_selectable，限制即失效（工作台在勾選處提示不要這樣做）。
     status: mitigated
@@ -254,15 +264,19 @@ threats:
     category: STRIDE-I
     target: c-console
     description: >-
-      POST /api/models/probe 與建立 run 都由請求本文決定模型端點與 allowed_model_origins（api.py:387）；若金鑰跟著端點走，
+      POST /api/models/probe 與建立 run 都由請求本文決定模型端點與 allowed_model_origins（api.py:390）；若金鑰跟著端點走，
       持有 session 的人可把任一 VIBEAUDIT_* 金鑰送到自己的主機，或本機其他使用者監聽的 loopback 埠。
     mitigation: >-
       只監聽 127.0.0.1；啟動權杖、CSRF、Host／Origin、Sec-Fetch-Site 檢查；CSP script-src 'self'；憑證引用拒絕工具自身設定。
       模型金鑰只會送到操作者在環境變數 VIBEAUDIT_MODEL_CREDENTIAL_ORIGINS 綁定的 origin，loopback 也不例外，請求本文無法改變
       （providers.py:90-108、156-158）；VIBEAUDIT_OPENAI_API_KEY 與 VIBEAUDIT_ANTHROPIC_API_KEY 預設綁定官方端點；該變數列為保留
       設定，不能被當成憑證引用（adapters.py:37）。目標測試身分的路徑也一樣：凡是環境綁定為模型金鑰的變數（不論本 run 的模型是否
-      引用），以及與它同值的變數，都不能當測試身分的憑證；預檢、supervisor 環境與送出前都會拒絕（adapters.py:62-92、379-380）。
-      殘留：持有 session 的人仍可在已綁定的 origin 使用金鑰（耗用額度）。
+      引用），以及與它同值的變數，都不能當測試身分的憑證；預檢、supervisor 環境與送出前都會拒絕（adapters.py:62-75、113-127、414-415）。
+      測試身分的憑證也比照辦理：run 自己指定 target_url，所以憑證只送往操作者在 VIBEAUDIT_TARGET_CREDENTIAL_ORIGINS 綁定的
+      origin，預設不綁定；預檢列出未綁定的變數並拒絕（service.py:382-387），supervisor 環境不帶未綁定的值、只帶綁定設定本身
+      （worker_runtime.py:72-89），送出前再以環境的綁定核對一次（adapters.py:78-110、416-418）；該變數也列為保留設定（adapters.py:37）。
+      2026-10-06 第 6 次 G4 identity 審查指出原本只綁定模型金鑰，已補上（代理決定的行為變更，待 @chinchiang 確認）。
+      殘留：持有 session 的人仍可在已綁定的 origin 使用金鑰（耗用額度），也可用已綁定的測試身分對該 origin 送出 allowed_requests 內的請求。
     status: mitigated
     gate: G5
   - id: t-credential-crossuse
@@ -273,10 +287,10 @@ threats:
       模型金鑰會被當成目標憑證送到目標，或目標憑證被送到模型供應商。
     mitigation: >-
       只能引用 VIBEAUDIT_* 名稱；拒絕 URL 值與工具設定的別名。建立 run 時拒絕模型與測試身分引用同名變數（domain.py:142-144）；
-      live 預檢拒絕同名或同值（service.py:367-370，shared_credentials 見 adapters.py:78-92）；環境綁定為模型金鑰的變數一律算模型
-      憑證，不論本 run 的模型是否引用（adapters.py:62-75）。送出前再擋（adapters.py:379-380）：supervisor 收到的 manifest 帶有模型
+      live 預檢拒絕同名或同值（service.py:367-370，shared_credentials 見 adapters.py:113-127）；環境綁定為模型金鑰的變數一律算模型
+      憑證，不論本 run 的模型是否引用（adapters.py:62-75）。送出前再擋（adapters.py:414-415）：supervisor 收到的 manifest 帶有模型
       憑證的名稱（不含值），所以這一層在送到目標前的最後一個受信任節點也有效（worker_runtime.py:62-69）；supervisor 的環境也不帶
-      與模型金鑰同值的目標憑證（worker_runtime.py:72-82）。
+      與模型金鑰同值的目標憑證（worker_runtime.py:72-89）。
     status: mitigated
     gate: G4
   - id: t-target-internal
@@ -288,10 +302,11 @@ threats:
     mitigation: >-
       目標須是單一 origin 加操作者明列的 literal IP；DNS 結果須是其子集；連線用釘選的 IP 並驗證 TLS SNI；method/path 精確白名單。
       雲端 metadata（169.254.169.254、fd00:ec2::254、100.100.100.200）、link-local、unspecified、multicast 與 IPv4 保留位址一律拒絕，
-      建立 run 時與每次連線前都檢查（adapters.py:233-250、298-299；domain.py:107-117）；live 預檢拒絕會連到控制台 origin、
-      VIBEAUDIT_DATABASE_URL 或 lease 資料庫 host:port 的目標（adapters.py:256-286、service.py:372-381、api.py:82）。
+      建立 run 時與每次連線前都檢查（adapters.py:268-285、333-334；domain.py:107-117）；live 預檢拒絕會連到控制台 origin、
+      VIBEAUDIT_DATABASE_URL 或 lease 資料庫 host:port 的目標（adapters.py:291-321、service.py:376-381、api.py:82）。帶測試身分的
+      請求只送往環境綁定給該憑證的 origin（見 t-probe-key-exfil）。
       殘留：loopback 與私有位址仍允許（本機與內部 staging 需要），本機其他服務、經主機 LAN IP 連到資料庫的情況不在比對範圍；
-      目標是否已授權仍依操作者宣告。
+      不帶身分的請求，目標是否已授權仍依操作者宣告。
     status: mitigated
     gate: G4
   - id: t-session-cookie-port
@@ -309,7 +324,7 @@ threats:
     description: 啟動權杖印在 stdout（__main__.py:26-27），由服務管理器或 scripts/verify-linux.sh 擷取 stdout 時會留在日誌。
     mitigation: >-
       只監聽 loopback；前端以 history.replaceState 移除網址列的 token。同時最多 8 個 session（滿了淘汰最久未用者）、閒置 1 小時或
-      滿 8 小時失效、可登出本 session 或全部 session，事件串流在 session 結束後停止（api.py:33-34、107-119、210-242、326-329）。
+      滿 8 小時失效、可登出本 session 或全部 session，事件串流在 session 結束後停止（api.py:33-34、107-119、210-242、329-332）。
       登出全部 session 時，自動產生的啟動權杖一併換新並重新印出（api.py:230-237、__main__.py:26）。一分鐘內每多一次錯誤權杖，
       下一次錯誤回應就多等 0.25 秒（上限 5 秒），正確的權杖不受影響，其他本機程序無法藉此讓操作者登不進來（api.py:37、200-207）。
       自訂的 VIBEAUDIT_SESSION_TOKEN 須至少 96 bits、8 種字元且非重複樣式（api.py:50-57）。殘留：以 VIBEAUDIT_SESSION_TOKEN
@@ -325,14 +340,14 @@ threats:
       raw staging（含機密檔），把內容寫進掃描結果，經控制台送進模型輸入與匯出。
     mitigation: >-
       UID 65532、--cap-drop ALL、no-new-privileges、--read-only、network none、pids／記憶體／CPU 限制、不掛 docker socket、
-      --pull never（worker_runtime.py:178-205）。Docker daemon 沒有套用 seccomp profile（或為 unconfined）時 runtime 拒絕上線，
-      並把 AppArmor、userns、rootless 等安全選項記入 run（worker_runtime.py:236-243）。掃描結果只是聲明：標題由 harness 依自己的規則檔
+      --pull never（worker_runtime.py:185-212）。Docker daemon 沒有套用 seccomp profile（或為 unconfined）時 runtime 拒絕上線，
+      並把 AppArmor、userns、rootless 等安全選項記入 run（worker_runtime.py:243-250）。掃描結果只是聲明：標題由 harness 依自己的規則檔
       或固定文字產生，不採用容器回傳的訊息。rule ID 只接受 harness 列得出來的名稱：semgrep 是 harness 規則集內的規則，gitleaks 是
       釘選映像 8.30.1 的 222 條預設規則（fixtures/gitleaks-default-rule-ids.txt，納入 tool manifest 雜湊），OSV 是已驗證雜湊的離線
-      資料庫 all.zip 內的紀錄 ID；其他一律記為 unrecognized-rule 並列為缺口（sandbox.py:82-137、197-199；worker_runtime.py:510-511；
+      資料庫 all.zip 內的紀錄 ID；其他一律記為 unrecognized-rule 並列為缺口（sandbox.py:82-137、197-199；worker_runtime.py:517-518；
       resource_manifest.py:19）。發現先去重並依檔案、行號、規則排序，順序與重複不帶資訊（sandbox.py:193-196）。檔案路徑須在
       staging 清單內並經遮罩，行號不得超過 staging 副本中該檔的行數（副本雜湊不符即不採計），否則整筆不匯入並記為缺口，證據也只
-      保存收斂後的結果（service.py:474-494；staging.py:136-149；service.py:599-606）。
+      保存收斂後的結果（service.py:480-500；staging.py:138-151；service.py:605-612）。
       殘留：沒有自訂 seccomp 或 AppArmor profile、
       未要求 userns；/tmp tmpfs 可執行；kernel 漏洞仍可逃逸。容器內的程式仍可藉由選擇回報哪些「檔案、行號、已知規則」組合帶出資訊：
       每個 scanner 至多 1000 筆、以集合計，數百個檔案、每檔數百行時約為每次掃描數 KB，足以帶出一份小型 .env。
@@ -345,13 +360,19 @@ threats:
     category: MAESTRO-L4
     target: c-bb-worker
     description: >-
-      受測 repo 的作者也可能掌控目標：目標回應經 supervisor 原樣交回黑箱容器（worker_entry.py:440-442），由 ZAP、Schemathesis、
+      受測 repo 的作者也可能掌控目標：目標回應經 supervisor 原樣交回黑箱容器（worker_entry.py:470-472），由 ZAP、Schemathesis、
       Playwright、promptfoo、PyRIT 解析（tool_runners.py:131-202），可能利用解析器漏洞在容器內執行程式；容器的結果與 base64
-      artifact 再回到控制台被解碼解析，含 XML（worker_runtime.py:464-472、tool_runners.py:205-265）。
+      artifact 再回到控制台被解碼解析，含 XML（worker_runtime.py:471-479、tool_runners.py:205-265）。
     mitigation: >-
       黑箱容器沿用 whitebox 的隔離設定，並只能經 broker 與 supervisor 通訊（見 t-container-escape、t-broker-token）。容器結果只是聲明：
-      控制台只採信 supervisor 自己記錄的欄位（SUPERVISED_FIELDS，worker_runtime.py:108-112）；工具 XML 有 DOCTYPE／ENTITY 即拒絕
-      （tool_runners.py:238-240）。殘留：容器逃逸同 t-container-escape（已接受）。
+      控制台只採信 supervisor 自己記錄的欄位（SUPERVISED_FIELDS，worker_runtime.py:115-119）；工具 XML 有 DOCTYPE／ENTITY 即拒絕
+      （tool_runners.py:238-240）。http_case 由 supervisor 固定請求序列：依序送各 positive control，再送案例本身，每個 task 一次；
+      control 未達成就停止，順序與次數都不是容器的選擇（worker_entry.py:240-250、279-285、456-462）。容器只拿到送出與判定所需的
+      欄位（method、path、headers、body、identity、oracle、control 的 required_text），不含標題、威脅與需求 ID，control 名稱改為
+      control-N（worker_entry.py:138、252-264、503）；模型寫的 forbidden_text 與 required_text 每項至多 120 字（contracts.py:154）。
+      殘留：(1) 容器逃逸同 t-container-escape（已接受）。(2) 若目標回應攻陷了容器，容器內的程式仍知道模型寫的 oracle 與 control
+      文字（每個案例至多約 26 KB），可藉送出時間與提早停止調變給目標；請求內容、順序與次數都已由 supervisor 固定。這是 c-test-designer
+      切腳論證的前提，2026-10-06 第 6 次 G4 架構審查後補記於 decisions。
     status: mitigated
     gate: G4
   - id: t-route-authz-layer
@@ -364,7 +385,20 @@ threats:
       所有 /api 路由（/api/session 除外）與 workspace_router 都另外依賴 require_session，自行驗證 session cookie 與 CSRF token
       （api.py:153-165、workspace_api.py:43-46）；workspace_router 不帶這個依賴就無法建立。API schema（/api/openapi.json）
       也改由同一個 router 提供，不用 FastAPI 自己不套 router 依賴的路由（api.py:98-99、244-246）。操作者決策（反駁發現、清理證明、核准案例）
-      記錄做出決策的 session 指紋（api.py:162、workspace_api.py:140、149）。
+      記錄做出決策的 session 指紋（api.py:162、workspace_api.py:141、150）。
+    status: mitigated
+    gate: G4
+  - id: t-source-root-escape
+    category: STRIDE-I
+    target: a-target-source
+    description: >-
+      live run 的來源目錄須在 VIBEAUDIT_SOURCE_ROOTS 之下，檢查用的是 resolve() 之後的路徑，但 run 原本存的是未正規化的原始字串。
+      含 ".." 且前面經過 symlink 的路徑，建立時落在根目錄內；之後把那個 symlink 換成實體目錄，preflight 照字面讀到的就是根目錄外的
+      目錄，內容進入快照證據與模型輸入。
+    mitigation: >-
+      建立 run 與 retest 時改存 resolve() 之後、通過根目錄檢查的那個路徑（api.py:282-288、workspace_api.py:96-100）；staging 拒絕
+      含 ".." 的路徑，並逐層拒絕 symlink 祖先，讀檔時每一層以 O_NOFOLLOW 開啟（staging.py:34-43、18-31）。2026-10-06 第 6 次
+      G4 identity 審查指出，已修正。殘留：根目錄本身與其下的內容由操作者與主機管理者負責；持有 session 的人可選根目錄下的任何目錄。
     status: mitigated
     gate: G4
   - id: t-agent-trust-propagation
@@ -375,12 +409,17 @@ threats:
       發現送給 challenger、threat_modeler 與 reporter，architecture_mapper 的架構圖送給 threat_modeler。受測 repo 若能左右上游模型，
       就能把文字從資料通道帶進下游模型的指示，影響審查與威脅模型的完整性（漏報、威脅模型偏斜）。retest 也是一條跨 run 的鏈：上一個 run
       由 test_designer 設計的案例原樣複製進新 run 的 manifest（workspace_api.py:92-94），新 run 的 threat_modeler 以 provided_cases 讀到。
+      test_designer 寫的案例標題也成為黑箱發現的標題（service.py:779），送進 reporter（service.py:804）。benchmark CLI 的 debate
+      把前幾個模型的審查交給下一個模型（benchmark.py:351-352）。
     mitigation: >-
       核心審查問題由 harness 持有，commander 不能刪減；commander 的 focus 每項最多 300 字，放在獨立欄位並標為不受信任的模型衍生
-      資料交給 reviewer（contracts.py:215-218、service.py:529-531、545）。所有模型的系統提示都把受測 repo、工具內容與其他 agent 的
+      資料交給 reviewer（contracts.py:225-228、service.py:535-537、551）。所有模型的系統提示都把受測 repo、工具內容與其他 agent 的
       輸出標為資料、不是指示（service.py:25、providers.py:410）。三位 reviewer 須屬不同 family（policy.py:47-59）；這些 agent 沒有
       工具，輸出不觸發動作，所以影響限於審查完整性，不打開對外通訊（見 t-indirect-injection）。retest 複製的模型案例保留 designed_by，
-      照樣受 case_gate 的詞彙與身分限制，也要操作者重新核准才送出。殘留：標記是提示層級，不是硬邊界；
+      照樣受 case_gate 的詞彙與身分限制，也要操作者重新核准才送出。threat_modeler 的 provided_cases 只帶追溯所需的欄位
+      （id、標題、威脅與需求 ID、adapter、method、path、身分），不帶 header 值與本文，操作者寫進案例的測試帳密不會送到模型
+      （service.py:636-637）。reporter 的輸出只能是發現 ID 的排列（service.py:806-807），影響限於報告順序；benchmark 的模型沒有
+      對外動作，輸出只寫入本機結果檔。殘留：標記是提示層級，不是硬邊界；
       common-mode 影響仍可能讓三位 reviewer 同時漏報，靠 challenger、靜態掃描器與人工審查補足。
     status: mitigated
     gate: G6
@@ -395,7 +434,7 @@ threats:
     category: STRIDE-S
     target: c-bb-worker
     description: >-
-      broker socket 為 0666，broker token 放在工具可讀的 0444 task 檔（worker_entry.py:362-475），容器內任何程序都能向
+      broker socket 為 0666，broker token 放在工具可讀的 0444 task 檔（worker_entry.py:392-505），容器內任何程序都能向
       supervisor 送請求。
     mitigation: supervisor 對每個請求比對 sealed case 的 method、path、header、body 與身分，並檢查 lease 與預算；token 不是防線。
     status: mitigated
@@ -423,8 +462,8 @@ threats:
       發現標題可能源自模型或掃描器輸出；SARIF 檢視器會把純文字裡的 [文字](目標) 呈現為連結，控制字元與 bidi 標記可隱藏或重排
       文字，下游若以 Markdown／HTML 呈現還可能被注入內容。
     mitigation: >-
-      SARIF 的 message.text、logicalLocation 名稱與 suppression 理由都經 sarif_text（service.py:854-864）：依 SARIF 2.1.0 §3.11.6
-      以反斜線跳脫方括號、移除控制字元與 bidi／零寬字元、上限 1000 字。Markdown 匯出有跳脫（service.py:822-847）；React 工作台
+      SARIF 的 message.text、logicalLocation 名稱與 suppression 理由都經 sarif_text（service.py:862-872）：依 SARIF 2.1.0 §3.11.6
+      以反斜線跳脫方括號、移除控制字元與 bidi／零寬字元、上限 1000 字。Markdown 匯出有跳脫（service.py:830-855）；React 工作台
       以 <pre> 呈現 JSON，沒有 dangerouslySetInnerHTML。殘留：不合規的檢視器若把純文字當 HTML 渲染，< > 仍原樣保留。
     status: mitigated
     gate: G3
@@ -461,7 +500,7 @@ threats:
     category: MAESTRO-L5
     target: c-console
     description: 模型呼叫次數或 token 用量失控。
-    mitigation: 每個 run 與 probe 都有明確預算（max_model_calls、max_tokens、max_seconds；api.py:378-386、policy.authorize）。
+    mitigation: 每個 run 與 probe 都有明確預算（max_model_calls、max_tokens、max_seconds；api.py:381-389、policy.authorize）。
     status: mitigated
     gate: null
   - id: t-ci-fork
@@ -512,5 +551,11 @@ decisions:
     fixture 本文可送往任何允許的 POST。已修正為：名稱拼法與順序固定、重複即拒絕，supervisor 再以模型詞彙重驗；模型本文只送往
     操作者標 model_body 的端點；整組封存案例經操作者核准才送出（執行 capability 也要求核准）。第三次審查再指出 Content-Type 的
     charset 寫法與 Accept 是否明列兩個多餘選擇，也已收斂。修正後殘留（每個請求約 15 bits，總量受 budget.max_requests 限制；
-    本文只到 model_body 端點）與上述決定的範圍一致，決定維持。
+    本文只到 model_body 端點）與上述決定的範圍一致，決定維持。第六次審查指出這個論證隱含「黑箱容器未被攻陷」的前提：容器拿到
+    整個案例，且 http_case 的請求順序與次數原由容器決定。已改為 supervisor 固定序列與次數、容器只拿送出與判定所需的欄位、
+    oracle 文字每項至多 120 字。明列前提：若目標回應攻陷了黑箱容器，容器內的程式仍可用送出時間與提早停止，把模型寫的 oracle
+    與 control 文字調變給目標（見 t-target-response-parsing）；此殘留待 @chinchiang 確認。
+  - >-
+    測試身分的憑證只送往操作者以 VIBEAUDIT_TARGET_CREDENTIAL_ORIGINS 綁定的 origin，預設不綁定；live run 用到未綁定的測試身分時
+    預檢即拒絕（2026-10-06 第 6 次 G4 identity 審查後新增；@chinchiang 授權代理決定，行為變更待確認）。
   - 本模型為 AI 草稿（2026-10-06，依 commit f9d9cf1 起草、同日依本分支修正更新），待 AppSec 與 Red Team 簽核（docs/01「驗證方式」第 4 項）。

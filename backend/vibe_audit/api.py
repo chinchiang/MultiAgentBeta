@@ -283,6 +283,9 @@ def create_app(data_dir=None, database_url=None, testing=False, session_token=No
             path=Path(data.source_path).resolve()
             if not any(path==root or path.is_relative_to(root) for root in source_roots):
                 raise HTTPException(403,"Source directory is outside configured VIBEAUDIT_SOURCE_ROOTS")
+            # The run keeps the path that was checked: a later scan reads it literally, so a ".." after a link
+            # that is swapped for a directory cannot lead outside the roots.
+            data=data.model_copy(update={"source_path":str(path)})
         return engine.create(data)
 
     @api.get("/runs/{run_id}")

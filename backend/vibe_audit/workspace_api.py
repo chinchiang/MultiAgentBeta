@@ -97,6 +97,7 @@ def workspace_router(store, engine, source_roots, *, session):
             path = Path(model.source_path).resolve()
             if not any(path == root or path.is_relative_to(root) for root in source_roots):
                 raise HTTPException(403, "Source directory is outside configured source roots")
+            model = model.model_copy(update={"source_path": str(path)})
         return engine.create(model)
 
     @router.post("/runs/{run_id}/findings/{finding_id}/decision")

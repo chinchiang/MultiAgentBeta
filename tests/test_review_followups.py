@@ -1,5 +1,6 @@
 """Boundaries added after the 2026-10-06 VibeSec G4 architecture and identity review."""
 import base64
+import json
 import sys
 
 import pytest
@@ -168,3 +169,132 @@ def test_staged_line_count_reads_only_the_listed_unchanged_file(tmp_path):
         handle.write("\n" * 5000)
     # The count is of the copy the scanner saw, so a file that no longer matches its recorded hash counts nothing.
     assert staged_line_count(record, "app.py") is None
+
+
+def test_live_run_keeps_the_source_path_it_checked(tmp_path, monkeypatch):
+    import os
+    from fastapi.testclient import TestClient
+    from vibe_audit.api import create_app
+    from vibe_audit.staging import stage_source
+    root = tmp_path / "roots"
+    (root / "a" / "b" / "c" / "d").mkdir(parents=True)
+    (root / "a" / "repo").mkdir()
+    (root / "a" / "repo" / "app.py").write_text("ok = 1\n")
+    # roots/link/../../../repo is roots/a/repo while link points four levels down; were link swapped for a plain
+    # directory, the same text would name a directory two levels above the root.
+    (root / "link").symlink_to(root / "a" / "b" / "c" / "d")
+    crafted = os.path.join(str(root), "link", "..", "..", "..", "repo")
+    monkeypatch.setenv("VIBEAUDIT_SOURCE_ROOTS", str(root))
+    profiles = [{"id": key, "role": "commander" if key == "commander" else "reviewer", "provider": "openai_compatible",
+                 "model_id": "m-" + key, "family": "f-" + key, "endpoint": "http://127.0.0.1:9/v1"} for key in ("commander", "a", "b", "c")]
+    with TestClient(create_app(tmp_path / "data", testing=True)) as client:
+        session = client.get("/api/session", headers={"X-VibeAudit-Token": client.app.state.session_token})
+        client.headers["X-CSRF-Token"] = session.json()["csrf_token"]
+        created = client.post("/api/runs", json={"mode": "live", "source_path": crafted, "models": profiles,
+                                                 "target_url": "http://127.0.0.1:9000", "allowed_target_ips": ["127.0.0.1"],
+                                                 "budget": {"max_seconds": 60, "max_requests": 5, "max_model_calls": 10, "max_tokens": 10000}})
+        assert created.status_code == 201, created.text
+        # The stored path is the one the root check saw, with no link and no "..".
+        assert created.json()["manifest"]["source_path"] == str((root / "a" / "repo").resolve())
+    # Staging reads a path literally, so it refuses one that still has "..", even through plain directories.
+    for path in [crafted, os.path.join(str(root), "a", "b", "..", "repo")]:
+        with pytest.raises(ValueError, match="'..'"):
+            stage_source(path, tmp_path / "private")
+    assert stage_source(str(root / "a" / "repo"), tmp_path / "private")["files"][0]["path"] == "app.py"
+
+
+def sequence_supervisor(monkeypatch, *, results):
+    """A supervisor for one http_case with two positive controls; forward answers from results, in order."""
+    import threading
+    monkeypatch.setitem(sys.modules, "adapters", adapters)
+    instance = Supervisor.__new__(Supervisor)
+    controls = [{"name": f"secret control name {n}", "method": "GET", "path": f"/fixture{n}", "identity": None,
+                 "expected_status": 200, "required_text": ["CANARY"]} for n in (1, 2)]
+    case = {"id": "C1", "title": "model title carrying text", "threat_ids": ["T1"], "adapter": "http", "method": "GET",
+            "path": "/private", "identity": None, "headers": {}, "body": None, "designed_by": "model", "repetitions": 3,
+            "side_effects": False, "preconditions": ["an unverified string", *controls], "hash": "h",
+            "oracle": {"kind": "deny_sensitive", "forbidden_text": ["CANARY"], "allowed_statuses": [403],
+                       "required_observations": ["http_response"]}}
+    instance.spec = {"operation": "http_case", "cases": [case], "run_id": "r"}
+    instance.manifest = {"mode": "live", "target_url": "http://127.0.0.1:9", "allowed_target_ips": ["127.0.0.1"],
+                         "allowed_requests": [{"method": "GET", "path": p} for p in ("/fixture1", "/fixture2", "/private")],
+                         "auth_profiles": []}
+    instance.task = {"broker_token": "t"}
+    instance.cap = {"ttl_seconds": 5}
+    instance.worker_id = "w"
+    instance.revoked = threading.Event()
+    instance.dispatch_lock, instance.grant_lock = threading.Lock(), threading.Lock()
+    instance.grants, instance.sessions, instance.broker_observations = {}, {}, []
+    instance.sequence, instance.sequence_stopped = 0, False
+    instance.policy_blocked, instance.unknown_dispatch = None, False
+    class Lease:
+        def validate(self, *a): pass
+        def reserve_dispatch(self, *a): pass
+        def finish_dispatch(self, *a): pass
+    instance.lease = Lease()
+    def emit(value):
+        if value.get("kind") == "request":
+            pending = instance.grants[value["request_id"]]
+            pending[1] = True
+            pending[0].set()
+    instance.emit = emit
+    answers = iter(results)
+    instance.forward = lambda method, path, headers, body: {"status_code": 200, "body": next(answers), "peer_ip": "127.0.0.1"}
+    return instance
+
+
+def get(path):
+    return {"broker_token": "t", "case_id": "C1", "method": "GET", "path": path, "identity": None, "headers": {}, "body_b64": ""}
+
+
+def test_http_case_sends_its_controls_then_its_case_once_in_order(monkeypatch):
+    supervisor = sequence_supervisor(monkeypatch, results=["CANARY ok", "CANARY ok", "denied"])
+    # The case before its controls, a control out of order or twice: none is the worker's choice.
+    for path in ["/private", "/fixture2"]:
+        with pytest.raises(ValueError, match="next sealed sequence step"):
+            supervisor.broker_request(get(path))
+    supervisor.broker_request(get("/fixture1"))
+    with pytest.raises(ValueError, match="next sealed sequence step"):
+        supervisor.broker_request(get("/fixture1"))
+    supervisor.broker_request(get("/fixture2"))
+    supervisor.broker_request(get("/private"))
+    # One pass per task: the controller schedules each repetition as its own task.
+    with pytest.raises(ValueError, match="exhausted"):
+        supervisor.broker_request(get("/fixture1"))
+    assert [row["path"] for row in supervisor.broker_observations] == ["/fixture1", "/fixture2", "/private"]
+
+
+def test_http_case_stops_at_an_unmet_control(monkeypatch):
+    supervisor = sequence_supervisor(monkeypatch, results=["no fixture here"])
+    supervisor.broker_request(get("/fixture1"))
+    # The target's answer, not the worker, decides that the case is not sent.
+    for path in ["/fixture2", "/private"]:
+        with pytest.raises(ValueError, match="unmet prerequisite"):
+            supervisor.broker_request(get(path))
+
+
+def test_worker_gets_only_what_it_needs_to_send_and_judge_the_case(monkeypatch):
+    supervisor = sequence_supervisor(monkeypatch, results=[])
+    view = supervisor.worker_view()
+    case = view["cases"][0]
+    assert set(case) == {"id", "adapter", "method", "path", "headers", "body", "identity", "designed_by", "side_effects",
+                         "repetitions", "oracle", "preconditions"}
+    assert [c["name"] for c in case["preconditions"]] == ["control-1", "control-2"]
+    assert "model title" not in json.dumps(view) and "secret control name" not in json.dumps(view)
+    # The supervisor keeps the sealed spec it checks requests against; other operations pass through unchanged.
+    assert supervisor.spec["cases"][0]["title"] == "model title carrying text"
+    supervisor.spec = {**supervisor.spec, "operation": "tool"}
+    assert supervisor.worker_view() is supervisor.spec
+
+
+def test_model_oracle_texts_are_bounded_but_operator_ones_are_not():
+    from pydantic import ValidationError
+    from vibe_audit.contracts import CaseProposal, OperatorCase
+    case = {"id": "C1", "title": "t", "threat_ids": ["T1"], "requirement_id": "R1", "adapter": "http", "path": "/x",
+            "oracle": {"kind": "deny_sensitive", "forbidden_text": ["x" * 121], "required_observations": ["http_response"]}}
+    with pytest.raises(ValidationError):
+        CaseProposal.model_validate(case)
+    control = {"name": "c", "path": "/f", "expected_status": 200, "required_text": ["y" * 121]}
+    with pytest.raises(ValidationError):
+        CaseProposal.model_validate({**case, "oracle": {**case["oracle"], "forbidden_text": ["x"]}, "preconditions": [control]})
+    OperatorCase.model_validate({**case, "preconditions": [control]})

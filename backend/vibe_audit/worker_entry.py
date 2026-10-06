@@ -134,6 +134,10 @@ class Unusable(ValueError):
         self.status_code=status_code
 
 
+# What execute_case and evaluate_oracle read from a case (adapters.py); worker_view passes nothing else.
+WORKER_CASE_FIELDS=("id","adapter","method","path","headers","body","identity","designed_by","side_effects","repetitions","oracle")
+
+
 class Supervisor:
     def __init__(self,task):
         from lease import LeaseStore,canonical_hash
@@ -233,6 +237,32 @@ class Supervisor:
                     self.revoke_network("Durable lease authority unavailable")
                     return
 
+    def sealed_steps(self):
+        """The requests this task may send, in order, or None for a tool that chooses its own requests.
+
+        A request_sequence lists them. An http_case task sends each positive control and then its case, once (the
+        controller schedules every repetition as its own task), so its order and count are not the worker's choice."""
+        if self.spec.get("operation")=="request_sequence":
+            return self.spec.get("requests",[])
+        if self.spec.get("operation")=="http_case":
+            case=(self.spec.get("cases") or [{}])[0]
+            return [*[p for p in case.get("preconditions",[]) if isinstance(p,dict)],case]
+        return None
+
+    def worker_view(self):
+        """The part of an http_case the untrusted worker needs to send it and judge it.
+
+        The worker runs where a hostile target answers; it gets no title or control names, nothing it would only
+        pass on. The oracle and control texts stay, since a pass needs the worker's verdict and the supervisor's."""
+        if self.spec.get("operation")!="http_case":
+            return self.spec
+        def control(index,item):
+            return {**{k:item[k] for k in ("method","path","headers","identity","expected_status","required_text") if k in item},"name":f"control-{index}"}
+        cases=[{**{k:c[k] for k in WORKER_CASE_FIELDS if k in c},
+                "preconditions":[control(i,p) for i,p in enumerate([p for p in c.get("preconditions",[]) if isinstance(p,dict)],1)]}
+               for c in self.spec.get("cases",[])]
+        return {**self.spec,"cases":cases}
+
     def allowed_request(self,request):
         from adapters import _prepare_request
         method=request.get("method")
@@ -246,8 +276,8 @@ class Supervisor:
             raise ValueError("Request has no bound case")
         identity=request.get("identity")
         step=None
-        if self.spec.get("operation")=="request_sequence":
-            steps=self.spec.get("requests",[])
+        steps=self.sealed_steps()
+        if steps is not None:
             if self.sequence_stopped: raise ValueError("Sequence stopped at an unmet prerequisite")
             if self.sequence>=len(steps): raise ValueError("Sequence exhausted")
             step=steps[self.sequence]
@@ -394,7 +424,7 @@ class Supervisor:
                 if self.policy_blocked:
                     # Nothing more of this task goes to a deployment other than the declared one.
                     self.revoke_network(self.policy_blocked,revoke_lease=False)
-                if self.spec.get("operation")=="request_sequence": self.sequence_stopped=True
+                if self.sealed_steps() is not None: self.sequence_stopped=True
                 raise
             try:
                 capture=step.get("capture_session")
@@ -423,7 +453,7 @@ class Supervisor:
                 self.unknown_dispatch=True
                 self.revoke_network("Dispatched request has an unknown or invalid result")
                 raise
-            if self.spec.get("operation")=="request_sequence":
+            if self.sealed_steps() is not None:
                 unmet=((step.get("expected_status") is not None and result["status_code"]!=step["expected_status"])
                        or any(text not in result["body"] for text in step.get("required_text",[]))
                        or (step.get("capture_session") and not result.get("capture_success")))
@@ -470,7 +500,7 @@ class Supervisor:
         threading.Thread(target=self.guardian,daemon=True).start()
         try:
             endpoint=self.start_broker()
-            child_task={"spec":self.spec,"broker":endpoint,"broker_token":self.task["broker_token"],"backend":self.task["backend"],"hard_deadline_unix":time.time()+self.spec["timeout_seconds"]}
+            child_task={"spec":self.worker_view(),"broker":endpoint,"broker_token":self.task["broker_token"],"backend":self.task["backend"],"hard_deadline_unix":time.time()+self.spec["timeout_seconds"]}
             child_file=Path(self.task["inputs_dir"])/"_worker_task.json"
             child_file.write_text(json.dumps(child_task),encoding="utf-8");os.chmod(child_file,0o444)
         except Exception:

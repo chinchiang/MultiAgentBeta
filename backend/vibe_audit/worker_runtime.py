@@ -70,15 +70,22 @@ def supervisor_manifest(manifest):
 
 
 def _client_env(manifest):
-    from .adapters import credential_env_allowed,shared_credentials
+    from .adapters import AdapterBlocked,TARGET_CREDENTIAL_ORIGINS_ENV,credential_env_allowed,shared_credentials,unbound_target_credentials
     from .worker_entry import clean_env
     result=clean_env()
-    # A model key must never reach the supervisor that talks to the target, even under a second name.
+    # A model key must never reach the supervisor that talks to the target, even under a second name;
+    # nor may a test credential the environment has not bound to this run's target.
     shared=set(shared_credentials(manifest))
+    try:
+        unbound=set(unbound_target_credentials(manifest))
+    except AdapterBlocked:
+        unbound={p.get("credential_env","") for p in manifest.get("auth_profiles",[])}
     for profile in manifest.get("auth_profiles",[]):
         key=profile.get("credential_env","")
-        if credential_env_allowed(key) and key in os.environ and key not in shared:
+        if credential_env_allowed(key) and key in os.environ and key not in shared and key not in unbound:
             result[key]=os.environ[key]
+    if TARGET_CREDENTIAL_ORIGINS_ENV in os.environ:
+        result[TARGET_CREDENTIAL_ORIGINS_ENV]=os.environ[TARGET_CREDENTIAL_ORIGINS_ENV]
     return result
 
 

@@ -137,6 +137,9 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
         self.thread.start()
         self.manifest = {"mode": "live", "target_url": f"http://127.0.0.1:{self.server.server_port}",
                          "allowed_target_ips": ["127.0.0.1"], "auth_profiles": []}
+        # Test credentials go only to the origins the environment binds them to.
+        self.enterContext(patch.dict(os.environ, {"VIBEAUDIT_TARGET_CREDENTIAL_ORIGINS":
+                                                  f"VIBEAUDIT_FIXTURE_TOKEN={self.manifest['target_url']}"}))
         self.case = case_template()
         self.cancel = asyncio.Event()
 
@@ -293,6 +296,28 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
             with patch.dict(os.environ, environ):
                 result = await self.run_case()
             self.assertEqual((result["status"], result["requests"]), ("blocked", 0))
+
+    async def test_target_credential_goes_only_to_its_bound_origin(self):
+        self.case.update({"path": "/echo", "identity": "reader"})
+        self.manifest["auth_profiles"] = [{"id": "reader", "credential_env": "VIBEAUDIT_FIXTURE_TOKEN"}]
+        target = self.manifest["target_url"]
+        for binding in ["", "VIBEAUDIT_OTHER_TOKEN=" + target, "VIBEAUDIT_FIXTURE_TOKEN=http://127.0.0.1:1",
+                        "VIBEAUDIT_FIXTURE_TOKEN=https://" + target.split("://")[1], "VIBEAUDIT_FIXTURE_TOKEN=" + target + "/api",
+                        "VIBEAUDIT_FIXTURE_TOKEN=" + target + ",broken"]:
+            with patch.dict(os.environ, {"VIBEAUDIT_FIXTURE_TOKEN": "fixture-private-token",
+                                         "VIBEAUDIT_TARGET_CREDENTIAL_ORIGINS": binding}):
+                result = await self.run_case()
+            self.assertEqual((result["status"], result["requests"]), ("blocked", 0), binding)
+        self.assertNotIn("request", [event[0] for event in self.events])
+        # A name may be bound to several origins; the default port is the same origin written either way.
+        with patch.dict(os.environ, {"VIBEAUDIT_FIXTURE_TOKEN": "fixture-private-token",
+                                     "VIBEAUDIT_TARGET_CREDENTIAL_ORIGINS": f"VIBEAUDIT_FIXTURE_TOKEN=http://127.0.0.1:1, VIBEAUDIT_FIXTURE_TOKEN={target}/"}):
+            result = await self.run_case()
+        self.assertEqual(result["requests"], 1)
+        self.assertEqual(adapters.target_credential_origins({"VIBEAUDIT_TARGET_CREDENTIAL_ORIGINS": "VIBEAUDIT_A=http://Example.com:80"}),
+                         {"VIBEAUDIT_A": {("http", "example.com", 80)}})
+        with self.assertRaises(adapters.AdapterBlocked):
+            adapters.target_credential_origins({"VIBEAUDIT_TARGET_CREDENTIAL_ORIGINS": "VIBEAUDIT_DATABASE_URL=http://127.0.0.1:1"})
 
     async def test_model_credential_is_never_a_target_credential(self):
         self.case.update({"path": "/echo", "identity": "reader"})

@@ -35,8 +35,10 @@ def stage_source(source_path: str, private_root: str | Path, *, expected_snapsho
                  max_files: int = 20000, max_bytes: int = 128 * 1024 * 1024) -> dict:
     source = Path(source_path).absolute()
     private = Path(private_root).absolute()
-    if not source.is_dir() or not _safe_ancestors(source):
-        raise ValueError("Scanner source must be a real directory without link ancestors")
+    # The source-root check ran on the resolved path; a ".." here would be followed from whatever the link before it
+    # has become since, so only a path with no ".." is read (the API stores the resolved one).
+    if ".." in source.parts or not source.is_dir() or not _safe_ancestors(source):
+        raise ValueError("Scanner source must be a real directory without link ancestors or '..' components")
     private.mkdir(parents=True, exist_ok=True, mode=0o700)
     if not _safe_ancestors(private) or private == source or private.is_relative_to(source):
         raise ValueError("Private scanner staging must be outside the source tree")

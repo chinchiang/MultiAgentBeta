@@ -34,7 +34,7 @@ RESERVED_ENV = frozenset({
     "VIBEAUDIT_UI_ORIGINS", "VIBEAUDIT_RUNTIME_CONFIG", "VIBEAUDIT_FIXTURE_CONFIG", "VIBEAUDIT_CATALOG_ROOT",
     "VIBEAUDIT_PYTHON", "VIBEAUDIT_RELAY_ORIGIN", "VIBEAUDIT_POSTGRES_PASSWORD", "VIBEAUDIT_POSTGRES_IMAGE",
     "VIBEAUDIT_TEST_DATABASE_URL", "VIBEAUDIT_TEST_POSTGRES", "VIBEAUDIT_TEST_RUNTIME_CONFIG",
-    "VIBEAUDIT_MODEL_CREDENTIAL_ORIGINS",
+    "VIBEAUDIT_MODEL_CREDENTIAL_ORIGINS", "VIBEAUDIT_TARGET_CREDENTIAL_ORIGINS",
 })
 
 
@@ -73,6 +73,41 @@ def bound_model_credentials(environ=None):
     """
     environ = os.environ if environ is None else environ
     return set(DEFAULT_CREDENTIAL_ORIGINS) | set(re.findall(r"(VIBEAUDIT_[A-Z0-9_]+)\s*=", environ.get(CREDENTIAL_ORIGINS_ENV, "")))
+
+
+TARGET_CREDENTIAL_ORIGINS_ENV = "VIBEAUDIT_TARGET_CREDENTIAL_ORIGINS"
+
+
+def target_credential_origins(environ=None):
+    """The target origins each test identity credential may be sent to, as the operator's environment states them.
+
+    A run names its own target, so without this a session holder could send any configured identity's credential
+    to a host of their choosing; model keys have the same rule (VIBEAUDIT_MODEL_CREDENTIAL_ORIGINS). Format:
+    NAME=origin entries, comma-separated; a name may repeat for several origins. Nothing is bound by default.
+    """
+    environ = os.environ if environ is None else environ
+    bound = {}
+    for entry in filter(None, (item.strip() for item in environ.get(TARGET_CREDENTIAL_ORIGINS_ENV, "").split(","))):
+        name, _, value = entry.partition("=")
+        name = name.strip()
+        try:
+            if not _CREDENTIAL_ENV.fullmatch(name) or name in RESERVED_ENV:
+                raise AdapterBlocked("")
+            origin = _origin({"target_url": value.strip()})
+        except AdapterBlocked:
+            raise AdapterBlocked(f"{TARGET_CREDENTIAL_ORIGINS_ENV} entries must be VIBEAUDIT_NAME=scheme://host[:port]") from None
+        bound.setdefault(name, set()).add(origin)
+    return bound
+
+
+def unbound_target_credentials(manifest, environ=None):
+    """Test identity credentials the environment has not bound to this run's target origin."""
+    if not manifest.get("auth_profiles"):
+        return []
+    origin = _origin(manifest)
+    bound = target_credential_origins(environ)
+    return sorted({p.get("credential_env", "") for p in manifest.get("auth_profiles", [])
+                   if origin not in bound.get(p.get("credential_env", ""), set())})
 
 
 def shared_credentials(manifest, environ=None):
@@ -378,6 +413,9 @@ def _prepare_request(manifest, case):
             raise AdapterBlocked("Authentication credential is missing or invalid.")
         if env_name in shared_credentials(manifest):
             raise AdapterBlocked("A test identity credential cannot also be a model credential.")
+        # The last trusted hop checks the binding again: the run, not the environment, named this target.
+        if _origin(manifest) not in target_credential_origins().get(env_name, set()):
+            raise AdapterBlocked(f"{env_name} is not bound to this target; bind test credentials to their origins in {TARGET_CREDENTIAL_ORIGINS_ENV}.")
         header = profile.get("header", "Authorization")
         scheme = profile.get("scheme", "Bearer")
         if header not in {"Authorization", "X-API-Key"} or scheme not in {"Bearer", "", "Basic"}:

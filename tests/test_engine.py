@@ -352,6 +352,28 @@ async def test_threat_model_that_drops_a_provided_case_threat_blocks_early(engin
         await engine._threat_model(run)
 
 
+async def test_threat_modeler_sees_provided_cases_without_their_headers_or_body(engine,monkeypatch):
+    run=await finished_demo(engine)
+    proposal={k:v for k,v in run["threat_model"].items() if k not in {"hash","source_digest","deployment_id"}}
+    run.update(mode="live",status="running",stage="threat_model")
+    case={k:v for k,v in run["cases"][0].items() if k!="hash"}
+    # An operator may write a test login into a case; tracing needs the case's identity, not that.
+    secret="operator-written-password-"+"x"*12
+    run["manifest"].update(mode="live",cases=[{**case,"headers":{"X-Tenant-Token":secret},"body":{"password":secret}}])
+    run["manifest_hash"]=digest(run["manifest"])
+    seen=[]
+    async def model(run,profile,instruction,payload,contract=None):
+        seen.append(payload)
+        return proposal
+    monkeypatch.setattr(engine,"model",model)
+    monkeypatch.setattr(engine,"fitted_source",lambda run,payload,label:{"files":[]})
+    monkeypatch.setattr(engine.policy,"threat_gate",lambda run:None)
+    await engine._threat_model(run)
+    provided=seen[0]["provided_cases"]
+    assert secret not in json.dumps(seen)
+    assert provided==[{k:case[k] for k in ("id","title","threat_ids","requirement_id","adapter","method","path","identity") if k in case}]
+
+
 async def test_time_budget_counts_active_time_across_resume_and_restart(engine,tmp_path):
     run=await finished_demo(engine)
     budget=run["manifest"]["budget"]["max_seconds"]
@@ -718,7 +740,8 @@ def test_run_input_refuses_metadata_and_named_target_ips():
     assert RunInput(allowed_target_ips=["10.0.0.5","127.0.0.1","::1"]).allowed_target_ips==["10.0.0.5","127.0.0.1","::1"]
 
 
-@pytest.mark.parametrize("mutation",["accepted","console","database","lease_database","shared_name","shared_value"])
+@pytest.mark.parametrize("mutation",["accepted","console","database","lease_database","shared_name","shared_value",
+                                      "unbound","other_origin","malformed_binding"])
 async def test_live_preflight_refuses_control_plane_targets_and_shared_keys(engine,monkeypatch,mutation):
     run=await finished_demo(engine)
     run["mode"]="live"
@@ -738,6 +761,9 @@ async def test_live_preflight_refuses_control_plane_targets_and_shared_keys(engi
         engine.runtime_configs["leases"]={"database_url":"postgresql://u:p@127.0.0.1:6543/leases"}
     elif mutation=="shared_name": manifest["auth_profiles"][0]["credential_env"]="VIBEAUDIT_MODEL_KEY"
     elif mutation=="shared_value": monkeypatch.setenv("VIBEAUDIT_ALICE_TOKEN","model-key")
+    # The environment, not the run, says where a test credential may go.
+    binding={"unbound":"","other_origin":"VIBEAUDIT_ALICE_TOKEN=http://127.0.0.1:9001","malformed_binding":"VIBEAUDIT_ALICE_TOKEN=127.0.0.1:9000"}
+    monkeypatch.setenv("VIBEAUDIT_TARGET_CREDENTIAL_ORIGINS",binding.get(mutation,"VIBEAUDIT_ALICE_TOKEN="+manifest["target_url"]))
     run["manifest_hash"]=digest(manifest)
     class Runtime:
         async def capabilities(self): return {"available":False,"reason":"Synthetic runtime stops here"}
@@ -745,7 +771,9 @@ async def test_live_preflight_refuses_control_plane_targets_and_shared_keys(engi
     monkeypatch.setattr(engine,"runtime",lambda run:Runtime())
     expected={"accepted":"Synthetic runtime stops here","console":r"console or its database \(127\.0\.0\.1:8000\)",
               "database":r"\(localhost:55432\)","lease_database":r"\(127\.0\.0\.1:6543\)",
-              "shared_name":"VIBEAUDIT_ALICE_TOKEN|VIBEAUDIT_MODEL_KEY","shared_value":"VIBEAUDIT_ALICE_TOKEN"}[mutation]
+              "shared_name":"VIBEAUDIT_ALICE_TOKEN|VIBEAUDIT_MODEL_KEY","shared_value":"VIBEAUDIT_ALICE_TOKEN",
+              "unbound":"not bound to this target.*VIBEAUDIT_ALICE_TOKEN","other_origin":"not bound to this target.*VIBEAUDIT_ALICE_TOKEN",
+              "malformed_binding":"entries must be VIBEAUDIT_NAME="}[mutation]
     with pytest.raises(PolicyError,match=expected) as err:
         await engine._preflight(run)
     assert "db-password" not in str(err.value)
