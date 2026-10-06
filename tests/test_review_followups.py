@@ -196,6 +196,15 @@ def test_live_run_keeps_the_source_path_it_checked(tmp_path, monkeypatch):
         assert created.status_code == 201, created.text
         # The stored path is the one the root check saw, with no link and no "..".
         assert created.json()["manifest"]["source_path"] == str((root / "a" / "repo").resolve())
+        # A retest of a finished live run checks and keeps its own source path the same way.
+        store = client.app.state.store
+        parent = store.get(created.json()["id"])
+        parent.update(status="incomplete", findings=[{"id": "F1", "title": "t"}])
+        store.save(parent)
+        retest = client.post(f"/api/runs/{parent['id']}/retest", json={"name": "Retest", "source_path": crafted,
+                                                                      "deployment_id": "v2", "finding_ids": ["F1"]})
+        assert retest.status_code == 201, retest.text
+        assert retest.json()["manifest"]["source_path"] == str((root / "a" / "repo").resolve())
     # Staging reads a path literally, so it refuses one that still has "..", even through plain directories.
     for path in [crafted, os.path.join(str(root), "a", "b", "..", "repo")]:
         with pytest.raises(ValueError, match="'..'"):
@@ -298,3 +307,28 @@ def test_model_oracle_texts_are_bounded_but_operator_ones_are_not():
     with pytest.raises(ValidationError):
         CaseProposal.model_validate({**case, "oracle": {**case["oracle"], "forbidden_text": ["x"]}, "preconditions": [control]})
     OperatorCase.model_validate({**case, "preconditions": [control]})
+
+
+def test_sequence_worker_gets_steps_without_labels_or_case_text(monkeypatch):
+    supervisor = sequence_supervisor(monkeypatch, results=[])
+    case = supervisor.spec["cases"][0]
+    steps = [{"id": "control:secret control name 1", "case_id": "C1", "method": "GET", "path": "/fixture1", "identity": None,
+              "headers": {}, "body": None, "expected_status": 200, "required_text": ["CANARY"], "purpose": "control"},
+             {"id": "case", "case_id": "C1", "method": "GET", "path": "/private", "identity": None, "headers": {}, "body": None,
+              "expected_status": None, "required_text": [], "capture_session": {"slot": "s", "json_field": "token"}}]
+    supervisor.spec = {"operation": "request_sequence", "cases": [case], "requests": steps}
+    view = supervisor.worker_view()
+    assert [s["id"] for s in view["requests"]] == ["step-1", "step-2"]
+    assert all(set(s) <= {"id", "case_id", "method", "path", "headers", "identity", "body", "expected_status", "required_text"} for s in view["requests"])
+    assert "secret control name" not in json.dumps(view) and "model title" not in json.dumps(view)
+    # The supervisor still checks requests against its own sealed steps.
+    assert supervisor.spec["requests"][0]["id"].startswith("control:")
+
+
+def test_worker_task_file_carries_the_worker_view(monkeypatch):
+    supervisor = sequence_supervisor(monkeypatch, results=[])
+    supervisor.task.update(backend="process_test")
+    supervisor.spec["timeout_seconds"] = 30
+    task = supervisor.child_task({"tcp": ["127.0.0.1", 1]})
+    assert task["spec"] == supervisor.worker_view() and "model title" not in json.dumps(task)
+    assert task["broker"] == {"tcp": ["127.0.0.1", 1]} and task["broker_token"] == "t"

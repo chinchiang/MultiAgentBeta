@@ -654,6 +654,8 @@ def test_docker_namespace_identity_mounts_are_fixed(tmp_path):
     # Tool output lives in a bounded in-container tmpfs, never a world-writable host directory.
     assert not any("target=/out" in arg for arg in black)
     assert black[black.index("/out:rw,nosuid,nodev,noexec,size=64m,mode=1777")-1]=="--tmpfs"
+    # A white-box scanner parsing a hostile repository has no broker socket to reach the supervisor through.
+    assert any("target=/broker" in arg for arg in black) and not any("target=/broker" in arg for arg in white)
     with pytest.raises(WorkerBlocked):docker_command(**kwargs,phase="blackbox",source_dir=tmp_path)
 
 
@@ -670,3 +672,53 @@ async def test_real_docker_nonroot_network_none_without_source(tmp_path):
         assert inspected["interfaces"]==["lo"]
         assert result["cleanup_confirmed"]
     finally:store.close()
+
+
+async def test_white_box_task_gets_no_broker_target_scope_or_credentials(runtime,monkeypatch):
+    from vibe_audit.worker_runtime import _client_env,phase_scope,supervisor_manifest
+    monkeypatch.setenv("VIBEAUDIT_ALICE_TOKEN","alice-token")
+    scope=manifest()
+    scope["auth_profiles"]=[{"id":"alice","credential_env":"VIBEAUDIT_ALICE_TOKEN"}]
+    monkeypatch.setenv("VIBEAUDIT_TARGET_CREDENTIAL_ORIGINS","VIBEAUDIT_ALICE_TOKEN="+scope["target_url"])
+    white=phase_scope(scope,"whitebox")
+    assert not {"target_url","allowed_target_ips","allowed_requests","auth_profiles"}&set(supervisor_manifest(white))
+    assert "VIBEAUDIT_ALICE_TOKEN" not in _client_env(white) and _client_env(phase_scope(scope,"blackbox"))["VIBEAUDIT_ALICE_TOKEN"]=="alice-token"
+    offered={}
+    for phase in ("whitebox","blackbox"):
+        # A fresh run for each phase: the same run and operation would reuse the first task's journaled result.
+        result=await runtime.execute_tool({"operation":"selftest","phase":phase,"timeout_seconds":30},manifest={**scope,"run_id":uuid.uuid4().hex},
+                                          cancel_event=asyncio.Event(),request_hook=allow)
+        assert result["status"]=="completed",result
+        offered[phase]=json.loads(result["stdout"])["broker_offered"]
+    assert offered=={"whitebox":False,"blackbox":True}
+
+
+async def test_white_box_supervisor_is_started_without_target_credentials(runtime,monkeypatch):
+    monkeypatch.setenv("VIBEAUDIT_ALICE_TOKEN","alice-token")
+    scope=manifest()
+    scope["auth_profiles"]=[{"id":"alice","credential_env":"VIBEAUDIT_ALICE_TOKEN"}]
+    monkeypatch.setenv("VIBEAUDIT_TARGET_CREDENTIAL_ORIGINS","VIBEAUDIT_ALICE_TOKEN="+scope["target_url"])
+    started={}
+    async def refuse(*args,env=None,**kwargs):
+        started[len(started)]=env
+        raise OSError("synthetic: supervisor not started")
+    monkeypatch.setattr(asyncio,"create_subprocess_exec",refuse)
+    for phase in ("whitebox","blackbox"):
+        await runtime.execute_tool({"operation":"selftest","phase":phase,"timeout_seconds":30},manifest={**scope,"run_id":uuid.uuid4().hex},
+                                   cancel_event=asyncio.Event(),request_hook=allow)
+    assert "VIBEAUDIT_ALICE_TOKEN" not in started[0] and started[1]["VIBEAUDIT_ALICE_TOKEN"]=="alice-token"
+
+
+async def test_real_worker_sees_only_its_view_of_a_model_case(runtime,target):
+    origin,seen=target
+    value=case();value.pop("hash")
+    value.update(title="model-written title text",designed_by="model")
+    value["preconditions"][0]["name"]="model-written control name"
+    value["hash"]=canonical_hash(value)
+    result=await runtime.run_case(manifest(origin),value,cancel_event=asyncio.Event(),request_hook=allow)
+    assert result["status"]=="pass",result
+    # The worker reports what it was given: a numbered control, and nothing the model wrote only to pass on.
+    assert [o.get("name") for o in result["worker_observations"] if o.get("kind")=="precondition"]==["control-1"]
+    assert "model-written" not in json.dumps(result["worker_observations"])
+    # The supervisor's own records keep the sealed case's names.
+    assert [o["name"] for o in result["observations"] if o["kind"]=="precondition"]==["model-written control name"]

@@ -134,8 +134,10 @@ class Unusable(ValueError):
         self.status_code=status_code
 
 
-# What execute_case and evaluate_oracle read from a case (adapters.py); worker_view passes nothing else.
+# What execute_case and evaluate_oracle read from a case (adapters.py), and what the sequence worker reads from a
+# step; worker_view passes nothing else.
 WORKER_CASE_FIELDS=("id","adapter","method","path","headers","body","identity","designed_by","side_effects","repetitions","oracle")
+WORKER_STEP_FIELDS=("case_id","method","path","headers","identity","body","expected_status","required_text")
 
 
 class Supervisor:
@@ -250,18 +252,29 @@ class Supervisor:
         return None
 
     def worker_view(self):
-        """The part of an http_case the untrusted worker needs to send it and judge it.
+        """The part of an http_case or request_sequence the untrusted worker needs to send it and judge it.
 
-        The worker runs where a hostile target answers; it gets no title or control names, nothing it would only
-        pass on. The oracle and control texts stay, since a pass needs the worker's verdict and the supervisor's."""
-        if self.spec.get("operation")!="http_case":
+        The worker runs where a hostile target answers; it gets no title, control names or step labels, nothing it
+        would only pass on. The oracle and control texts stay, since a pass needs the worker's verdict and the
+        supervisor's. A tool task runs only operator-written cases and keeps its spec."""
+        operation=self.spec.get("operation")
+        if operation not in {"http_case","request_sequence"}:
             return self.spec
         def control(index,item):
             return {**{k:item[k] for k in ("method","path","headers","identity","expected_status","required_text") if k in item},"name":f"control-{index}"}
         cases=[{**{k:c[k] for k in WORKER_CASE_FIELDS if k in c},
                 "preconditions":[control(i,p) for i,p in enumerate([p for p in c.get("preconditions",[]) if isinstance(p,dict)],1)]}
                for c in self.spec.get("cases",[])]
-        return {**self.spec,"cases":cases}
+        view={**self.spec,"cases":cases}
+        if operation=="request_sequence":
+            # supervised_sequence labels each record from the sealed steps, so the worker needs no label of its own.
+            view["requests"]=[{**{k:s[k] for k in WORKER_STEP_FIELDS if k in s},"id":f"step-{i}"} for i,s in enumerate(self.spec.get("requests",[]),1)]
+        return view
+
+    def child_task(self,endpoint):
+        """What the worker container reads from /inputs/_worker_task.json."""
+        return {"spec":self.worker_view(),"broker":endpoint,"broker_token":self.task["broker_token"],"backend":self.task["backend"],
+                "hard_deadline_unix":time.time()+self.spec["timeout_seconds"]}
 
     def allowed_request(self,request):
         from adapters import _prepare_request
@@ -499,10 +512,10 @@ class Supervisor:
         threading.Thread(target=self.read_controller,daemon=True).start()
         threading.Thread(target=self.guardian,daemon=True).start()
         try:
-            endpoint=self.start_broker()
-            child_task={"spec":self.worker_view(),"broker":endpoint,"broker_token":self.task["broker_token"],"backend":self.task["backend"],"hard_deadline_unix":time.time()+self.spec["timeout_seconds"]}
+            # A white-box scanner sends nothing to a target, so its container gets no broker to ask.
+            endpoint=self.start_broker() if self.spec.get("phase")!="whitebox" else None
             child_file=Path(self.task["inputs_dir"])/"_worker_task.json"
-            child_file.write_text(json.dumps(child_task),encoding="utf-8");os.chmod(child_file,0o444)
+            child_file.write_text(json.dumps(self.child_task(endpoint)),encoding="utf-8");os.chmod(child_file,0o444)
         except Exception:
             # No worker or container exists yet, so cleanup is trivially confirmed and nothing was sent.
             try: self.lease.revoke(self.cap["id"],"Supervisor could not prepare the worker")
@@ -693,7 +706,7 @@ def container_worker(task):
             (out/"child_pid.txt").write_text(str(child.pid))
             time.sleep(120)
         elif action=="sleep": time.sleep(float(spec.get("sleep_seconds",120)))
-        result={"status":"completed","exit_code":0,"stdout":json.dumps({"pid":os.getpid(),"source_visible":Path("/src").exists(),"uid":os.getuid() if hasattr(os,"getuid") else None,"interfaces":[name for _,name in socket.if_nameindex()]}),"stderr":"","artifacts":{}}
+        result={"status":"completed","exit_code":0,"stdout":json.dumps({"pid":os.getpid(),"source_visible":Path("/src").exists(),"broker_offered":task.get("broker") is not None,"uid":os.getuid() if hasattr(os,"getuid") else None,"interfaces":[name for _,name in socket.if_nameindex()]}),"stderr":"","artifacts":{}}
     else:
         argv=[s.replace("{relay_origin}",relay).replace("/inputs/",str(writable)+os.sep) for s in spec["argv"]]
         if spec.get("tool_id")=="zap" and task["backend"]=="docker":

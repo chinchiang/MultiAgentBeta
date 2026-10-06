@@ -69,6 +69,11 @@ def supervisor_manifest(manifest):
     return narrow
 
 
+def phase_scope(manifest,phase):
+    """A white-box task's supervisor sends nothing to a target, so it gets no target scope, identities or credentials."""
+    return manifest if phase=="blackbox" else {k:v for k,v in manifest.items() if k not in {"target_url","allowed_target_ips","allowed_requests","auth_profiles"}}
+
+
 def _client_env(manifest):
     from .adapters import AdapterBlocked,TARGET_CREDENTIAL_ORIGINS_ENV,credential_env_allowed,shared_credentials,unbound_target_credentials
     from .worker_entry import clean_env
@@ -195,7 +200,8 @@ def docker_command(*,prefix,image,name,phase,inputs,broker,runtime=HERE,source_d
           # Only the worker reads /out back, so a bounded tmpfs replaces a world-writable host directory.
           "--tmpfs","/out:rw,nosuid,nodev,noexec,size=64m,mode=1777",
           "--env","HOME=/tmp","--env","PYTHONDONTWRITEBYTECODE=1","--env","PROMPTFOO_DISABLE_TELEMETRY=1"]
-    for path,target,readonly in [(inputs,"/inputs",True),(broker,"/broker",True),(runtime,"/runtime",True)]:
+    # Only a black-box worker relays requests; a white-box scanner parsing a hostile repository has no broker socket.
+    for path,target,readonly in [(inputs,"/inputs",True),*([(broker,"/broker",True)] if phase=="blackbox" else []),(runtime,"/runtime",True)]:
         source=str(Path(path).resolve(strict=True))
         if any(c in source for c in ",\r\n\0"): raise WorkerBlocked("Unsupported bind mount path")
         argv += ["--mount",f"type=bind,source={source},target={target},bind-propagation=rprivate"+(",readonly,bind-recursive=readonly" if readonly else "")]
@@ -366,7 +372,8 @@ class WorkerRuntime:
             argv=docker_command(prefix=prefix,image=image,name=name,phase=spec["phase"],inputs=inputs,broker=broker,source_dir=spec.get("source_dir"),offline_db_dir=spec.get("offline_db_dir")) if self.backend=="docker" else [sys.executable,"-I",str(HERE/"worker_entry.py"),"worker",str(inputs/"_worker_task.json")]
             # Only the supervisor receives target credential references; the
             # worker task file contains cases/specification and relay access.
-            narrow=supervisor_manifest(manifest)
+            scope=phase_scope(manifest,spec["phase"])
+            narrow=supervisor_manifest(scope)
             child_cap={k:v for k,v in cap.items() if k!="renewal_token"}
             initial={"backend":self.backend,"spec":spec,"manifest":narrow,"capability":child_cap,"worker_id":worker_id,
                      "database_path":self.leases.database_path,"database_url":self.leases.database_url,"broker_token":secrets.token_urlsafe(32),
@@ -374,7 +381,7 @@ class WorkerRuntime:
                      "argv":argv,"docker_prefix":prefix,"container_name":name}
             options={"creationflags":0x08000200} if os.name=="nt" else {"start_new_session":True}
             proc=await asyncio.create_subprocess_exec(sys.executable,"-I",str(HERE/"worker_entry.py"),"supervise",stdin=asyncio.subprocess.PIPE,stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.PIPE,
-                                                       env=_client_env(manifest),limit=SUPERVISOR_FRAME+1,**options)
+                                                       env=_client_env(scope),limit=SUPERVISOR_FRAME+1,**options)
             self.active[cap["task_id"]]={"pid":proc.pid,"capability":cap,"work_dir":str(private)}
             async def send(value):
                 proc.stdin.write((json.dumps(value,separators=(",",":"))+"\n").encode());await proc.stdin.drain()
