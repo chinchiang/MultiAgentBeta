@@ -25,7 +25,7 @@ system:
   description: >-
     Vibe Audit 0.2.1：本機單一使用者的 Multi-Agent 資安測試工具。三模型白箱審查 → 威脅建模 → 案例與 oracle →
     隔離黑箱執行 → 證據裁決；AI Commander 派工，程式 harness 強制範圍、階段、權限、預算與證據。
-  exposure: internal                          # 控制台只監聽 127.0.0.1（__main__.py:28）；單一使用者、無租戶（store.py:67：runs 沒有 owner 欄位）；README 明示不得公開到網際網路
+  exposure: internal                          # 控制台只監聽 127.0.0.1（__main__.py:28）；單一使用者、無租戶（store.py:71：runs 沒有 owner 欄位）；README 明示不得公開到網際網路
   data_sensitivity: sensitive_pii_or_secrets  # 受測原始碼與保留機密檔的 raw staging、目標憑證、模型 API 金鑰、資料庫 URL
   methodologies: [STRIDE, MAESTRO]
 
@@ -41,7 +41,7 @@ assets:
   - id: a-target-creds
     name: 目標認證（auth_profiles 引用的 VIBEAUDIT_* 環境變數）
     sensitivity: secret
-    store: 只在 host 上黑箱任務的 supervisor 環境（worker_runtime.py:72-95、391-400）；白箱任務的 supervisor 不帶，也不進任何容器
+    store: 只在 host 上黑箱任務的 supervisor 環境（worker_runtime.py:72-95、394-403）；白箱任務的 supervisor 不帶，也不進任何容器
   - id: a-model-keys
     name: 模型 API 金鑰（model profile 引用的 VIBEAUDIT_* 環境變數）
     sensitivity: secret
@@ -57,7 +57,7 @@ assets:
   - id: a-evidence
     name: 證據、發現、威脅模型與報告匯出（JSON／Markdown／SARIF）
     sensitivity: confidential
-    store: PostgreSQL + data_dir；SHA-256 存於同一資料庫（store.py:162-178），非防竄改
+    store: PostgreSQL + data_dir；SHA-256 存於同一資料庫（store.py:166-182），非防竄改
   - id: a-config
     name: 執行設定（runtime.json、manifest 的 allowed_requests／allowed_target_ips／allowed_model_origins、image ID）
     sensitivity: internal
@@ -73,7 +73,7 @@ components:
   - { id: c-db,           name: PostgreSQL（job／lease 帳本、checkpoint、證據）,                        kind: db,               zone: z-control }
   - { id: c-supervisor,   name: 獨立 supervisor／broker（持有目標憑證、IP 釘選、dispatch 帳本、lease）, kind: worker,           zone: z-control }
   - { id: c-collector,    name: effect collector／mock sink（在控制台程序內執行，目標以 bearer capability 送事件；effect_collector.py:188-225）,         kind: worker,           zone: z-control }
-  - { id: c-docker,       name: Docker Engine（supervisor 建立與清理 worker；控制台查詢 /info 與映像，worker_runtime.py:254-295）, kind: tool,             zone: z-host }
+  - { id: c-docker,       name: Docker Engine（supervisor 建立與清理 worker；控制台查詢 /info 與映像，worker_runtime.py:254-298）, kind: tool,             zone: z-host }
   - { id: c-wb-worker,    name: whitebox worker（semgrep、gitleaks、OSV；唯讀 /src、UID 65532、network none）, kind: worker,  zone: z-sandbox }
   - { id: c-bb-worker,    name: blackbox worker（ZAP、Schemathesis、Playwright、promptfoo、PyRIT；UID 65533、network none、Unix socket relay）, kind: worker, zone: z-sandbox }
   - { id: c-target,       name: 操作者提供的 staging 目標（target_url + allowed_target_ips）,          kind: external_service, zone: z-target }
@@ -343,11 +343,11 @@ threats:
     mitigation: >-
       UID 65532、--cap-drop ALL、no-new-privileges、--read-only、network none、pids／記憶體／CPU 限制、不掛 docker socket、
       --pull never（worker_runtime.py:206-234）。白箱任務不啟動 broker、不掛 /broker，其 supervisor 也不帶目標範圍、測試身分與憑證
-      （worker_entry.py:521、worker_runtime.py:72-75、220、391-400），解析惡意 repo 的容器沒有可連的 supervisor 請求通道。Docker daemon 沒有套用 seccomp profile（或為 unconfined）時 runtime 拒絕上線，
-      並把 AppArmor、userns、rootless 等安全選項記入 run（worker_runtime.py:265-272）。掃描結果只是聲明：標題由 harness 依自己的規則檔
+      （worker_entry.py:521、worker_runtime.py:72-75、220、394-403），解析惡意 repo 的容器沒有可連的 supervisor 請求通道。Docker daemon 沒有套用 seccomp profile（或為 unconfined）時 runtime 拒絕上線，
+      並把 AppArmor、userns、rootless 等安全選項記入 run（worker_runtime.py:268-275）。掃描結果只是聲明：標題由 harness 依自己的規則檔
       或固定文字產生，不採用容器回傳的訊息。rule ID 只接受 harness 列得出來的名稱：semgrep 是 harness 規則集內的規則，gitleaks 是
       釘選映像 8.30.1 的 222 條預設規則（fixtures/gitleaks-default-rule-ids.txt，納入 tool manifest 雜湊），OSV 是已驗證雜湊的離線
-      資料庫 all.zip 內的紀錄 ID；其他一律記為 unrecognized-rule 並列為缺口（sandbox.py:82-137、197-199；worker_runtime.py:540-541；
+      資料庫 all.zip 內的紀錄 ID；其他一律記為 unrecognized-rule 並列為缺口（sandbox.py:82-137、197-199；worker_runtime.py:543-544；
       resource_manifest.py:19）。發現先去重並依檔案、行號、規則排序，順序與重複不帶資訊（sandbox.py:193-196）。檔案路徑須在
       staging 清單內並經遮罩，行號不得超過 staging 副本中該檔的行數（副本雜湊不符即不採計），否則整筆不匯入並記為缺口，證據也只
       保存收斂後的結果（service.py:480-500；staging.py:138-151；service.py:605-612）。
@@ -365,7 +365,7 @@ threats:
     description: >-
       受測 repo 的作者也可能掌控目標：目標回應經 supervisor 原樣交回黑箱容器（worker_entry.py:488-490），由 ZAP、Schemathesis、
       Playwright、promptfoo、PyRIT 解析（tool_runners.py:131-202），可能利用解析器漏洞在容器內執行程式；容器的結果與 base64
-      artifact 再回到控制台被解碼解析，含 XML（worker_runtime.py:494-502、tool_runners.py:205-265）。
+      artifact 再回到控制台被解碼解析，含 XML（worker_runtime.py:497-505、tool_runners.py:205-265）。
     mitigation: >-
       黑箱容器沿用 whitebox 的隔離設定，並只能經 broker 與 supervisor 通訊（見 t-container-escape、t-broker-token）。容器結果只是聲明：
       控制台只採信 supervisor 自己記錄的欄位（SUPERVISED_FIELDS，worker_runtime.py:121-125）；工具 XML 有 DOCTYPE／ENTITY 即拒絕
@@ -460,7 +460,7 @@ threats:
     description: 目標回應的文字偽造受信任來源或 collector 綁定；或有資料庫權限者竄改證據。
     mitigation: >-
       collector 綁定需操作者另外註冊，目標文字無法註冊或偽造來源（docs/ARCHITECTURE.md）；匯出前驗證證據雜湊。
-      殘留：雜湊與證據存在同一資料庫（store.py:162-178），不是防竄改。
+      殘留：雜湊與證據存在同一資料庫（store.py:166-182），不是防竄改。
     status: accepted
     gate: G5
   - id: t-sarif-injection
@@ -493,7 +493,7 @@ threats:
     description: raw staging 副本保留受測 repo 的機密檔；程序被強制終止後到下次啟動之間仍留在磁碟。
     mitigation: >-
       whitebox 結束、每次 attempt 結束（finally）與啟動時都會刪除（service.py:67-92、235-277）；父目錄 0700；resume 須與凍結摘要相符。
-      data_dir 與 artifacts 目錄設為 0700、evidence 檔 0600；POSIX 上無法設成只有擁有者可存取時拒絕啟動（store.py:30-45、55-58、167）。
+      data_dir 與 artifacts 目錄設為 0700、evidence 檔 0600；POSIX 上無法設成只有擁有者可存取時拒絕啟動（store.py:30-45、55-58、171）。
       殘留：只在 POSIX 強制；Windows 只支援 demo（live 需要 Linux Docker runtime），資料為合成資料，目錄權限依上層目錄的 ACL 繼承。
     status: mitigated
     gate: G2

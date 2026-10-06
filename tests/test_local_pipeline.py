@@ -53,7 +53,7 @@ async def test_full_pipeline_with_synthetic_models_and_real_isolated_http(tmp_pa
         calls.append(profile['id'])
         if payload.get('request')=='probe':data={'probe':'vibeaudit','ok':True}
         elif 'reviewers' in payload:data={'reviewer_order':payload['reviewers'],'focus':[],'rationale':'Synthetic protocol test'}
-        elif 'focus' in payload:
+        elif 'core_questions' in payload:
             review_inputs.append(copy.deepcopy(payload))
             data={'findings':[],'gaps':[]}
         elif 'candidates' in payload:data={'challenges':[]}
@@ -84,6 +84,7 @@ async def test_full_pipeline_with_synthetic_models_and_real_isolated_http(tmp_pa
         assert result['stage']=='complete',result.get('error')
         assert result['status']=='completed',result.get('gaps')
         assert len(review_inputs)==3 and review_inputs[0]==review_inputs[1]==review_inputs[2]
+        assert review_inputs[0]['core_questions'] and review_inputs[0]['untrusted_commander_focus']==[]
         assert result['executions'][0]['status']=='pass'
         assert result['executions'][0]['isolation']=='docker_network_none'
         assert sent==['/fixture','/private']

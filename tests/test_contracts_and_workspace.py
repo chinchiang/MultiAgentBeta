@@ -365,3 +365,21 @@ async def test_postgres_checkpoints_and_resume_do_not_duplicate_executions(tmp_p
     assert [e["id"] for e in resumed["executions"]]==[e["id"] for e in original["executions"]]
     assert resumed["usage"]==original["usage"]
     store.close()
+
+
+@pytest.mark.parametrize("server,client",[("SQL_ASCII","ascii"),("UTF8","ascii"),("SQL_ASCII","utf-8")])
+def test_store_refuses_a_non_utf8_postgres_database(tmp_path,monkeypatch,server,client):
+    import psycopg
+    closed=[]
+    class Info:
+        encoding=client
+        @staticmethod
+        def parameter_status(name):return server if name=="server_encoding" else None
+    class Conn:
+        info=Info()
+        def close(self):closed.append(True)
+        def execute(self,*_):raise AssertionError("No statement may run on a non-UTF8 database")
+    monkeypatch.setattr(psycopg,"connect",lambda *a,**k:Conn())
+    with pytest.raises(ValueError,match="UTF8"):
+        Store(tmp_path/"data","postgresql://synthetic/db")
+    assert closed==[True]
