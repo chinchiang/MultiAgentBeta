@@ -186,8 +186,9 @@ def supervised_sequence(spec,result):
                    "capture_success":record.get("capture_success") is True} for step,record in zip(steps,records)]
     status=result.get("status") if result.get("status") in {"completed","inconclusive","blocked","execution_error","outcome_unknown"} else "execution_error"
     reason=result.get("reason")
-    # A completed sequence is the supervisor's finding, not the worker's: every sealed step's expected answer must be in
-    # its records (the same test the supervisor applies before the next step), so a worker cannot pass a failed reset.
+    # A completed sequence is the supervisor's finding, not the worker's: every sealed step must have a complete answer
+    # that meets its expectation in the supervisor's records (the supervisor stops the sequence on any failed dispatch
+    # and on an unmet step), so a worker cannot pass a failed reset or cleanup.
     if status=="completed" and any(_step_unmet(step,record) for step,record in zip(steps,records)):
         status,reason="inconclusive","A sealed step's expected answer is not in the supervisor's records"
     return {**supervised,"status":status,"reason":reason,"observations":observations,"requests":len(records)}
@@ -195,7 +196,9 @@ def supervised_sequence(spec,result):
 
 def _step_unmet(step,record):
     body=record.get("body") if isinstance(record.get("body"),str) else ""
-    return ((step.get("expected_status") is not None and record.get("status_code")!=step["expected_status"])
+    # The supervisor records a dispatch it could not send or relay with complete=False, and stops the sequence there.
+    return (record.get("complete") is not True
+            or (step.get("expected_status") is not None and record.get("status_code")!=step["expected_status"])
             or any(text not in body for text in step.get("required_text",[]))
             or bool(step.get("capture_session")) and record.get("capture_success") is not True)
 

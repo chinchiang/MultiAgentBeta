@@ -344,10 +344,15 @@ def test_worker_task_file_carries_the_worker_view(monkeypatch):
     ({"status_code": 200, "body": "reset done", "complete": True}, True),
     ({"status_code": 500, "body": "reset done", "complete": True}, False),
     ({"status_code": 200, "body": "nothing", "complete": True}, False),
+    # The expected status with an answer the supervisor could not relay, or a request that was never sent: the
+    # supervisor stopped there, so the step is unmet whatever the worker reports.
+    ({"status_code": 200, "body": "", "complete": False, "denied": "Target response was incomplete"}, False),
+    ({"status_code": None, "body": "", "complete": False, "denied": "not sent"}, False),
 ])
 def test_a_sequence_completes_only_when_the_supervisor_saw_every_expected_answer(record, completed):
     from vibe_audit.worker_runtime import supervised_sequence
-    steps = [{"id": "reset", "method": "POST", "path": "/reset", "expected_status": 200, "required_text": ["reset done"]}]
+    steps = [{"id": "reset", "method": "POST", "path": "/reset", "expected_status": 200,
+              "required_text": ["reset done"] if record["complete"] else []}]
     claim = {"status": "completed", "observations": [{"status_code": record["status_code"], "body": record["body"]}],
              "broker_observations": [record], "cleanup_confirmed": True}
     # The worker no longer knows a step's expected answer; a failed last cleanup step must not read as completed.
