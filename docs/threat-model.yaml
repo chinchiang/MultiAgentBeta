@@ -7,13 +7,12 @@
 # 範圍：Linux／WSL2 的 live 部署（PostgreSQL + Docker workers + supervisor）。Windows demo、process_test 與
 #   SQLite 屬合成／測試路徑（ARCHITECTURE.md「Isolation and recovery」），不在範圍內。
 #
+# 已由人類決定：
+#   - 2026-10-06 @chinchiang：c-test-designer 的致命三要素以 trifecta_leg_cut: external_comms 切腳，理由與接受的殘留見 decisions。
+#
 # 待維護者決定（docs/01 要求 AppSec 與 Red Team 各一人簽核，分歧保留少數意見）：
-#   1. c-test-designer 的致命三要素：三者皆成立、未切腳（見 agents）。broker 的 method/path 精確白名單與 IP 釘選
-#      是否足以宣告切斷 external_comms？header 值已限固定詞彙、身分限 model_selectable，但 fixture profile 的 JSON body
-#      仍由模型決定。在決定前 G0 會報
-#      vibesec.g0.lethal-trifecta-open——這是刻意的：AI 草稿不自行宣告切腳。
-#   2. risk_tier：決策樹推導為 L2（exposure internal），草稿依 docs/01 對 sensitive_pii_or_secrets 的建議提為 L3。
-#   3. 仍為 open 的 3 條（t-redaction-gap、t-container-escape、t-supply-chain）是否接受殘留、修正或轉移。
+#   1. risk_tier：決策樹推導為 L2（exposure internal），草稿依 docs/01 對 sensitive_pii_or_secrets 的建議提為 L3。
+#   2. 仍為 open 的 3 條（t-redaction-gap、t-container-escape、t-supply-chain）是否接受殘留、修正或轉移。
 #
 # 修訂：同日依本分支的程式修正，把 t-indirect-injection、t-model-identity、t-probe-key-exfil、t-credential-crossuse、
 #   t-target-internal、t-sarif-injection 改為 mitigated（各條的「殘留」仍待人工確認）；file:line 已對應修正後的程式碼。
@@ -165,10 +164,11 @@ agents:
     # 設計上的控制（見 t-indirect-injection、t-model-identity）：method/path（含 query）須完全符合操作者的 allowed_requests；
     # 模型設計的 POST 一律 blocked（fixture profile 除外，service.py:671-697）；header 名稱只允許 6 個、值限固定詞彙（adapters.py:89、105-113）；
     # 身分限 model_selectable（policy.py:135-139）；目標 IP 釘選。
-    # 這些是程式碼層控制，VibeSec 目前只能驗證 claude_permission 類證據，所以沒有 mitigation_evidence——G0 會報 lethal-trifecta-open。
-    # 待決定：若判定 broker 白名單已切斷對外通訊這隻腳，改 trifecta_leg_cut: external_comms 並在 decisions 記錄理由。
+    # 這些是程式碼層控制，VibeSec 目前只能驗證 claude_permission 類證據，所以沒有 mitigation_evidence。
+    # 2026-10-06 由 @chinchiang 決定：以上控制視為切斷對外通訊這隻腳。can_communicate_externally 仍標 true，因為請求確實會送出；
+    # 切腳靠的是上述程式碼層控制。接受的殘留：fixture profile 的 JSON body 仍由模型決定（見 decisions、t-indirect-injection）。
     mitigations: [egress_allowlist, tool_allowlist]
-    trifecta_leg_cut: null
+    trifecta_leg_cut: external_comms
   - id: c-reporter
     accesses_private_data: true          # 發現（含檔案、行號與標題，service.py:736）
     exposed_to_untrusted_content: true   # 發現文字源自模型與受測 repo
@@ -401,4 +401,9 @@ decisions:
   - 模型設計的案例只能使用操作者標記 model_selectable 的測試身分，header 值限固定詞彙。
   - 模型金鑰只送到操作者以環境變數綁定的 origin；請求本文無法改變金鑰的去向。
   - 證據雜湊用於一致性檢查，不宣稱法證級不可竄改。
+  - >-
+    c-test-designer 的致命三要素以 external_comms 切腳（2026-10-06，@chinchiang 決定）。理由：模型設計的請求只能送往操作者
+    明列的 origin 與 IP，method/path（含 query）須完全符合 allowed_requests；POST 除 fixture profile 外一律 blocked；header 值限
+    固定詞彙、身分限 model_selectable；目標回應不回饋給任何模型。接受的殘留：fixture profile 路徑（例如 ai_http 的 prompt）的
+    JSON body 仍由模型決定，只送往操作者宣告的 fixture 目標。
   - 本模型為 AI 草稿（2026-10-06，依 commit f9d9cf1 起草、同日依本分支修正更新），待 AppSec 與 Red Team 簽核（docs/01「驗證方式」第 4 項）。
