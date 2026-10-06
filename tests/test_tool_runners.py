@@ -117,6 +117,15 @@ def test_no_schemathesis_cases_or_external_xml_entities_rejected():
         assert "expanded" not in json.dumps(result)
 
 
+
+@pytest.mark.parametrize("encoding", ["utf-7", "utf-32", "rot13", "no-such-codec"])
+def test_xml_in_an_encoding_expat_cannot_use_is_refused_as_malformed(encoding):
+    raw = f'<?xml version="1.0" encoding="{encoding}"?><testsuite><testcase name="a"/></testsuite>'.encode()
+    result = parse_tool_result("schemathesis", {"status":"completed","exit_code":0,"cleanup_confirmed":True,
+        "artifacts":{"schemathesis.xml":raw}}, case_id="case-one")
+    assert (result["status"], result["reason"]) == ("execution_error", "Malformed XML artifact")
+
+
 def test_well_formed_schemathesis_report_still_parses_in_any_encoding():
     report = '<?xml version="1.0"?><testsuite><testcase name="ok"/><testcase name="bad"><failure/></testcase></testsuite>'
     for raw in (report.encode(), report.replace('version="1.0"', 'version="1.0" encoding="UTF-16"').encode("utf-16")):

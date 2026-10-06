@@ -364,12 +364,12 @@ threats:
     target: c-bb-worker
     description: >-
       受測 repo 的作者也可能掌控目標：目標回應經 supervisor 原樣交回黑箱容器（worker_entry.py:488-490），由 ZAP、Schemathesis、
-      Playwright、promptfoo、PyRIT 解析（tool_runners.py:150-221），可能利用解析器漏洞在容器內執行程式；容器的結果與 base64
-      artifact 再回到控制台被解碼解析，含 XML（worker_runtime.py:497-505、tool_runners.py:224-283）。
+      Playwright、promptfoo、PyRIT 解析（tool_runners.py:151-222），可能利用解析器漏洞在容器內執行程式；容器的結果與 base64
+      artifact 再回到控制台被解碼解析，含 XML（worker_runtime.py:497-505、tool_runners.py:225-284）。
     mitigation: >-
       黑箱容器沿用 whitebox 的隔離設定，並只能經 broker 與 supervisor 通訊（見 t-container-escape、t-broker-token）。容器結果只是聲明：
       控制台只採信 supervisor 自己記錄的欄位（SUPERVISED_FIELDS，worker_runtime.py:121-125）；工具 XML 先以 expat 掃描，
-      任何編碼下有 DTD 或 entity 宣告即拒絕（tool_runners.py:31-46、257-259）。http_case 由 supervisor 固定請求序列：依序送各 positive control，再送案例本身，每個 task 一次；
+      任何編碼下有 DTD 或 entity 宣告即拒絕（tool_runners.py:31-47、258-260）。http_case 由 supervisor 固定請求序列：依序送各 positive control，再送案例本身，每個 task 一次；
       control 未達成就停止，順序與次數都不是容器的選擇（worker_entry.py:244-254、297-303、474-480）。http_case 的容器只拿到送出與
       判定所需的欄位（method、path、headers、body、identity、oracle、control 的 required_text），不含標題、威脅與需求 ID，control
       名稱改為 control-N；fixture 路徑的 request_sequence 由 supervisor 與控制台判定，容器只拿案例 ID 與各 step 的請求（method、path、
