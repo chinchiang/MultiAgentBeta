@@ -137,7 +137,9 @@ class Unusable(ValueError):
 # What execute_case and evaluate_oracle read from a case (adapters.py), and what the sequence worker reads from a
 # step; worker_view passes nothing else.
 WORKER_CASE_FIELDS=("id","adapter","method","path","headers","body","identity","designed_by","side_effects","repetitions","oracle")
-WORKER_STEP_FIELDS=("case_id","method","path","headers","identity","body","expected_status","required_text")
+# A sequence step's expected answer stays with the supervisor and the console (supervised_sequence): the worker
+# sends steps in order and stops when the relay refuses one.
+WORKER_STEP_FIELDS=("case_id","method","path","headers","identity","body")
 
 
 class Supervisor:
@@ -256,7 +258,8 @@ class Supervisor:
 
         The worker runs where a hostile target answers; it gets no title, control names or step labels, nothing it
         would only pass on. An http_case keeps its oracle and control texts, since a pass needs the worker's verdict
-        and the supervisor's; a sequence worker only sends steps (the console judges them) and gets the case ID alone.
+        and the supervisor's; a sequence worker only sends steps (the supervisor and console judge them) and gets the
+        case ID and each step's request, without its expected answer.
         A tool task runs only operator-written cases and keeps its spec."""
         operation=self.spec.get("operation")
         if operation not in {"http_case","request_sequence"}:
@@ -697,7 +700,8 @@ def container_worker(task):
             response=conn.getresponse();text=response.read(MAX_BODY+1).decode();conn.close()
             item={"id":step.get("id"),"status_code":response.status,"body":text,"complete":len(text.encode())<=MAX_BODY,"capture_success":response.getheader("X-Vibe-Capture-Success")=="true"}
             results.append(item)
-            if response.status==502 or (step.get("expected_status") is not None and response.status!=step["expected_status"]) or any(t not in text for t in step.get("required_text",[])):
+            # The supervisor stops the sequence at an unmet step and refuses the next request; the relay answers 502.
+            if response.status==502:
                 sequence_ok=False
                 break
         result={"status":"completed" if sequence_ok and len(results)==len(spec.get("requests",[])) else "inconclusive","observations":results,"requests":len(results),"exit_code":0,"stdout":"","stderr":"","artifacts":{}}

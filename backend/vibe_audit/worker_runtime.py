@@ -185,7 +185,19 @@ def supervised_sequence(spec,result):
     observations=[{"id":step.get("id"),"status_code":record.get("status_code"),"body":record.get("body"),"complete":record.get("complete") is True,
                    "capture_success":record.get("capture_success") is True} for step,record in zip(steps,records)]
     status=result.get("status") if result.get("status") in {"completed","inconclusive","blocked","execution_error","outcome_unknown"} else "execution_error"
-    return {**supervised,"status":status,"reason":result.get("reason"),"observations":observations,"requests":len(records)}
+    reason=result.get("reason")
+    # A completed sequence is the supervisor's finding, not the worker's: every sealed step's expected answer must be in
+    # its records (the same test the supervisor applies before the next step), so a worker cannot pass a failed reset.
+    if status=="completed" and any(_step_unmet(step,record) for step,record in zip(steps,records)):
+        status,reason="inconclusive","A sealed step's expected answer is not in the supervisor's records"
+    return {**supervised,"status":status,"reason":reason,"observations":observations,"requests":len(records)}
+
+
+def _step_unmet(step,record):
+    body=record.get("body") if isinstance(record.get("body"),str) else ""
+    return ((step.get("expected_status") is not None and record.get("status_code")!=step["expected_status"])
+            or any(text not in body for text in step.get("required_text",[]))
+            or bool(step.get("capture_session")) and record.get("capture_success") is not True)
 
 
 def docker_command(*,prefix,image,name,phase,inputs,broker,runtime=HERE,source_dir=None,offline_db_dir=None):

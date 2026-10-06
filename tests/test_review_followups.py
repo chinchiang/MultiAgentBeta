@@ -321,8 +321,10 @@ def test_sequence_worker_gets_steps_without_labels_or_case_text(monkeypatch):
     assert [s["id"] for s in view["requests"]] == ["step-1", "step-2"]
     assert all(set(s) <= {"id", "case_id", "method", "path", "headers", "identity", "body", "expected_status", "required_text"} for s in view["requests"])
     assert "secret control name" not in json.dumps(view) and "model title" not in json.dumps(view)
-    # The console judges a sequence from the supervisor's records, so its worker gets the case ID and no oracle.
-    assert view["cases"] == [{"id": "C1"}] and "CANARY" not in json.dumps(view["cases"])
+    # The supervisor and console judge a sequence from the supervisor's records, so its worker gets the case ID and
+    # each step's request, with no oracle and no expected answer.
+    assert view["cases"] == [{"id": "C1"}] and "CANARY" not in json.dumps(view)
+    assert not any({"expected_status", "required_text"} & set(step) for step in view["requests"])
     # The supervisor still checks requests against its own sealed steps.
     assert supervisor.spec["requests"][0]["id"].startswith("control:")
 
@@ -336,3 +338,24 @@ def test_worker_task_file_carries_the_worker_view(monkeypatch):
     assert task["broker"] == {"tcp": ["127.0.0.1", 1]} and task["broker_token"] == "t"
     # Without a broker there is no token to hand over either.
     assert supervisor.child_task(None)["broker_token"] is None
+
+
+@pytest.mark.parametrize("record,completed", [
+    ({"status_code": 200, "body": "reset done", "complete": True}, True),
+    ({"status_code": 500, "body": "reset done", "complete": True}, False),
+    ({"status_code": 200, "body": "nothing", "complete": True}, False),
+])
+def test_a_sequence_completes_only_when_the_supervisor_saw_every_expected_answer(record, completed):
+    from vibe_audit.worker_runtime import supervised_sequence
+    steps = [{"id": "reset", "method": "POST", "path": "/reset", "expected_status": 200, "required_text": ["reset done"]}]
+    claim = {"status": "completed", "observations": [{"status_code": record["status_code"], "body": record["body"]}],
+             "broker_observations": [record], "cleanup_confirmed": True}
+    # The worker no longer knows a step's expected answer; a failed last cleanup step must not read as completed.
+    result = supervised_sequence({"requests": steps}, claim)
+    assert (result["status"] == "completed") is completed
+    # A login step that should have captured a session is unmet without the supervisor's capture.
+    login = [{"id": "login", "method": "POST", "path": "/login", "expected_status": 200, "capture_session": {"slot": "s", "json_field": "token"}}]
+    for captured, done in [(True, True), (False, False)]:
+        record = {"status_code": 200, "body": "{}", "complete": True, "capture_success": captured}
+        claim = {"status": "completed", "observations": [{"status_code": 200, "body": "{}"}], "broker_observations": [record]}
+        assert (supervised_sequence({"requests": login}, claim)["status"] == "completed") is done
