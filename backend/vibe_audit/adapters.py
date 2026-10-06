@@ -59,16 +59,34 @@ def credential_env_allowed(name, environ=None):
     return not any(environ.get(key) == value for key in RESERVED_ENV)
 
 
+CREDENTIAL_ORIGINS_ENV = "VIBEAUDIT_MODEL_CREDENTIAL_ORIGINS"
+# The vendor keys the workbench pre-fills go to their vendors; the operator's environment can rebind them.
+DEFAULT_CREDENTIAL_ORIGINS = {"VIBEAUDIT_OPENAI_API_KEY": "https://api.openai.com",
+                              "VIBEAUDIT_ANTHROPIC_API_KEY": "https://api.anthropic.com"}
+
+
+def bound_model_credentials(environ=None):
+    """Every variable the operator's environment binds as a model key, whether or not this run's models use it.
+
+    Read from the names alone, so a malformed binding (which providers.credential_origins refuses) still counts.
+    The supervisor imports this module on its own, without the package: nothing here may import providers.
+    """
+    environ = os.environ if environ is None else environ
+    return set(DEFAULT_CREDENTIAL_ORIGINS) | set(re.findall(r"(VIBEAUDIT_[A-Z0-9_]+)\s*=", environ.get(CREDENTIAL_ORIGINS_ENV, "")))
+
+
 def shared_credentials(manifest, environ=None):
     """Test identities whose credential is also a model credential, by variable name or by value.
 
-    Either way the target would receive a model key, or the model provider a target credential.
+    Either way the target would receive a model key, or the model provider a target credential. Model
+    credentials are this run's model profiles and every key the environment binds to model origins: a run
+    that leaves a bound key out of its models must still not hand it to the target.
     """
     environ = os.environ if environ is None else environ
     def names(key):
         return {p.get("credential_env") for p in manifest.get(key) or [] if isinstance(p, dict)
                 and isinstance(p.get("credential_env"), str) and p.get("credential_env")}
-    model_names = names("models")
+    model_names = names("models") | bound_model_credentials(environ)
     model_values = {environ.get(name) for name in model_names} - {None, ""}
     return sorted(name for name in names("auth_profiles")
                   if name in model_names or environ.get(name) in model_values)
@@ -109,7 +127,8 @@ def _one_of(options):
 _MODEL_HEADER_VALUES = {
     "accept": _one_of(_MEDIA_TYPES),
     "accept-language": _one_of(_LANGUAGES),
-    "content-type": re.compile(r"(?:application/json|application/x-www-form-urlencoded|application/xml|text/plain)(?:; ?charset=utf-8)?"),
+    # One spelling of the charset parameter: ";charset" and "; charset" would be two choices for the same meaning.
+    "content-type": re.compile(r"(?:application/json|application/x-www-form-urlencoded|application/xml|text/plain)(?:; charset=utf-8)?"),
     # The model never sees a target response, so it holds no real entity tag: only the wildcard means anything.
     "if-match": re.compile(r"\*"),
     "if-none-match": re.compile(r"\*"),
@@ -341,9 +360,8 @@ def _prepare_request(manifest, case):
     supplied = case.get("headers") or {}
     if not case_headers_allowed(supplied, model_designed=case.get("designed_by") == "model", relay=manifest.get("relay") is True):
         raise AdapterBlocked("Case contains an unsupported, routing or credential-bearing request header.")
-    if case.get("designed_by") == "model":
-        # Defaults first, then the model's names, already in sorted order: the request carries no order the model chose.
-        headers = {name: value for name, value in headers.items() if name not in supplied}
+    # A supplied Accept takes the default's place, so an explicit application/json and none at all look the same on the
+    # wire; a model's other names follow in sorted order (case_headers_allowed), never in an order the model chose.
     headers.update(supplied)
     secrets = []
     identity = case.get("identity")

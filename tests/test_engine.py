@@ -2,6 +2,7 @@ import asyncio
 import copy
 import json
 import re
+import secrets
 import shutil
 import time
 from pathlib import Path
@@ -571,11 +572,12 @@ def test_api_errors_stay_structured_instead_of_500(tmp_path,monkeypatch):
         assert client.get("/api/runs/no-such-run").status_code==404
 
 
-STRONG_TOKEN="Kq7vX2mN9pR4tW8yB3cF6hJ1lZ5sD0gA"
+# Generated per run: a fixed random-looking literal reads as a leaked key to secret scanners.
+STRONG_TOKEN=secrets.token_urlsafe(32)
 
 
 # A length and character-set check alone accepts one repeated letter or a short repeated pattern.
-@pytest.mark.parametrize("token",["x"*31,"x"*32+" ","x"*32+"#","s"*40,"ab"*20,"abcdefgh"*5,"Kq7vX2mN"*4])
+@pytest.mark.parametrize("token",["x"*31,"x"*32+" ","x"*32+"#","s"*40,"ab"*20,"abcdefgh"*5,"Kq7vX2mN"*4,"Kq7vX2mN9pR4tW8y"*2])
 def test_weak_startup_token_is_refused(tmp_path,monkeypatch,token):
     monkeypatch.setenv("VIBEAUDIT_SESSION_TOKEN",token)
     with pytest.raises(ValueError,match="VIBEAUDIT_SESSION_TOKEN"):
@@ -1141,6 +1143,7 @@ async def test_model_cleanup_is_replaced_by_the_engine_and_grants_no_request(eng
     run=await designed(engine,monkeypatch,model_proposal(await finished_demo(engine),cleanup=wipe),allowed=scope)
     case=run["cases"][0]
     assert case["cleanup"] is None
+    approve(run)
     # authorize() permits only the sealed case's own steps, never a cleanup the model wrote.
     with pytest.raises(PolicyError,match="not a step in the sealed test case"):
         engine.policy.authorize(run,case,engine.cancel_flags[run["id"]],method="POST",path="/admin/wipe")
@@ -1204,6 +1207,17 @@ async def test_paused_run_records_approval_and_resumes(engine,monkeypatch):
         engine.approve_cases(run["id"],receipt,"local_operator:abc")
 
 
+async def test_execution_capability_requires_the_approval_too(engine):
+    run=await live_post_case(engine,adapter="http",provenance="model")
+    case=as_get_case(run)
+    engine.policy.case_gate(run)
+    approval=run.pop("case_approval")
+    with pytest.raises(PolicyError,match="operator's approval"):
+        engine.policy.authorize(run,case,engine.cancel_flags[run["id"]],method="GET",path="/orders/private")
+    run["case_approval"]=approval
+    engine.policy.authorize(run,case,engine.cancel_flags[run["id"]],method="GET",path="/orders/private")
+
+
 @pytest.mark.parametrize("model_body",[False,True])
 async def test_model_fixture_body_goes_only_to_an_operator_marked_endpoint(engine,monkeypatch,model_body):
     from vibe_audit import fixture_protocol
@@ -1243,10 +1257,11 @@ def test_routes_check_the_session_without_the_middleware(tmp_path):
     app.user_middleware.clear()
     app.middleware_stack=app.build_middleware_stack()
     with TestClient(app) as client:
-        for path in ("/api/runs","/api/capabilities","/api/projects","/api/models","/api/catalogs"):
+        for path in ("/api/runs","/api/capabilities","/api/projects","/api/models","/api/catalogs","/api/openapi.json"):
             assert client.get(path).status_code==401,path
         authorize(client)
         assert client.get("/api/runs").status_code==200
+        assert "/api/runs/{run_id}/approve-cases" in client.get("/api/openapi.json").json()["paths"]
         client.headers["X-CSRF-Token"]="wrong"
         assert client.get("/api/projects").status_code==401
 
@@ -1265,12 +1280,24 @@ def test_logout_ends_this_session_or_all_of_them(tmp_path):
     with TestClient(create_app(tmp_path,testing=True)) as first, TestClient(first.app) as second:
         authorize(first)
         authorize(second)
-        assert first.post("/api/session/logout",json={}).json()=={"ended":"this"}
+        assert first.post("/api/session/logout",json={}).json()=={"ended":"this","startup_token_rotated":False}
         assert first.get("/api/runs").status_code==401 and second.get("/api/runs").status_code==200
         authorize(first)
-        assert second.post("/api/session/logout",json={"all":True}).json()=={"ended":"all"}
+        old_token=first.app.state.session_token
+        assert second.post("/api/session/logout",json={"all":True}).json()=={"ended":"all","startup_token_rotated":True}
         assert first.get("/api/runs").status_code==401 and second.get("/api/runs").status_code==401
         assert first.post("/api/session/logout",json={}).status_code==401
+        # Ending every session also replaces a generated startup token: the old one opens nothing.
+        assert first.get("/api/session",headers={"X-VibeAudit-Token":old_token}).status_code==401
+        assert open_session(first).status_code==200 and first.app.state.session_token!=old_token
+
+
+def test_logout_of_every_session_keeps_a_configured_startup_token(tmp_path,monkeypatch):
+    monkeypatch.setenv("VIBEAUDIT_SESSION_TOKEN",STRONG_TOKEN)
+    with TestClient(create_app(tmp_path,testing=True)) as client:
+        authorize(client)
+        assert client.post("/api/session/logout",json={"all":True}).json()=={"ended":"all","startup_token_rotated":False}
+        assert open_session(client).status_code==200
 
 
 def test_idle_session_expires_and_sessions_are_capped(tmp_path,monkeypatch):
@@ -1315,13 +1342,19 @@ def test_event_stream_ends_when_its_session_does(tmp_path,monkeypatch):
     assert "event: progress" not in response.text.split("event: expired")[1]
 
 
-def test_wrong_startup_tokens_are_throttled(tmp_path):
+def test_wrong_startup_tokens_slow_down_without_locking_out_the_operator(tmp_path,monkeypatch):
     from vibe_audit import api
+    pauses=[]
+    async def pause(seconds):
+        pauses.append(seconds)
+    monkeypatch.setattr(api,"pause",pause)
     with TestClient(create_app(tmp_path,testing=True)) as client:
-        for _ in range(api.TOKEN_FAILURE_LIMIT):
+        for _ in range(30):
             assert client.get("/api/session",headers={"X-VibeAudit-Token":"guess"}).status_code==401
-        # Past the limit even the right token waits: a local guesser cannot keep trying.
-        assert open_session(client).status_code==429
+        # Each recent wrong guess slows the next answer, up to a cap.
+        assert pauses[:3]==[api.TOKEN_FAILURE_DELAY*n for n in (1,2,3)] and pauses[-1]==api.TOKEN_FAILURE_DELAY_MAX
+        # Another local process sending wrong tokens cannot keep the operator from opening a session.
+        assert open_session(client).status_code==200 and len(pauses)==30
 
 
 def test_operator_decisions_name_the_session_that_acted(tmp_path,monkeypatch):

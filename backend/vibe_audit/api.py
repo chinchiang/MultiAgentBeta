@@ -32,14 +32,19 @@ LIMITATIONS=[
 SESSION_SECONDS=28800
 SESSION_IDLE_SECONDS=3600
 MAX_SESSIONS=8
-# A wrong startup token costs a guess: at most this many per window, after which /api/session answers 429.
-TOKEN_FAILURE_LIMIT,TOKEN_FAILURE_WINDOW=10,60
+# Each wrong startup token in the last window slows the next wrong answer; the right token is never held back,
+# so another local process cannot lock the operator out. Guessing resistance comes from the token's entropy.
+TOKEN_FAILURE_WINDOW,TOKEN_FAILURE_DELAY,TOKEN_FAILURE_DELAY_MAX=60,0.25,5.0
 SECURITY_HEADERS={"X-Content-Type-Options":"nosniff","Referrer-Policy":"no-referrer","X-Frame-Options":"DENY","Cache-Control":"no-store","Content-Security-Policy":"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'"}
 
 
 def clock():
     """Session timing; tests replace this, not time.monotonic, which the event loop also reads."""
     return time.monotonic()
+
+
+async def pause(seconds):
+    await asyncio.sleep(seconds)
 
 
 def startup_token_strong(token):
@@ -54,6 +59,7 @@ def startup_token_strong(token):
 
 def create_app(data_dir=None, database_url=None, testing=False, session_token=None):
     # Every local process can reach loopback, so only the operator's startup token opens a new session.
+    fixed_token=bool(session_token or os.getenv("VIBEAUDIT_SESSION_TOKEN"))
     session_token=session_token or os.getenv("VIBEAUDIT_SESSION_TOKEN") or secrets.token_urlsafe(32)
     if not re.fullmatch(r"[A-Za-z0-9_-]{32,256}",session_token):
         raise ValueError("VIBEAUDIT_SESSION_TOKEN must be 32-256 URL-safe characters (A-Z a-z 0-9 _ -)")
@@ -85,10 +91,13 @@ def create_app(data_dir=None, database_url=None, testing=False, session_token=No
         store.close()
 
     # The schema is served behind the session; a Swagger page could not load its assets under this CSP.
-    app=FastAPI(title="Vibe Audit",version="0.2.1",lifespan=lifespan,docs_url=None,redoc_url=None,openapi_url="/api/openapi.json")
+    # The schema route is added under the session-checked router below; FastAPI's own would skip its dependencies.
+    app=FastAPI(title="Vibe Audit",version="0.2.1",lifespan=lifespan,docs_url=None,redoc_url=None,openapi_url=None)
     app.state.store=store
     app.state.engine=engine
     app.state.session_token=session_token
+    # __main__ replaces this to print the full workbench URL when logout of every session issues a new token.
+    app.state.announce_token=lambda token:print(f"Vibe Audit: every session ended; new startup token in URL fragment #token={token}",flush=True)
     app.state.sessions=sessions
 
     def current_session(request):
@@ -187,11 +196,10 @@ def create_app(data_dir=None, database_url=None, testing=False, session_token=No
         moment=clock()
         while token_failures and token_failures[0]<moment-TOKEN_FAILURE_WINDOW:
             token_failures.popleft()
-        if len(token_failures)>=TOKEN_FAILURE_LIMIT:
-            return JSONResponse({"detail":"Too many startup token attempts; wait a minute and open the printed URL again"},status_code=429)
-        if not secrets.compare_digest(startup.encode(),session_token.encode()):
+        if not secrets.compare_digest(startup.encode(),app.state.session_token.encode()):
             if startup:
                 token_failures.append(moment)
+                await pause(min(TOKEN_FAILURE_DELAY_MAX,TOKEN_FAILURE_DELAY*len(token_failures)))
             return JSONResponse({"detail":"Startup token required: open the URL printed when the local service started"},status_code=401)
         for sid in [sid for sid,entry in sessions.items() if entry["expires"]<moment or entry["last_seen"]+SESSION_IDLE_SECONDS<moment]:
             del sessions[sid]
@@ -208,19 +216,30 @@ def create_app(data_dir=None, database_url=None, testing=False, session_token=No
 
     @api.post("/session/logout")
     async def logout(request:Request):
-        """End this session, or with {"all": true} every session; the startup token stays valid until restart."""
+        """End this session, or with {"all": true} every session. Ending every session also replaces a generated
+        startup token (a configured VIBEAUDIT_SESSION_TOKEN stays until the operator changes it and restarts)."""
         raw=await request.body()
         try:
             body=json.loads(raw) if raw else {}
         except ValueError:
             body={}
-        if isinstance(body,dict) and body.get("all") is True:
+        everything=isinstance(body,dict) and body.get("all") is True
+        rotated=False
+        if everything:
             sessions.clear()
+            if not fixed_token:
+                app.state.session_token=secrets.token_urlsafe(32)
+                app.state.announce_token(app.state.session_token)
+                rotated=True
         else:
             sessions.pop(request.cookies.get("vibeaudit_session",""),None)
-        response=JSONResponse({"ended":"all" if isinstance(body,dict) and body.get("all") is True else "this"})
+        response=JSONResponse({"ended":"all" if everything else "this","startup_token_rotated":rotated})
         response.delete_cookie("vibeaudit_session")
         return response
+
+    @api.get("/openapi.json",include_in_schema=False)
+    async def openapi_schema():
+        return app.openapi()
 
     @api.get("/capabilities")
     async def capabilities(profile: str = "default"):

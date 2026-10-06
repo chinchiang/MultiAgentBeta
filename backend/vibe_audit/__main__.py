@@ -23,7 +23,8 @@ def main():
     from .api import create_app
     app=create_app()
     # The fragment never reaches the server or its logs; the workbench trades it for a session cookie.
-    print(f"Vibe Audit workbench: http://127.0.0.1:{args.port}/#token={app.state.session_token}",flush=True)
+    app.state.announce_token=lambda token:print(f"Vibe Audit workbench: http://127.0.0.1:{args.port}/#token={token}",flush=True)
+    app.state.announce_token(app.state.session_token)
     uvicorn.run(app,host="127.0.0.1",port=args.port,access_log=False)
 
 

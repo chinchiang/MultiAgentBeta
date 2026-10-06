@@ -59,6 +59,16 @@ def _safe_relative(value):
 SUPERVISOR_FRAME=64*1024*1024
 
 
+def supervisor_manifest(manifest):
+    """The supervisor's part of the run: scope, identities, budget and, by name only, the model credentials.
+
+    The names let adapters.shared_credentials refuse a test identity that is a model key at the last trusted
+    hop before the target; the values never reach the supervisor's environment (see _client_env)."""
+    narrow={k:manifest[k] for k in ("run_id","mode","target_url","allowed_target_ips","allowed_requests","auth_profiles","budget","deployment_id","deployment_header") if k in manifest}
+    narrow["models"]=[{"credential_env":p["credential_env"]} for p in manifest.get("models",[]) if isinstance(p,dict) and p.get("credential_env")]
+    return narrow
+
+
 def _client_env(manifest):
     from .adapters import credential_env_allowed,shared_credentials
     from .worker_entry import clean_env
@@ -349,7 +359,7 @@ class WorkerRuntime:
             argv=docker_command(prefix=prefix,image=image,name=name,phase=spec["phase"],inputs=inputs,broker=broker,source_dir=spec.get("source_dir"),offline_db_dir=spec.get("offline_db_dir")) if self.backend=="docker" else [sys.executable,"-I",str(HERE/"worker_entry.py"),"worker",str(inputs/"_worker_task.json")]
             # Only the supervisor receives target credential references; the
             # worker task file contains cases/specification and relay access.
-            narrow={k:manifest[k] for k in ("run_id","mode","target_url","allowed_target_ips","allowed_requests","auth_profiles","budget","deployment_id","deployment_header") if k in manifest}
+            narrow=supervisor_manifest(manifest)
             child_cap={k:v for k,v in cap.items() if k!="renewal_token"}
             initial={"backend":self.backend,"spec":spec,"manifest":narrow,"capability":child_cap,"worker_id":worker_id,
                      "database_path":self.leases.database_path,"database_url":self.leases.database_url,"broker_token":secrets.token_urlsafe(32),

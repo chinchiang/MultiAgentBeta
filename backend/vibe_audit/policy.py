@@ -172,6 +172,9 @@ class Policy:
         approved=next((c for c in run["cases"] if c["id"]==case["id"]),None)
         if not approved or case.get("hash")!=sealed(case) or sealed(approved)!=case["hash"]:
             raise PolicyError("Unapproved case")
+        # The capability itself carries the operator's approval, not only the engine's stage order.
+        if run["mode"]=="live" and case.get("designed_by")=="model" and (run.get("case_approval") or {}).get("receipt")!=receipt[2]:
+            raise PolicyError("Model-designed cases need the operator's approval of this sealed case set")
         if run["mode"]=="live":
             requested=((method or case.get("method","GET")).upper(),path or case.get("path"))
             allowed={(r.get("method","GET").upper(),r.get("path")) for r in run["manifest"].get("allowed_requests",[])}

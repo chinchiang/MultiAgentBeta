@@ -24,7 +24,7 @@ from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
 from referencing import Registry
 
-from .adapters import credential_env_allowed
+from .adapters import CREDENTIAL_ORIGINS_ENV, DEFAULT_CREDENTIAL_ORIGINS, credential_env_allowed
 
 MAX_ATTEMPTS = 2
 MAX_RESPONSE_BYTES = 512 * 1024
@@ -85,12 +85,6 @@ def _origin(value: str) -> tuple[str, str]:
         return f"{parsed.scheme}://{hostname}{suffix}", host
     except (ValueError, AttributeError):
         raise ProviderError("Invalid model endpoint/origin", code="invalid_endpoint") from None
-
-
-CREDENTIAL_ORIGINS_ENV = "VIBEAUDIT_MODEL_CREDENTIAL_ORIGINS"
-# The vendor keys the workbench pre-fills go to their vendors; the operator's environment can rebind them.
-DEFAULT_CREDENTIAL_ORIGINS = {"VIBEAUDIT_OPENAI_API_KEY": "https://api.openai.com",
-                              "VIBEAUDIT_ANTHROPIC_API_KEY": "https://api.anthropic.com"}
 
 
 def credential_origins(environ=None) -> dict[str, set[str]]:
