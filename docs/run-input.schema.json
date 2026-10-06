@@ -25,6 +25,11 @@
           "default": "",
           "title": "Role",
           "type": "string"
+        },
+        "model_selectable": {
+          "default": false,
+          "title": "Model Selectable",
+          "type": "boolean"
         }
       },
       "required": [
