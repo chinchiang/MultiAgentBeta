@@ -11,9 +11,9 @@
 #   - 2026-10-06 @chinchiang：c-test-designer 的致命三要素以 trifecta_leg_cut: external_comms 切腳，理由與接受的殘留見 decisions。
 #   - 2026-10-06 @chinchiang：risk_tier 維持 L3（高於決策樹推導的 L2），理由見 risk_tier_rationale。
 #   - 2026-10-06 @chinchiang：保留兩項行為變更（模型金鑰的 origin 綁定、model_selectable 身分），見 decisions。
+#   - 2026-10-06 @chinchiang：t-redaction-gap、t-container-escape、t-supply-chain 接受殘留，改為 accepted，見 decisions。
 #
-# 待維護者決定（docs/01 要求 AppSec 與 Red Team 各一人簽核，分歧保留少數意見）：
-#   1. 仍為 open 的 3 條（t-redaction-gap、t-container-escape、t-supply-chain）是否接受殘留、修正或轉移。
+# 待辦：docs/01 要求 AppSec 與 Red Team 各一人簽核本模型（分歧保留少數意見）。
 #
 # 修訂：同日依本分支的程式修正，把 t-indirect-injection、t-model-identity、t-probe-key-exfil、t-credential-crossuse、
 #   t-target-internal、t-sarif-injection 改為 mitigated（各條的「殘留」仍待人工確認）；file:line 已對應修正後的程式碼。
@@ -218,8 +218,8 @@ threats:
       前綴、Bearer、連線字串密碼遮罩；gitleaks 的 Secret／Match 欄位丟棄（sandbox.py:108-110）。名稱片段 pass／pwd／passphrase、
       signing／encryption／HMAC／master／webhook key、Azure AccountKey／SharedAccessKey，以及 Hugging Face、SendGrid、AWS STS、
       Google OAuth、Shopify、DigitalOcean、PyPI token 與 Slack webhook 也會遮罩（snapshot.py:28-29、41、45）。
-      殘留：遮罩不保證完整，無前綴的高熵 token 無法可靠辨識；是否接受殘留須由人類決定。
-    status: open
+      殘留：遮罩不保證完整，無前綴的高熵 token 無法可靠辨識。2026-10-06 由 @chinchiang 接受此殘留。
+    status: accepted
     gate: G2
   - id: t-cloud-disclosure
     category: STRIDE-I
@@ -294,8 +294,9 @@ threats:
       UID 65532、--cap-drop ALL、no-new-privileges、--read-only、network none、pids／記憶體／CPU 限制、不掛 docker socket、
       --pull never（worker_runtime.py:168-195）。Docker daemon 沒有套用 seccomp profile（或為 unconfined）時 runtime 拒絕上線，
       並把 AppArmor、userns、rootless 等安全選項記入 run（worker_runtime.py:226-233）。殘留：沒有自訂 seccomp 或 AppArmor profile、
-      未要求 userns；/tmp tmpfs 可執行；kernel 漏洞仍可逃逸——需人類決定接受，或改用 gVisor／userns-remap 後在真 Docker 上重驗。
-    status: open
+      未要求 userns；/tmp tmpfs 可執行；kernel 漏洞仍可逃逸。2026-10-06 由 @chinchiang 接受此殘留；日後若改用 gVisor／userns-remap，
+      須在真 Docker 上重驗。
+    status: accepted
     gate: G3
   - id: t-docker-root
     category: STRIDE-E
@@ -350,8 +351,8 @@ threats:
       工具映像 npm ci --ignore-scripts；OSV 離線 archive 有雜湊；掃描時不拉映像、不安裝套件。殘留：
       deploy/worker/locks/python-requirements.txt 沒有 hash；apt-get 未釘版（docs/VALIDATION.md）；deploy/worker/Dockerfile
       的 BASE_IMAGE 由操作者提供。補 hash 會改動已驗收的 Dockerfile.tools.locked，須在有 Docker 的環境重建工具映像並重跑工具
-      契約（docs/image-validation.json）後才能宣告，本次未改。
-    status: open
+      契約（docs/image-validation.json）後才能宣告，本次未改。2026-10-06 由 @chinchiang 接受此殘留。
+    status: accepted
     gate: G1
   - id: t-raw-staging-retention
     category: STRIDE-I
@@ -404,6 +405,10 @@ decisions:
     模型金鑰只送到操作者以 VIBEAUDIT_MODEL_CREDENTIAL_ORIGINS 綁定的 origin，loopback 也不例外；請求本文無法改變金鑰的去向
     （2026-10-06，@chinchiang 確認保留此行為變更）。
   - 證據雜湊用於一致性檢查，不宣稱法證級不可竄改。
+  - >-
+    接受三條威脅的殘留（2026-10-06，@chinchiang 決定）：t-redaction-gap（快照遮罩是啟發式，無前綴的高熵 token 無法可靠辨識）、
+    t-container-escape（已要求 seccomp，但沒有自訂 seccomp／AppArmor profile 或 userns，kernel 漏洞仍可逃逸）、
+    t-supply-chain（工具映像的 Python lock 沒有 hash、apt-get 未釘版、Dockerfile 的 BASE_IMAGE 由操作者提供）。
   - >-
     c-test-designer 的致命三要素以 external_comms 切腳（2026-10-06，@chinchiang 決定）。理由：模型設計的請求只能送往操作者
     明列的 origin 與 IP，method/path（含 query）須完全符合 allowed_requests；POST 除 fixture profile 外一律 blocked；header 值限
