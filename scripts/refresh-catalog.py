@@ -75,6 +75,9 @@ def write_json(path, value):
 
 def fetch(item):
     name, spec = item
+    # urlopen also follows file:// and ftp://; every catalog source is a fixed HTTPS URL.
+    if not spec["url"].startswith("https://"):
+        raise ValueError(f"Catalog source must be an HTTPS URL: {name}")
     request = Request(spec["url"], headers={"User-Agent": "VibeAudit-CatalogIngest/0.1"})
     with urlopen(request, timeout=45) as response:
         data = response.read(10_000_001)

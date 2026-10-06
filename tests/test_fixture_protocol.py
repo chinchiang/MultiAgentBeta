@@ -33,7 +33,9 @@ def bound_case(profile, *, logout=False):
     return case
 
 
-def manifest(origin, case):
+def manifest(origin, case, monkeypatch):
+    # Fixture identities' credentials are bound to the fixture target, as an operator binds real test accounts.
+    monkeypatch.setenv("VIBEAUDIT_TARGET_CREDENTIAL_ORIGINS", ",".join(f"{name}={origin}" for name in ("VIBEAUDIT_FIXTURE_A", "VIBEAUDIT_FIXTURE_B")))
     return {"run_id": uuid.uuid4().hex, "mode": "live", "target_url": origin,
         "allowed_target_ips": ["127.0.0.1"], "allowed_requests": case["allowed_requests"],
         "budget": {"max_requests": 100, "max_seconds": 600},
@@ -51,7 +53,7 @@ async def test_real_ai_reset_tool_sink_five_trials(tmp_path, monkeypatch, mode, 
         hooks.append(ctx)
     try:
         with RunningFixture([sys.executable, str(FIXTURES / "ai-agent/server.py"), "--mode", mode, "--port", "0"]) as target:
-            result = await run_fixture_case(runtime, manifest(target.origin, case), case,
+            result = await run_fixture_case(runtime, manifest(target.origin, case, monkeypatch), case,
                 fixture_profile="synthetic-ai-v1", cancel_event=asyncio.Event(), request_hook=hook)
             assert result["status"] == expected, result
             assert result["cleanup_confirmed"] is True
@@ -71,7 +73,7 @@ async def test_real_ai_reset_tool_sink_five_trials(tmp_path, monkeypatch, mode, 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode,expected", [("vulnerable", "fail"), ("fixed", "pass")])
-async def test_real_login_logout_session_held_by_supervisor(tmp_path, mode, expected):
+async def test_real_login_logout_session_held_by_supervisor(tmp_path, monkeypatch, mode, expected):
     node = node_runtime()
     if not node:
         pytest.skip("Node24 is required for the explicit Web fixture integration")
@@ -83,7 +85,7 @@ async def test_real_login_logout_session_held_by_supervisor(tmp_path, mode, expe
         return None
     try:
         with RunningFixture([node, str(FIXTURES / "web-api/server.ts"), "--mode", mode, "--port", "0"]) as target:
-            scope = manifest(target.origin, case)
+            scope = manifest(target.origin, case, monkeypatch)
             scope["auth_profiles"] = []
             result = await run_fixture_case(runtime, scope, case, fixture_profile="synthetic-web-v1",
                 cancel_event=asyncio.Event(), request_hook=hook)
@@ -140,7 +142,7 @@ async def test_observed_violation_survives_an_unconfirmed_cleanup(tmp_path, monk
     async def hook(**ctx): pass
     try:
         with RunningFixture([sys.executable, str(FIXTURES/"ai-agent/server.py"), "--mode", "vulnerable", "--port", "0"]) as target:
-            scope = manifest(target.origin, c)
+            scope = manifest(target.origin, c, monkeypatch)
             scope["auth_profiles"].append({"id":"tenant-b", "credential_env":"VIBEAUDIT_FIXTURE_B", "header":"Authorization", "scheme":"Bearer"})
             result = await run_fixture_case(runtime, scope, c, fixture_profile="local-rag-unconfirmed",
                 cancel_event=asyncio.Event(), request_hook=hook)
@@ -173,7 +175,7 @@ async def test_generic_profile_runs_real_cross_tenant_rag_with_cleanup(tmp_path,
     async def hook(**ctx): pass
     try:
         with RunningFixture([sys.executable, str(FIXTURES/"ai-agent/server.py"), "--mode", mode, "--port", "0"]) as target:
-            scope = manifest(target.origin, c)
+            scope = manifest(target.origin, c, monkeypatch)
             scope["auth_profiles"].append({"id":"tenant-b", "credential_env":"VIBEAUDIT_FIXTURE_B", "header":"Authorization", "scheme":"Bearer"})
             result = await run_fixture_case(runtime, scope, c, fixture_profile="local-rag-contract",
                 cancel_event=asyncio.Event(), request_hook=hook)

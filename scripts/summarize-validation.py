@@ -7,7 +7,11 @@ import xml.etree.ElementTree as ET
 root = Path(__file__).resolve().parents[1]
 reports = []
 for path in sorted((root/"docs").glob("*.xml")):
-    doc = ET.parse(path).getroot()
+    data = path.read_bytes()
+    # JUnit receipts never need a DTD; refusing one rules out entity expansion in the stdlib parser.
+    if b"<!DOCTYPE" in data.upper() or b"<!ENTITY" in data.upper():
+        raise SystemExit(f"{path.name}: XML declarations are not accepted in a test receipt")
+    doc = ET.fromstring(data)
     suites = [doc] if doc.tag == "testsuite" else list(doc.findall("testsuite"))
     counts = {key:sum(int(s.get(key,0)) for s in suites) for key in ("tests","failures","errors","skipped")}
     reports.append({"file":path.relative_to(root).as_posix(),**counts,

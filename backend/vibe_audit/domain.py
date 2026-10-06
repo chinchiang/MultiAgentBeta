@@ -143,7 +143,7 @@ class RunInput(StrictModel):
         if {p.credential_env for p in self.models if p.credential_env} & {p.credential_env for p in self.auth_profiles}:
             raise ValueError("A credential cannot serve both a model and a test identity")
         for request in self.allowed_requests:
-            if set(request)-{"method","path"} or not isinstance(request.get("path"),str) or not request["path"].startswith("/") or request["path"].startswith("//") or any(c in request["path"] for c in "\r\n\\"):
+            if set(request)-{"method","path","model_body"} or not isinstance(request.get("model_body",False),bool) or not isinstance(request.get("path"),str) or not request["path"].startswith("/") or request["path"].startswith("//") or any(c in request["path"] for c in "\r\n\\"):
                 raise ValueError("Scope requires an exact relative HTTP path")
             if request.get("method") not in {"GET","POST","PUT","PATCH","DELETE","HEAD","OPTIONS"}:
                 raise ValueError("Scope requires an explicit HTTP method")

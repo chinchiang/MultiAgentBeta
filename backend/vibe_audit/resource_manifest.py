@@ -16,7 +16,7 @@ def file_hash(path: Path):
 
 def resource_manifest(config, tools):
     root=Path(__file__).resolve().parents[2]
-    rules={name:file_hash(root/"fixtures"/name) for name in ("semgrep-rules.yml","gitleaks.toml","osv-scanner.toml")}
+    rules={name:file_hash(root/"fixtures"/name) for name in ("semgrep-rules.yml","gitleaks.toml","gitleaks-default-rule-ids.txt","osv-scanner.toml")}
     result={"image_pins":config.get("image_pins",{}),"rules":rules,"offline_database":None}
     if "osv" in tools:
         directory=Path(config.get("offline_db_dir") or "__not_provisioned__")

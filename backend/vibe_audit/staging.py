@@ -35,8 +35,10 @@ def stage_source(source_path: str, private_root: str | Path, *, expected_snapsho
                  max_files: int = 20000, max_bytes: int = 128 * 1024 * 1024) -> dict:
     source = Path(source_path).absolute()
     private = Path(private_root).absolute()
-    if not source.is_dir() or not _safe_ancestors(source):
-        raise ValueError("Scanner source must be a real directory without link ancestors")
+    # The source-root check ran on the resolved path; a ".." here would be followed from whatever the link before it
+    # has become since, so only a path with no ".." is read (the API stores the resolved one).
+    if ".." in source.parts or not source.is_dir() or not _safe_ancestors(source):
+        raise ValueError("Scanner source must be a real directory without link ancestors or '..' components")
     private.mkdir(parents=True, exist_ok=True, mode=0o700)
     if not _safe_ancestors(private) or private == source or private.is_relative_to(source):
         raise ValueError("Private scanner staging must be outside the source tree")
@@ -131,6 +133,22 @@ def discard_staging(record: dict, private_root: str | Path) -> bool:
     if root.parent != Path(private_root).absolute() or not re.fullmatch(r"[0-9a-f]{32}", root.name) or _linklike(root):
         raise ValueError("Refusing to delete a path outside private scanner staging")
     return remove_private_tree(root)
+
+
+def staged_line_count(record: dict, path: str) -> int | None:
+    """Line count of one file of a verified staging copy; None when the record does not list it or it changed."""
+    entry = next((item for item in record["files"] if item["path"] == path), None)
+    if entry is None:
+        return None
+    try:
+        with os.fdopen(_open_regular(Path(record["path"]) / path), "rb") as handle:
+            content = handle.read(entry["bytes"] + 1)
+    except OSError:
+        return None
+    if hashlib.sha256(content).hexdigest() != entry["sha256"]:
+        return None
+    # A last line without a newline is still a line; one past a trailing newline is allowed too, as editors number it.
+    return content.count(b"\n") + 1
 
 
 def verify_staging(record: dict) -> bool:

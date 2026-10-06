@@ -59,16 +59,39 @@ def _safe_relative(value):
 SUPERVISOR_FRAME=64*1024*1024
 
 
+def supervisor_manifest(manifest):
+    """The supervisor's part of the run: scope, identities, budget and, by name only, the model credentials.
+
+    The names let adapters.shared_credentials refuse a test identity that is a model key at the last trusted
+    hop before the target; the values never reach the supervisor's environment (see _client_env)."""
+    narrow={k:manifest[k] for k in ("run_id","mode","target_url","allowed_target_ips","allowed_requests","auth_profiles","budget","deployment_id","deployment_header") if k in manifest}
+    narrow["models"]=[{"credential_env":p["credential_env"]} for p in manifest.get("models",[]) if isinstance(p,dict) and p.get("credential_env")]
+    return narrow
+
+
+def phase_scope(manifest,phase):
+    """A white-box task's supervisor sends nothing to a target, so it gets no target scope, identities or credentials."""
+    return manifest if phase=="blackbox" else {k:v for k,v in manifest.items() if k not in {"target_url","allowed_target_ips","allowed_requests","auth_profiles"}}
+
+
 def _client_env(manifest):
-    from .adapters import credential_env_allowed,shared_credentials
+    from .adapters import AdapterBlocked,TARGET_CREDENTIAL_ORIGINS_ENV,credential_env_allowed,shared_credentials,unbound_target_credentials
     from .worker_entry import clean_env
     result=clean_env()
-    # A model key must never reach the supervisor that talks to the target, even under a second name.
+    # A model key must never reach the supervisor that talks to the target, even under a second name;
+    # nor may a test credential the environment has not bound to this run's target.
     shared=set(shared_credentials(manifest))
+    try:
+        unbound=set(unbound_target_credentials(manifest))
+    except AdapterBlocked:
+        unbound={p.get("credential_env","") for p in manifest.get("auth_profiles",[])}
     for profile in manifest.get("auth_profiles",[]):
         key=profile.get("credential_env","")
-        if credential_env_allowed(key) and key in os.environ and key not in shared:
+        if credential_env_allowed(key) and key in os.environ and key not in shared and key not in unbound:
             result[key]=os.environ[key]
+    # The binding names target origins, so only a supervisor that sends as an identity gets it.
+    if manifest.get("auth_profiles") and TARGET_CREDENTIAL_ORIGINS_ENV in os.environ:
+        result[TARGET_CREDENTIAL_ORIGINS_ENV]=os.environ[TARGET_CREDENTIAL_ORIGINS_ENV]
     return result
 
 
@@ -162,7 +185,22 @@ def supervised_sequence(spec,result):
     observations=[{"id":step.get("id"),"status_code":record.get("status_code"),"body":record.get("body"),"complete":record.get("complete") is True,
                    "capture_success":record.get("capture_success") is True} for step,record in zip(steps,records)]
     status=result.get("status") if result.get("status") in {"completed","inconclusive","blocked","execution_error","outcome_unknown"} else "execution_error"
-    return {**supervised,"status":status,"reason":result.get("reason"),"observations":observations,"requests":len(records)}
+    reason=result.get("reason")
+    # A completed sequence is the supervisor's finding, not the worker's: every sealed step must have a complete answer
+    # that meets its expectation in the supervisor's records (the supervisor stops the sequence on any failed dispatch
+    # and on an unmet step), so a worker cannot pass a failed reset or cleanup.
+    if status=="completed" and any(_step_unmet(step,record) for step,record in zip(steps,records)):
+        status,reason="inconclusive","A sealed step's expected answer is not in the supervisor's records"
+    return {**supervised,"status":status,"reason":reason,"observations":observations,"requests":len(records)}
+
+
+def _step_unmet(step,record):
+    body=record.get("body") if isinstance(record.get("body"),str) else ""
+    # The supervisor records a dispatch it could not send or relay with complete=False, and stops the sequence there.
+    return (record.get("complete") is not True
+            or (step.get("expected_status") is not None and record.get("status_code")!=step["expected_status"])
+            or any(text not in body for text in step.get("required_text",[]))
+            or bool(step.get("capture_session")) and record.get("capture_success") is not True)
 
 
 def docker_command(*,prefix,image,name,phase,inputs,broker,runtime=HERE,source_dir=None,offline_db_dir=None):
@@ -178,7 +216,8 @@ def docker_command(*,prefix,image,name,phase,inputs,broker,runtime=HERE,source_d
           # Only the worker reads /out back, so a bounded tmpfs replaces a world-writable host directory.
           "--tmpfs","/out:rw,nosuid,nodev,noexec,size=64m,mode=1777",
           "--env","HOME=/tmp","--env","PYTHONDONTWRITEBYTECODE=1","--env","PROMPTFOO_DISABLE_TELEMETRY=1"]
-    for path,target,readonly in [(inputs,"/inputs",True),(broker,"/broker",True),(runtime,"/runtime",True)]:
+    # Only a black-box worker relays requests; a white-box scanner parsing a hostile repository has no broker socket.
+    for path,target,readonly in [(inputs,"/inputs",True),*([(broker,"/broker",True)] if phase=="blackbox" else []),(runtime,"/runtime",True)]:
         source=str(Path(path).resolve(strict=True))
         if any(c in source for c in ",\r\n\0"): raise WorkerBlocked("Unsupported bind mount path")
         argv += ["--mount",f"type=bind,source={source},target={target},bind-propagation=rprivate"+(",readonly,bind-recursive=readonly" if readonly else "")]
@@ -349,7 +388,8 @@ class WorkerRuntime:
             argv=docker_command(prefix=prefix,image=image,name=name,phase=spec["phase"],inputs=inputs,broker=broker,source_dir=spec.get("source_dir"),offline_db_dir=spec.get("offline_db_dir")) if self.backend=="docker" else [sys.executable,"-I",str(HERE/"worker_entry.py"),"worker",str(inputs/"_worker_task.json")]
             # Only the supervisor receives target credential references; the
             # worker task file contains cases/specification and relay access.
-            narrow={k:manifest[k] for k in ("run_id","mode","target_url","allowed_target_ips","allowed_requests","auth_profiles","budget","deployment_id","deployment_header") if k in manifest}
+            scope=phase_scope(manifest,spec["phase"])
+            narrow=supervisor_manifest(scope)
             child_cap={k:v for k,v in cap.items() if k!="renewal_token"}
             initial={"backend":self.backend,"spec":spec,"manifest":narrow,"capability":child_cap,"worker_id":worker_id,
                      "database_path":self.leases.database_path,"database_url":self.leases.database_url,"broker_token":secrets.token_urlsafe(32),
@@ -357,7 +397,7 @@ class WorkerRuntime:
                      "argv":argv,"docker_prefix":prefix,"container_name":name}
             options={"creationflags":0x08000200} if os.name=="nt" else {"start_new_session":True}
             proc=await asyncio.create_subprocess_exec(sys.executable,"-I",str(HERE/"worker_entry.py"),"supervise",stdin=asyncio.subprocess.PIPE,stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.PIPE,
-                                                       env=_client_env(manifest),limit=SUPERVISOR_FRAME+1,**options)
+                                                       env=_client_env(scope),limit=SUPERVISOR_FRAME+1,**options)
             self.active[cap["task_id"]]={"pid":proc.pid,"capability":cap,"work_dir":str(private)}
             async def send(value):
                 proc.stdin.write((json.dumps(value,separators=(",",":"))+"\n").encode());await proc.stdin.drain()
@@ -477,7 +517,7 @@ class WorkerRuntime:
         return supervised_verdict(case,await self.execute_tool({"operation":"http_case","tool_id":"http_case","cases":[case],"phase":"blackbox", "timeout_seconds":min(120,manifest.get("budget",{}).get("max_seconds",120))},manifest=manifest,cancel_event=cancel_event,request_hook=request_hook,lease_hook=lease_hook,repetition=repetition))
 
     async def run_scanner(self,scanner_id,source_dir,*,manifest,cancel_event,request_hook=None,lease_hook=None,image_pin=None,offline_db_dir=None):
-        from .sandbox import _parse
+        from .sandbox import _parse,osv_database_ids
         offline_db_dir=offline_db_dir or self.offline_db_dir
         async def deny_network(**kwargs):
             raise WorkerBlocked("White-box scanners cannot use target egress")
@@ -497,7 +537,8 @@ class WorkerRuntime:
         else: return {"status":"blocked","reason":"Unknown fixed white-box scanner","cleanup_confirmed":True}
         result=await self.execute_tool({"tool_id":scanner_id,"phase":"whitebox","source_dir":source_dir,"argv":argv,"input_files":files,"image_pin":image_pin,"offline_db_dir":offline_db_dir},manifest=manifest,cancel_event=cancel_event,request_hook=request_hook,lease_hook=lease_hook)
         if result.get("status")=="completed":
-            try: result["findings"],result["gaps"]=_parse(scanner_id,result.get("stdout","").encode(),result.get("exit_code"))
+            # The database was hash-checked against the run's tool manifest before this scan (service._scan_source).
+            try: result["findings"],result["gaps"]=_parse(scanner_id,result.get("stdout","").encode(),result.get("exit_code"),osv_database_ids(offline_db_dir) if scanner_id=="osv" else frozenset())
             except Exception: result.update(status="execution_error",reason="Scanner output schema or exit status invalid",findings=[])
         caveats=[gap for gap in result.get("gaps",[]) if gap.startswith("Offline OSV results depend")]
         result["limitations"]=caveats

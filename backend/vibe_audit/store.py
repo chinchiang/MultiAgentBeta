@@ -4,6 +4,7 @@ import json
 import os
 import re
 import sqlite3
+import stat
 import threading
 import uuid
 from contextlib import contextmanager
@@ -26,6 +27,22 @@ def scrub(value):
     return value
 
 
+def private_dirs(*paths):
+    """Runs, evidence and reports are readable only by the console's own account.
+
+    The HTTP session guards the API, but other local accounts are also adversaries: on POSIX the data
+    directories are owner-only, and a directory that cannot be made so stops the console from starting."""
+    if os.name != "posix":
+        return
+    for path in paths:
+        try:
+            os.chmod(path, 0o700)
+        except OSError:
+            pass
+        if stat.S_IMODE(os.stat(path).st_mode) & 0o077:
+            raise PermissionError(f"Data directory {path} is accessible to other local accounts; make it owner-only (chmod 700)")
+
+
 class RunNotFound(KeyError):
     """Only an unknown run is a 404; any other KeyError is a bug and must not read as one."""
 
@@ -35,9 +52,10 @@ class Store:
 
     def __init__(self, data_dir: str | Path, database_url: str | None = None):
         self.root = Path(data_dir).resolve()
-        self.root.mkdir(parents=True, exist_ok=True)
+        self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.artifacts = self.root / "artifacts"
-        self.artifacts.mkdir(exist_ok=True)
+        self.artifacts.mkdir(exist_ok=True, mode=0o700)
+        private_dirs(self.root, self.artifacts)
         self.lock = threading.RLock()
         self.postgres = bool(database_url)
         if database_url:
@@ -146,7 +164,7 @@ class Store:
         body = scrub({"run_id":run_id,"id":artifact_id,"producer":producer,"at":now(),"content":content})
         checksum = digest(body)
         path = self.artifacts / f"{artifact_id}.json"
-        with path.open("x", encoding="utf-8") as f:
+        with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w", encoding="utf-8") as f:
             json.dump(body,f,ensure_ascii=False,sort_keys=True)
         return {"id":artifact_id,"run_id":run_id,"producer":producer,"sha256":checksum,"filename":path.name}
 

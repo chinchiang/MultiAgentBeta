@@ -134,6 +134,14 @@ class Unusable(ValueError):
         self.status_code=status_code
 
 
+# What execute_case and evaluate_oracle read from a case (adapters.py), and what the sequence worker reads from a
+# step; worker_view passes nothing else.
+WORKER_CASE_FIELDS=("id","adapter","method","path","headers","body","identity","designed_by","side_effects","repetitions","oracle")
+# A sequence step's expected answer stays with the supervisor and the console (supervised_sequence): the worker
+# sends steps in order and stops when the relay refuses one.
+WORKER_STEP_FIELDS=("case_id","method","path","headers","identity","body")
+
+
 class Supervisor:
     def __init__(self,task):
         from lease import LeaseStore,canonical_hash
@@ -233,6 +241,46 @@ class Supervisor:
                     self.revoke_network("Durable lease authority unavailable")
                     return
 
+    def sealed_steps(self):
+        """The requests this task may send, in order, or None for a tool that chooses its own requests.
+
+        A request_sequence lists them. An http_case task sends each positive control and then its case, once (the
+        controller schedules every repetition as its own task), so its order and count are not the worker's choice."""
+        if self.spec.get("operation")=="request_sequence":
+            return self.spec.get("requests",[])
+        if self.spec.get("operation")=="http_case":
+            case=(self.spec.get("cases") or [{}])[0]
+            return [*[p for p in case.get("preconditions",[]) if isinstance(p,dict)],case]
+        return None
+
+    def worker_view(self):
+        """The part of an http_case or request_sequence the untrusted worker needs to send it and judge it.
+
+        The worker runs where a hostile target answers; it gets no title, control names or step labels, nothing it
+        would only pass on. An http_case keeps its oracle and control texts, since a pass needs the worker's verdict
+        and the supervisor's; a sequence worker only sends steps (the supervisor and console judge them) and gets the
+        case ID and each step's request, without its expected answer.
+        A tool task runs only operator-written cases and keeps its spec."""
+        operation=self.spec.get("operation")
+        if operation not in {"http_case","request_sequence"}:
+            return self.spec
+        def control(index,item):
+            return {**{k:item[k] for k in ("method","path","headers","identity","expected_status","required_text") if k in item},"name":f"control-{index}"}
+        cases=[{**{k:c[k] for k in WORKER_CASE_FIELDS if k in c},
+                "preconditions":[control(i,p) for i,p in enumerate([p for p in c.get("preconditions",[]) if isinstance(p,dict)],1)]}
+               for c in self.spec.get("cases",[])]
+        view={**self.spec,"cases":cases}
+        if operation=="request_sequence":
+            view["cases"]=[{"id":c.get("id")} for c in self.spec.get("cases",[])]
+            # supervised_sequence labels each record from the sealed steps, so the worker needs no label of its own.
+            view["requests"]=[{**{k:s[k] for k in WORKER_STEP_FIELDS if k in s},"id":f"step-{i}"} for i,s in enumerate(self.spec.get("requests",[]),1)]
+        return view
+
+    def child_task(self,endpoint):
+        """What the worker container reads from /inputs/_worker_task.json."""
+        return {"spec":self.worker_view(),"broker":endpoint,"broker_token":self.task["broker_token"] if endpoint else None,"backend":self.task["backend"],
+                "hard_deadline_unix":time.time()+self.spec["timeout_seconds"]}
+
     def allowed_request(self,request):
         from adapters import _prepare_request
         method=request.get("method")
@@ -246,8 +294,8 @@ class Supervisor:
             raise ValueError("Request has no bound case")
         identity=request.get("identity")
         step=None
-        if self.spec.get("operation")=="request_sequence":
-            steps=self.spec.get("requests",[])
+        steps=self.sealed_steps()
+        if steps is not None:
             if self.sequence_stopped: raise ValueError("Sequence stopped at an unmet prerequisite")
             if self.sequence>=len(steps): raise ValueError("Sequence exhausted")
             step=steps[self.sequence]
@@ -282,10 +330,19 @@ class Supervisor:
                     raise ValueError("Request body differs from its sealed case")
             elif step.get("body") is not None:
                 raise ValueError("Sealed request body is missing")
+        # The case and its positive controls are what the model wrote; fixture lifecycle steps come from the engine.
+        model_step=case.get("designed_by")=="model" and (self.spec.get("operation")!="request_sequence"
+            or step.get("id")=="case" or str(step.get("id","")).startswith("control:"))
+        if model_step and raw and not any(r.get("model_body") is True and (r.get("method","GET").upper(),r.get("path"))==(method,path)
+                                          for r in self.manifest.get("allowed_requests",[])):
+            raise ValueError("A model-written body goes only to an endpoint the operator marked model_body")
         # Transport-generated headers are not part of the reviewed request.
         headers=dict(step.get("headers",{}))
         if raw: headers["Content-Type"]="application/json"
-        prepared={"method":method,"path":path,"headers":headers,"body":None,"identity":identity}
+        # This is the last trusted hop before tb-target: model-written headers are checked here against the model
+        # vocabulary again, not only by the controller's case gate and the untrusted worker.
+        prepared={"method":method,"path":path,"headers":dict(sorted(headers.items())) if model_step else headers,"body":None,
+                  "identity":identity,"designed_by":"model" if model_step else None}
         transient=None
         if isinstance(identity,str) and identity.startswith("session:"):
             transient=self.sessions.get((case_id,identity[8:]))
@@ -385,7 +442,7 @@ class Supervisor:
                 if self.policy_blocked:
                     # Nothing more of this task goes to a deployment other than the declared one.
                     self.revoke_network(self.policy_blocked,revoke_lease=False)
-                if self.spec.get("operation")=="request_sequence": self.sequence_stopped=True
+                if self.sealed_steps() is not None: self.sequence_stopped=True
                 raise
             try:
                 capture=step.get("capture_session")
@@ -414,7 +471,7 @@ class Supervisor:
                 self.unknown_dispatch=True
                 self.revoke_network("Dispatched request has an unknown or invalid result")
                 raise
-            if self.spec.get("operation")=="request_sequence":
+            if self.sealed_steps() is not None:
                 unmet=((step.get("expected_status") is not None and result["status_code"]!=step["expected_status"])
                        or any(text not in result["body"] for text in step.get("required_text",[]))
                        or (step.get("capture_session") and not result.get("capture_success")))
@@ -460,10 +517,10 @@ class Supervisor:
         threading.Thread(target=self.read_controller,daemon=True).start()
         threading.Thread(target=self.guardian,daemon=True).start()
         try:
-            endpoint=self.start_broker()
-            child_task={"spec":self.spec,"broker":endpoint,"broker_token":self.task["broker_token"],"backend":self.task["backend"],"hard_deadline_unix":time.time()+self.spec["timeout_seconds"]}
+            # A white-box scanner sends nothing to a target, so its container gets no broker to ask.
+            endpoint=self.start_broker() if self.spec.get("phase")=="blackbox" else None
             child_file=Path(self.task["inputs_dir"])/"_worker_task.json"
-            child_file.write_text(json.dumps(child_task),encoding="utf-8");os.chmod(child_file,0o444)
+            child_file.write_text(json.dumps(self.child_task(endpoint)),encoding="utf-8");os.chmod(child_file,0o444)
         except Exception:
             # No worker or container exists yet, so cleanup is trivially confirmed and nothing was sent.
             try: self.lease.revoke(self.cap["id"],"Supervisor could not prepare the worker")
@@ -643,7 +700,8 @@ def container_worker(task):
             response=conn.getresponse();text=response.read(MAX_BODY+1).decode();conn.close()
             item={"id":step.get("id"),"status_code":response.status,"body":text,"complete":len(text.encode())<=MAX_BODY,"capture_success":response.getheader("X-Vibe-Capture-Success")=="true"}
             results.append(item)
-            if response.status==502 or (step.get("expected_status") is not None and response.status!=step["expected_status"]) or any(t not in text for t in step.get("required_text",[])):
+            # The supervisor stops the sequence at an unmet step and refuses the next request; the relay answers 502.
+            if response.status==502:
                 sequence_ok=False
                 break
         result={"status":"completed" if sequence_ok and len(results)==len(spec.get("requests",[])) else "inconclusive","observations":results,"requests":len(results),"exit_code":0,"stdout":"","stderr":"","artifacts":{}}
@@ -654,7 +712,7 @@ def container_worker(task):
             (out/"child_pid.txt").write_text(str(child.pid))
             time.sleep(120)
         elif action=="sleep": time.sleep(float(spec.get("sleep_seconds",120)))
-        result={"status":"completed","exit_code":0,"stdout":json.dumps({"pid":os.getpid(),"source_visible":Path("/src").exists(),"uid":os.getuid() if hasattr(os,"getuid") else None,"interfaces":[name for _,name in socket.if_nameindex()]}),"stderr":"","artifacts":{}}
+        result={"status":"completed","exit_code":0,"stdout":json.dumps({"pid":os.getpid(),"source_visible":Path("/src").exists(),"broker_offered":task.get("broker") is not None,"uid":os.getuid() if hasattr(os,"getuid") else None,"interfaces":[name for _,name in socket.if_nameindex()]}),"stderr":"","artifacts":{}}
     else:
         argv=[s.replace("{relay_origin}",relay).replace("/inputs/",str(writable)+os.sep) for s in spec["argv"]]
         if spec.get("tool_id")=="zap" and task["backend"]=="docker":

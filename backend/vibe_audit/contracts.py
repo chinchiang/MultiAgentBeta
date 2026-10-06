@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from pathlib import PurePosixPath
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -150,9 +150,13 @@ class ArchitectureProposal(Contract):
     gaps: list[str] = Field(default_factory=list, max_length=200)
 
 
+# A model writes these texts and the black-box worker holds them while a hostile target answers, so each is bounded.
+OracleText = Annotated[str, Field(min_length=1, max_length=120)]
+
+
 class CaseOracle(Contract):
     kind: Literal["deny_sensitive", "canary_absent", "no_unauthorized_commit"]
-    forbidden_text: list[str] = Field(default_factory=list, max_length=20)
+    forbidden_text: list[OracleText] = Field(default_factory=list, max_length=20)
     allowed_statuses: list[int] = Field(default_factory=list, max_length=20)
     required_observations: list[str] = Field(min_length=1, max_length=20)
     expected_role: str | None = Field(default=None, max_length=100)
@@ -165,7 +169,7 @@ class CaseControl(Contract):
     path: str = Field(pattern=r"^/", max_length=2000)
     identity: str | None = Field(default=None, max_length=100)
     expected_status: int = Field(ge=100, le=599)
-    required_text: list[str] = Field(default_factory=list, max_length=20)
+    required_text: list[OracleText] = Field(default_factory=list, max_length=20)
     headers: dict[str, str] = Field(default_factory=dict, max_length=24)
 
 
@@ -197,6 +201,11 @@ class CaseDesignProposal(Contract):
 class OperatorControl(CaseControl):
     model_config = ConfigDict(extra="allow")
     method: Literal["GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"] = "GET"
+    required_text: list[str] = Field(default_factory=list, max_length=20)
+
+
+class OperatorOracle(CaseOracle):
+    forbidden_text: list[str] = Field(default_factory=list, max_length=20)
 
 
 class OperatorCase(CaseProposal):
@@ -205,6 +214,7 @@ class OperatorCase(CaseProposal):
     adapter: Literal["http", "ai_http", "demo", "fixture", "zap", "schemathesis", "playwright", "promptfoo", "pyrit"]
     method: Literal["GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"] = "GET"
     preconditions: list[str | OperatorControl] = Field(default_factory=list, max_length=10)
+    oracle: OperatorOracle
 
 
 class ReportOrderProposal(Contract):
@@ -213,7 +223,8 @@ class ReportOrderProposal(Contract):
 
 class CommanderProposal(Contract):
     reviewer_order: list[str] = Field(min_length=3, max_length=3)
-    focus: list[str] = Field(default_factory=list, max_length=30)
+    # Model-derived additions to the core questions: short, and passed on only as labelled untrusted data.
+    focus: list[Annotated[str, Field(max_length=300)]] = Field(default_factory=list, max_length=30)
     rationale: str = Field(min_length=1, max_length=3000)
 
 

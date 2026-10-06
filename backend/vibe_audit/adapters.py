@@ -34,7 +34,7 @@ RESERVED_ENV = frozenset({
     "VIBEAUDIT_UI_ORIGINS", "VIBEAUDIT_RUNTIME_CONFIG", "VIBEAUDIT_FIXTURE_CONFIG", "VIBEAUDIT_CATALOG_ROOT",
     "VIBEAUDIT_PYTHON", "VIBEAUDIT_RELAY_ORIGIN", "VIBEAUDIT_POSTGRES_PASSWORD", "VIBEAUDIT_POSTGRES_IMAGE",
     "VIBEAUDIT_TEST_DATABASE_URL", "VIBEAUDIT_TEST_POSTGRES", "VIBEAUDIT_TEST_RUNTIME_CONFIG",
-    "VIBEAUDIT_MODEL_CREDENTIAL_ORIGINS",
+    "VIBEAUDIT_MODEL_CREDENTIAL_ORIGINS", "VIBEAUDIT_TARGET_CREDENTIAL_ORIGINS",
 })
 
 
@@ -59,16 +59,69 @@ def credential_env_allowed(name, environ=None):
     return not any(environ.get(key) == value for key in RESERVED_ENV)
 
 
+CREDENTIAL_ORIGINS_ENV = "VIBEAUDIT_MODEL_CREDENTIAL_ORIGINS"
+# The vendor keys the workbench pre-fills go to their vendors; the operator's environment can rebind them.
+DEFAULT_CREDENTIAL_ORIGINS = {"VIBEAUDIT_OPENAI_API_KEY": "https://api.openai.com",
+                              "VIBEAUDIT_ANTHROPIC_API_KEY": "https://api.anthropic.com"}
+
+
+def bound_model_credentials(environ=None):
+    """Every variable the operator's environment binds as a model key, whether or not this run's models use it.
+
+    Read from the names alone, so a malformed binding (which providers.credential_origins refuses) still counts.
+    The supervisor imports this module on its own, without the package: nothing here may import providers.
+    """
+    environ = os.environ if environ is None else environ
+    return set(DEFAULT_CREDENTIAL_ORIGINS) | set(re.findall(r"(VIBEAUDIT_[A-Z0-9_]+)\s*=", environ.get(CREDENTIAL_ORIGINS_ENV, "")))
+
+
+TARGET_CREDENTIAL_ORIGINS_ENV = "VIBEAUDIT_TARGET_CREDENTIAL_ORIGINS"
+
+
+def target_credential_origins(environ=None):
+    """The target origins each test identity credential may be sent to, as the operator's environment states them.
+
+    A run names its own target, so without this a session holder could send any configured identity's credential
+    to a host of their choosing; model keys have the same rule (VIBEAUDIT_MODEL_CREDENTIAL_ORIGINS). Format:
+    NAME=origin entries, comma-separated; a name may repeat for several origins. Nothing is bound by default.
+    """
+    environ = os.environ if environ is None else environ
+    bound = {}
+    for entry in filter(None, (item.strip() for item in environ.get(TARGET_CREDENTIAL_ORIGINS_ENV, "").split(","))):
+        name, _, value = entry.partition("=")
+        name = name.strip()
+        try:
+            if not _CREDENTIAL_ENV.fullmatch(name) or name in RESERVED_ENV:
+                raise AdapterBlocked("")
+            origin = _origin({"target_url": value.strip()})
+        except AdapterBlocked:
+            raise AdapterBlocked(f"{TARGET_CREDENTIAL_ORIGINS_ENV} entries must be VIBEAUDIT_NAME=scheme://host[:port]") from None
+        bound.setdefault(name, set()).add(origin)
+    return bound
+
+
+def unbound_target_credentials(manifest, environ=None):
+    """Test identity credentials the environment has not bound to this run's target origin."""
+    if not manifest.get("auth_profiles"):
+        return []
+    origin = _origin(manifest)
+    bound = target_credential_origins(environ)
+    return sorted({p.get("credential_env", "") for p in manifest.get("auth_profiles", [])
+                   if origin not in bound.get(p.get("credential_env", ""), set())})
+
+
 def shared_credentials(manifest, environ=None):
     """Test identities whose credential is also a model credential, by variable name or by value.
 
-    Either way the target would receive a model key, or the model provider a target credential.
+    Either way the target would receive a model key, or the model provider a target credential. Model
+    credentials are this run's model profiles and every key the environment binds to model origins: a run
+    that leaves a bound key out of its models must still not hand it to the target.
     """
     environ = os.environ if environ is None else environ
     def names(key):
         return {p.get("credential_env") for p in manifest.get(key) or [] if isinstance(p, dict)
                 and isinstance(p.get("credential_env"), str) and p.get("credential_env")}
-    model_names = names("models")
+    model_names = names("models") | bound_model_credentials(environ)
     model_values = {environ.get(name) for name in model_names} - {None, ""}
     return sorted(name for name in names("auth_profiles")
                   if name in model_names or environ.get(name) in model_values)
@@ -86,7 +139,11 @@ _FORBIDDEN_HEADERS = {
 # The worker adds these to reach its relay; a sealed case cannot carry them.
 RELAY_HEADERS = frozenset({"x-vibe-case", "x-vibe-identity", "x-schemathesis-testcaseid"})
 # Model-designed cases need no custom routing, tenant or identity signal; operators write those cases.
-MODEL_CASE_HEADERS = frozenset({"accept", "accept-language", "content-type", "if-match", "if-none-match", "x-requested-with"})
+# Each name has one spelling and the request sends them in one order: letter case, a repeat under another
+# case or the order of names would otherwise be choices the model makes, and every choice can encode text.
+MODEL_CASE_HEADER_NAMES = {"accept": "Accept", "accept-language": "Accept-Language", "content-type": "Content-Type",
+                           "if-match": "If-Match", "if-none-match": "If-None-Match", "x-requested-with": "X-Requested-With"}
+MODEL_CASE_HEADERS = frozenset(MODEL_CASE_HEADER_NAMES)
 # A model reads the snapshot and operator notes, so a free-form header value could carry them to the target.
 # Its header values come from small fixed vocabularies instead, one value per header with no list or q parameter:
 # every extra choice is room to encode snapshot text. Operator-written cases keep free values.
@@ -105,12 +162,30 @@ def _one_of(options):
 _MODEL_HEADER_VALUES = {
     "accept": _one_of(_MEDIA_TYPES),
     "accept-language": _one_of(_LANGUAGES),
-    "content-type": re.compile(r"(?:application/json|application/x-www-form-urlencoded|application/xml|text/plain)(?:; ?charset=utf-8)?"),
+    # One spelling of the charset parameter: ";charset" and "; charset" would be two choices for the same meaning.
+    "content-type": re.compile(r"(?:application/json|application/x-www-form-urlencoded|application/xml|text/plain)(?:; charset=utf-8)?"),
     # The model never sees a target response, so it holds no real entity tag: only the wildcard means anything.
     "if-match": re.compile(r"\*"),
     "if-none-match": re.compile(r"\*"),
     "x-requested-with": re.compile(r"XMLHttpRequest"),
 }
+
+
+def canonical_model_headers(headers):
+    """A model-designed header map with each name in its one spelling and in sorted order.
+
+    Names that are the same once letter case is ignored are a repeat, not two headers: they raise ValueError.
+    Names outside the model vocabulary keep their spelling, and case_headers_allowed rejects them.
+    """
+    if not isinstance(headers, dict):
+        return headers
+    out = {}
+    for name, value in headers.items():
+        key = MODEL_CASE_HEADER_NAMES.get(name.lower(), name) if isinstance(name, str) else name
+        if key in out:
+            raise ValueError("A model-designed case repeats a header name")
+        out[key] = value
+    return {name: out[name] for name in sorted(out)}
 
 
 def case_headers_allowed(headers, *, model_designed=False, relay=False):
@@ -119,13 +194,16 @@ def case_headers_allowed(headers, *, model_designed=False, relay=False):
         return True
     if not isinstance(headers, dict) or len(headers) > 24:
         return False
+    if model_designed and list(headers) != sorted(headers):
+        return False
     def allowed(name, value):
         lower = name.lower()
         if lower in RELAY_HEADERS:
             return relay
         if not model_designed:
             return lower not in _FORBIDDEN_HEADERS
-        return lower in MODEL_CASE_HEADERS and bool(_MODEL_HEADER_VALUES[lower].fullmatch(value))
+        return (MODEL_CASE_HEADER_NAMES.get(lower) == name
+                and bool(_MODEL_HEADER_VALUES[lower].fullmatch(value)))
     return all(isinstance(name, str) and _HEADER_NAME.fullmatch(name)
                and isinstance(value, str) and len(value) <= 4096 and all(32 <= ord(c) <= 126 for c in value)
                and allowed(name, value)
@@ -317,6 +395,8 @@ def _prepare_request(manifest, case):
     supplied = case.get("headers") or {}
     if not case_headers_allowed(supplied, model_designed=case.get("designed_by") == "model", relay=manifest.get("relay") is True):
         raise AdapterBlocked("Case contains an unsupported, routing or credential-bearing request header.")
+    # A supplied Accept takes the default's place, so an explicit application/json and none at all look the same on the
+    # wire; a model's other names follow in sorted order (case_headers_allowed), never in an order the model chose.
     headers.update(supplied)
     secrets = []
     identity = case.get("identity")
@@ -333,6 +413,9 @@ def _prepare_request(manifest, case):
             raise AdapterBlocked("Authentication credential is missing or invalid.")
         if env_name in shared_credentials(manifest):
             raise AdapterBlocked("A test identity credential cannot also be a model credential.")
+        # The last trusted hop checks the binding again: the run, not the environment, named this target.
+        if _origin(manifest) not in target_credential_origins().get(env_name, set()):
+            raise AdapterBlocked(f"{env_name} is not bound to this target; bind test credentials to their origins in {TARGET_CREDENTIAL_ORIGINS_ENV}.")
         header = profile.get("header", "Authorization")
         scheme = profile.get("scheme", "Bearer")
         if header not in {"Authorization", "X-API-Key"} or scheme not in {"Bearer", "", "Basic"}:
