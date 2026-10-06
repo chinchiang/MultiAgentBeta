@@ -124,7 +124,7 @@ def test_postgres_claim_budget_and_durable_journal():
     finally:store.close()
 
 
-@pytest.mark.parametrize("server,client",[("SQL_ASCII","ascii"),("UTF8","ascii")])
+@pytest.mark.parametrize("server,client",[("SQL_ASCII","ascii"),("UTF8","ascii"),("SQL_ASCII","utf-8")])
 def test_postgres_lease_store_refuses_a_non_utf8_database(monkeypatch,server,client):
     import psycopg
     closed=[]

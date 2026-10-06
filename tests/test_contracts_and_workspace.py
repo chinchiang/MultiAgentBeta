@@ -367,7 +367,7 @@ async def test_postgres_checkpoints_and_resume_do_not_duplicate_executions(tmp_p
     store.close()
 
 
-@pytest.mark.parametrize("server,client",[("SQL_ASCII","ascii"),("UTF8","ascii")])
+@pytest.mark.parametrize("server,client",[("SQL_ASCII","ascii"),("UTF8","ascii"),("SQL_ASCII","utf-8")])
 def test_store_refuses_a_non_utf8_postgres_database(tmp_path,monkeypatch,server,client):
     import psycopg
     closed=[]

@@ -491,8 +491,8 @@ async def test_retry_policy_denial_retains_previous_billed_usage(profile, policy
     assert error.value.usage["model_calls"] == len(calls) == 1
 
 
-# Ids are positional so that test receipts (JUnit names) never spell out a synthetic credential.
-# The same applies to every parametrize below and in test_engine.py whose values look like credentials.
+# Explicit ids keep test receipts (JUnit names) from spelling out a synthetic credential;
+# the same applies to every parametrize below and in test_engine.py whose values look like credentials.
 SECRET_FORMATS = [
     "DATABASE_URL = postgres://app:synthetic-secret@db:5432/app",
     'uri = "mongodb+srv://app:synthetic-secret@cluster0.example.net/db"',
