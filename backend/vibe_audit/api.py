@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
+import math
 import os
 import re
 import secrets
 import time
+from collections import Counter, deque
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from pydantic import ValidationError
 
@@ -27,7 +30,26 @@ LIMITATIONS=[
     "Local-only model mode currently requires loopback IP endpoints; a local proxy's upstream behavior is outside this process's control.",
 ]
 SESSION_SECONDS=28800
+SESSION_IDLE_SECONDS=3600
+MAX_SESSIONS=8
+# A wrong startup token costs a guess: at most this many per window, after which /api/session answers 429.
+TOKEN_FAILURE_LIMIT,TOKEN_FAILURE_WINDOW=10,60
 SECURITY_HEADERS={"X-Content-Type-Options":"nosniff","Referrer-Policy":"no-referrer","X-Frame-Options":"DENY","Cache-Control":"no-store","Content-Security-Policy":"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'"}
+
+
+def clock():
+    """Session timing; tests replace this, not time.monotonic, which the event loop also reads."""
+    return time.monotonic()
+
+
+def startup_token_strong(token):
+    """At least 96 bits by the token's own character frequencies, eight distinct characters and no repeating pattern.
+
+    A length and character-set check alone accepts 32 copies of one letter."""
+    counts=Counter(token)
+    bits=-sum(count*math.log2(count/len(token)) for count in counts.values())
+    periodic=any(token==(token[:k]*(len(token)//k+1))[:len(token)] for k in range(1,len(token)//2+1))
+    return len(counts)>=8 and bits>=96 and not periodic
 
 
 def create_app(data_dir=None, database_url=None, testing=False, session_token=None):
@@ -35,11 +57,14 @@ def create_app(data_dir=None, database_url=None, testing=False, session_token=No
     session_token=session_token or os.getenv("VIBEAUDIT_SESSION_TOKEN") or secrets.token_urlsafe(32)
     if not re.fullmatch(r"[A-Za-z0-9_-]{32,256}",session_token):
         raise ValueError("VIBEAUDIT_SESSION_TOKEN must be 32-256 URL-safe characters (A-Z a-z 0-9 _ -)")
+    if not startup_token_strong(session_token):
+        raise ValueError("VIBEAUDIT_SESSION_TOKEN is too predictable; generate one with: python -c \"import secrets; print(secrets.token_urlsafe(32))\"")
     data_dir=data_dir or os.getenv("VIBEAUDIT_DATA_DIR",str(ROOT/".data"))
     database_url=database_url or os.getenv("VIBEAUDIT_DATABASE_URL")
     store=Store(data_dir,database_url)
     engine=Engine(store,database_url)
     sessions={}
+    token_failures=deque()
     allowed_origins={"http://127.0.0.1:8000","http://localhost:8000","http://[::1]:8000"}
     allowed_origins|={s.rstrip("/") for s in os.getenv("VIBEAUDIT_UI_ORIGINS","").split(",") if s}
     if testing:
@@ -64,14 +89,16 @@ def create_app(data_dir=None, database_url=None, testing=False, session_token=No
     app.state.store=store
     app.state.engine=engine
     app.state.session_token=session_token
-    from .workspace_api import workspace_router
-    app.include_router(workspace_router(store,engine,source_roots))
+    app.state.sessions=sessions
 
     def current_session(request):
         # Cookies are not isolated by port, so any service on this host that the browser visits receives
         # this one. The CSRF token stays in the page's port-scoped storage: every request needs both.
-        session=sessions.get(request.cookies.get("vibeaudit_session",""))
-        if not session or session["expires"]<time.monotonic():
+        sid=request.cookies.get("vibeaudit_session","")
+        session=sessions.get(sid)
+        moment=clock()
+        if not session or session["expires"]<moment or session["last_seen"]+SESSION_IDLE_SECONDS<moment:
+            sessions.pop(sid,None)
             return None
         return session
 
@@ -110,6 +137,22 @@ def create_app(data_dir=None, database_url=None, testing=False, session_token=No
                 return JSONResponse({"detail":"CSRF token required"},status_code=403)
         return None
 
+    def require_session(request:Request):
+        """The routes' own check, independent of the middleware's path-prefix test: a route the middleware
+        does not cover, or a router mounted elsewhere, still needs the session cookie and its CSRF token."""
+        session=current_session(request)
+        if not session or not csrf_matches(request,session):
+            raise HTTPException(401,"Local session required")
+        session["last_seen"]=clock()
+        request.state.session=session
+        # Audit records name the session that acted, by a fingerprint that cannot be replayed as a cookie.
+        request.state.actor="local_operator:"+session["fingerprint"]
+        return session
+
+    api=APIRouter(prefix="/api",dependencies=[Depends(require_session)])
+    from .workspace_api import workspace_router
+    app.include_router(workspace_router(store,engine,source_roots,session=require_session))
+
     @app.middleware("http")
     async def security(request:Request,call_next):
         response=await guard(request)
@@ -139,20 +182,47 @@ def create_app(data_dir=None, database_url=None, testing=False, session_token=No
             # A reloaded page proves the session with its stored CSRF token; the cookie alone never yields it.
             session=current_session(request)
             if session and csrf_matches(request,session):
+                session["last_seen"]=clock()
                 return {"csrf_token":session["csrf"],"mode":"local","limitations":LIMITATIONS}
+        moment=clock()
+        while token_failures and token_failures[0]<moment-TOKEN_FAILURE_WINDOW:
+            token_failures.popleft()
+        if len(token_failures)>=TOKEN_FAILURE_LIMIT:
+            return JSONResponse({"detail":"Too many startup token attempts; wait a minute and open the printed URL again"},status_code=429)
         if not secrets.compare_digest(startup.encode(),session_token.encode()):
+            if startup:
+                token_failures.append(moment)
             return JSONResponse({"detail":"Startup token required: open the URL printed when the local service started"},status_code=401)
-        moment=time.monotonic()
-        for sid in [sid for sid,entry in sessions.items() if entry["expires"]<moment]:
+        for sid in [sid for sid,entry in sessions.items() if entry["expires"]<moment or entry["last_seen"]+SESSION_IDLE_SECONDS<moment]:
             del sessions[sid]
         sessions.pop(request.cookies.get("vibeaudit_session",""),None)
+        # The startup token can open sessions until the process restarts, but never more than a few at once.
+        while len(sessions)>=MAX_SESSIONS:
+            del sessions[min(sessions,key=lambda key:sessions[key]["last_seen"])]
         sid=secrets.token_urlsafe(32)
-        sessions[sid]={"csrf":secrets.token_urlsafe(32),"expires":moment+SESSION_SECONDS}
+        sessions[sid]={"csrf":secrets.token_urlsafe(32),"expires":moment+SESSION_SECONDS,"last_seen":moment,
+                       "fingerprint":hashlib.sha256(sid.encode()).hexdigest()[:12]}
         response=JSONResponse({"csrf_token":sessions[sid]["csrf"],"mode":"local","limitations":LIMITATIONS})
         response.set_cookie("vibeaudit_session",sid,httponly=True,samesite="strict",max_age=SESSION_SECONDS)
         return response
 
-    @app.get("/api/capabilities")
+    @api.post("/session/logout")
+    async def logout(request:Request):
+        """End this session, or with {"all": true} every session; the startup token stays valid until restart."""
+        raw=await request.body()
+        try:
+            body=json.loads(raw) if raw else {}
+        except ValueError:
+            body={}
+        if isinstance(body,dict) and body.get("all") is True:
+            sessions.clear()
+        else:
+            sessions.pop(request.cookies.get("vibeaudit_session",""),None)
+        response=JSONResponse({"ended":"all" if isinstance(body,dict) and body.get("all") is True else "this"})
+        response.delete_cookie("vibeaudit_session")
+        return response
+
+    @api.get("/capabilities")
     async def capabilities(profile: str = "default"):
         # The inventory must describe the runtime profile a run may actually configure,
         # not permanently the default one; an unprovisioned name reports unavailable.
@@ -179,12 +249,12 @@ def create_app(data_dir=None, database_url=None, testing=False, session_token=No
                 worker.leases.close()
         return {"tools":tools,"runtime":runtime,"limitations":LIMITATIONS}
 
-    @app.get("/api/runs")
+    @api.get("/runs")
     async def list_runs():
         # Inventory excludes large snapshots, which stay in the protected evidence service.
         return {"runs":store.list()}
 
-    @app.post("/api/runs",status_code=201)
+    @api.post("/runs",status_code=201)
     async def create_run(data:RunInput):
         if data.mode=="live":
             path=Path(data.source_path).resolve()
@@ -192,23 +262,35 @@ def create_app(data_dir=None, database_url=None, testing=False, session_token=No
                 raise HTTPException(403,"Source directory is outside configured VIBEAUDIT_SOURCE_ROOTS")
         return engine.create(data)
 
-    @app.get("/api/runs/{run_id}")
+    @api.get("/runs/{run_id}")
     async def get_run(run_id:str):
         return store.get(run_id)
 
-    @app.post("/api/runs/{run_id}/start")
+    @api.post("/runs/{run_id}/start")
     async def start(run_id:str):
         return engine.start(run_id)
 
-    @app.post("/api/runs/{run_id}/cancel")
+    @api.post("/runs/{run_id}/cancel")
     async def cancel(run_id:str):
         return engine.cancel(run_id)
 
-    @app.post("/api/runs/{run_id}/resume")
+    @api.post("/runs/{run_id}/resume")
     async def resume(run_id:str):
         return engine.start(run_id,resume=True)
 
-    @app.get("/api/runs/{run_id}/events")
+    @api.post("/runs/{run_id}/approve-cases")
+    async def approve_cases(run_id:str,request:Request):
+        """The operator approves the exact sealed case set (its gate receipt) the workbench showed."""
+        try:
+            body=await request.json()
+            receipt=body["receipt"] if isinstance(body,dict) else None
+        except (KeyError,TypeError,ValueError):
+            receipt=None
+        if not isinstance(receipt,str):
+            raise HTTPException(422,"Approve with the receipt of the cases you reviewed")
+        return engine.approve_cases(run_id,receipt,request.state.actor)
+
+    @api.get("/runs/{run_id}/events")
     async def events(run_id:str,request:Request):
         store.get(run_id)
         try:
@@ -218,6 +300,10 @@ def create_app(data_dir=None, database_url=None, testing=False, session_token=No
         async def stream():
             nonlocal cursor
             while not await request.is_disconnected():
+                # A session that ended (logout, idle or absolute expiry) stops receiving progress.
+                if current_session(request) is None:
+                    yield "event: expired\ndata: {}\n\n"
+                    return
                 run=store.get(run_id)
                 for event in run["events"]:
                     if event["seq"]>cursor:
@@ -231,7 +317,7 @@ def create_app(data_dir=None, database_url=None, testing=False, session_token=No
                 await asyncio.sleep(.5)
         return StreamingResponse(stream(),media_type="text/event-stream")
 
-    @app.get("/api/runs/{run_id}/evidence/{artifact_id}")
+    @api.get("/runs/{run_id}/evidence/{artifact_id}")
     async def evidence(run_id:str,artifact_id:str):
         run=store.get(run_id)
         record=next((a for a in run["artifacts"] if a["id"]==artifact_id),None)
@@ -242,7 +328,7 @@ def create_app(data_dir=None, database_url=None, testing=False, session_token=No
         except (ValueError,OSError):
             raise HTTPException(409,"Evidence integrity check failed") from None
 
-    @app.get("/api/runs/{run_id}/report")
+    @api.get("/runs/{run_id}/report")
     async def report(run_id:str,format:str="json"):
         run=store.get(run_id)
         for artifact in run["artifacts"]:
@@ -258,7 +344,7 @@ def create_app(data_dir=None, database_url=None, testing=False, session_token=No
             raise HTTPException(400,"Choose json, markdown or sarif")
         return run
 
-    @app.post("/api/models/probe")
+    @api.post("/models/probe")
     async def model_probe(request:Request):
         from .providers import probe_model,ProviderError
         try:
@@ -280,6 +366,8 @@ def create_app(data_dir=None, database_url=None, testing=False, session_token=No
             return await probe_model(profile,policy)
         except ProviderError as exc:
             return JSONResponse({"available":False,"status":"blocked","code":exc.code,"detail":str(exc),"usage":exc.usage},status_code=409)
+
+    app.include_router(api)
 
     @app.get("/{path:path}")
     async def frontend(path:str):

@@ -86,7 +86,11 @@ _FORBIDDEN_HEADERS = {
 # The worker adds these to reach its relay; a sealed case cannot carry them.
 RELAY_HEADERS = frozenset({"x-vibe-case", "x-vibe-identity", "x-schemathesis-testcaseid"})
 # Model-designed cases need no custom routing, tenant or identity signal; operators write those cases.
-MODEL_CASE_HEADERS = frozenset({"accept", "accept-language", "content-type", "if-match", "if-none-match", "x-requested-with"})
+# Each name has one spelling and the request sends them in one order: letter case, a repeat under another
+# case or the order of names would otherwise be choices the model makes, and every choice can encode text.
+MODEL_CASE_HEADER_NAMES = {"accept": "Accept", "accept-language": "Accept-Language", "content-type": "Content-Type",
+                           "if-match": "If-Match", "if-none-match": "If-None-Match", "x-requested-with": "X-Requested-With"}
+MODEL_CASE_HEADERS = frozenset(MODEL_CASE_HEADER_NAMES)
 # A model reads the snapshot and operator notes, so a free-form header value could carry them to the target.
 # Its header values come from small fixed vocabularies instead, one value per header with no list or q parameter:
 # every extra choice is room to encode snapshot text. Operator-written cases keep free values.
@@ -113,11 +117,30 @@ _MODEL_HEADER_VALUES = {
 }
 
 
+def canonical_model_headers(headers):
+    """A model-designed header map with each name in its one spelling and in sorted order.
+
+    Names that are the same once letter case is ignored are a repeat, not two headers: they raise ValueError.
+    Names outside the model vocabulary keep their spelling, and case_headers_allowed rejects them.
+    """
+    if not isinstance(headers, dict):
+        return headers
+    out = {}
+    for name, value in headers.items():
+        key = MODEL_CASE_HEADER_NAMES.get(name.lower(), name) if isinstance(name, str) else name
+        if key in out:
+            raise ValueError("A model-designed case repeats a header name")
+        out[key] = value
+    return {name: out[name] for name in sorted(out)}
+
+
 def case_headers_allowed(headers, *, model_designed=False, relay=False):
     """relay=True only inside the worker, which adds its own case and identity routing headers."""
     if headers is None:
         return True
     if not isinstance(headers, dict) or len(headers) > 24:
+        return False
+    if model_designed and list(headers) != sorted(headers):
         return False
     def allowed(name, value):
         lower = name.lower()
@@ -125,7 +148,8 @@ def case_headers_allowed(headers, *, model_designed=False, relay=False):
             return relay
         if not model_designed:
             return lower not in _FORBIDDEN_HEADERS
-        return lower in MODEL_CASE_HEADERS and bool(_MODEL_HEADER_VALUES[lower].fullmatch(value))
+        return (MODEL_CASE_HEADER_NAMES.get(lower) == name
+                and bool(_MODEL_HEADER_VALUES[lower].fullmatch(value)))
     return all(isinstance(name, str) and _HEADER_NAME.fullmatch(name)
                and isinstance(value, str) and len(value) <= 4096 and all(32 <= ord(c) <= 126 for c in value)
                and allowed(name, value)
@@ -317,6 +341,9 @@ def _prepare_request(manifest, case):
     supplied = case.get("headers") or {}
     if not case_headers_allowed(supplied, model_designed=case.get("designed_by") == "model", relay=manifest.get("relay") is True):
         raise AdapterBlocked("Case contains an unsupported, routing or credential-bearing request header.")
+    if case.get("designed_by") == "model":
+        # Defaults first, then the model's names, already in sorted order: the request carries no order the model chose.
+        headers = {name: value for name, value in headers.items() if name not in supplied}
     headers.update(supplied)
     secrets = []
     identity = case.get("identity")

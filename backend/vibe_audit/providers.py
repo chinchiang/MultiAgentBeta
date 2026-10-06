@@ -185,7 +185,8 @@ def _install_offline_tokenizer_loader():
         required_hash = _TOKENIZERS.get(blobpath)
         if not required_hash or expected_hash != required_hash:
             raise ProviderError("Tokenizer asset is not in the offline allowlist", code="tokenizer_unavailable")
-        name = hashlib.sha1(blobpath.encode()).hexdigest()
+        # tiktoken's cache layout names each file by the SHA-1 of its URL; the content is checked by SHA-256 below.
+        name = hashlib.sha1(blobpath.encode(), usedforsecurity=False).hexdigest()
         for root in roots:
             candidate = root / name
             try:

@@ -4,7 +4,7 @@ from __future__ import annotations
 from copy import deepcopy
 import asyncio
 import re
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from .domain import ModelProfile, RunInput, now
@@ -40,8 +40,10 @@ class CleanupAttestation(BaseModel):
     attestation: str = Field(min_length=1, max_length=4000)
 
 
-def workspace_router(store, engine, source_roots):
-    router = APIRouter(prefix="/api")
+def workspace_router(store, engine, source_roots, *, session):
+    """session: the dependency that proves the local session and CSRF token. It is required, so these routes
+    keep their own check even if the router is mounted on an app without the console's middleware."""
+    router = APIRouter(prefix="/api", dependencies=[Depends(session)])
 
     @router.get("/projects")
     async def projects():
@@ -98,7 +100,7 @@ def workspace_router(store, engine, source_roots):
         return engine.create(model)
 
     @router.post("/runs/{run_id}/findings/{finding_id}/decision")
-    async def decision(run_id: str, finding_id: str, data: FindingDecision):
+    async def decision(run_id: str, finding_id: str, data: FindingDecision, request: Request):
         run = store.get(run_id)
         if run["status"] in {"running", "cancelling"}:
             raise PolicyError("Cannot change a finding while its assessment is running")
@@ -135,15 +137,15 @@ def workspace_router(store, engine, source_roots):
             raise PolicyError("Refuting a finding needs an execution in which the security property held")
         if data.decision == "refuted" and any(e["status"] == "fail" for e in run["executions"] if tests_threats(e)):
             raise PolicyError("A case testing these threats observed a violation in this run; the finding cannot be refuted")
-        entry = {**data.model_dump(), "threat_ids": sorted(threats), "at": now(), "actor": "local_operator", "previous_state": finding["state"]}
+        entry = {**data.model_dump(), "threat_ids": sorted(threats), "at": now(), "actor": request.state.actor, "previous_state": finding["state"]}
         finding.setdefault("decisions", []).append(entry)
         finding["state"] = data.decision
         finding["counterevidence"] = data.evidence_ids
-        engine.event(run, "Local operator recorded an evidence-linked decision for " + finding_id)
+        engine.event(run, f"Operator {request.state.actor} recorded an evidence-linked decision for " + finding_id)
         return run
 
     @router.post("/runs/{run_id}/reconcile")
-    async def reconcile(run_id: str, data: CleanupAttestation):
-        return engine.reconcile(run_id, data.attestation)
+    async def reconcile(run_id: str, data: CleanupAttestation, request: Request):
+        return engine.reconcile(run_id, data.attestation, request.state.actor)
 
     return router

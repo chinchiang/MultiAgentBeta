@@ -15,7 +15,7 @@ export interface AuthProfile { id:string; credential_env:string; header:string; 
 export interface RunInput {
   name: string; mode: 'demo' | 'live'; source_path: string; deployment_id: string; target_url: string;
   data_policy: 'local_only' | 'cloud_allowed'; allowed_model_origins: string[]; allowed_target_ips: string[];
-  allowed_requests: {method: HttpMethod; path:string}[];
+  allowed_requests: {method: HttpMethod; path:string; model_body?:boolean}[];
   budget: Budget; models: ModelProfile[]; auth_profiles: AuthProfile[]; notes: string; parent_run_id: string | null; cases: TestCase[];
   schema_version?:2; requirements?:SecurityRequirement[]; runtime_profile?:string; fixture_profile?:string|null;
   static_tools?:('semgrep'|'osv'|'gitleaks')[]; deployment_header?:string|null; parent_finding_ids?:string[];
@@ -38,7 +38,7 @@ export interface ThreatModel {
 }
 export interface TestCase {
   id: string; threat_ids: string[]; requirement_id: string; title: string; adapter: string; method: string; path: string;
-  headers: Record<string,string>; body: unknown; identity: unknown; preconditions: string[];
+  headers: Record<string,string>; body: unknown; identity: unknown; preconditions: unknown[]; designed_by?: string;
   oracle: {kind: string; forbidden_text: string[]; allowed_statuses: number[]; required_observations: string[]; expected_role: string | null};
   cleanup: unknown; side_effects: boolean; repetitions: number; observation_mode: string; source_digest: string; threat_model_hash: string; hash: string;
 }
@@ -47,6 +47,7 @@ export interface Run {
   manifest: RunInput; events: AuditEvent[]; reviews: Review[]; threat_model: ThreatModel | null; cases: TestCase[];
   executions: Record<string,unknown>[]; findings: Finding[]; gaps: unknown[]; limitations?: string[]; usage: {requests:number;model_calls:number;tokens:number};
   artifacts: unknown[]; error: unknown; workers_pending_cleanup?: boolean; usage_unknown?: boolean; deployment_changed?: boolean;
+  gate_receipts?: Record<string,string>; case_approval?: {receipt:string; actor:string; approved_at:string; evidence_id:string};
 }
 export interface Capabilities { tools: {id:string;available:boolean;status:string;detail:string}[]; runtime: Record<string,unknown>; limitations: string[] }
 export interface Session { csrf_token: string; mode: string; limitations: string[] }

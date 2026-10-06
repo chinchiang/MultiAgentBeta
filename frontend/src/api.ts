@@ -20,6 +20,8 @@ function takeStartupToken() {
   if (token) { startupToken = token; history.replaceState(null, '', location.pathname + location.search); }
   return startupToken;
 }
+// After logout the page must not quietly open a new session with the token it still holds.
+export function forgetStartupToken() { startupToken = ''; }
 function headers(path: string, json: boolean): Record<string, string> {
   const result: Record<string, string> = json ? { 'Content-Type': 'application/json' } : {};
   const token = path === '/session' ? takeStartupToken() : '';

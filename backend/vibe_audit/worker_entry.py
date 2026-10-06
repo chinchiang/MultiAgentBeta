@@ -282,10 +282,19 @@ class Supervisor:
                     raise ValueError("Request body differs from its sealed case")
             elif step.get("body") is not None:
                 raise ValueError("Sealed request body is missing")
+        # The case and its positive controls are what the model wrote; fixture lifecycle steps come from the engine.
+        model_step=case.get("designed_by")=="model" and (self.spec.get("operation")!="request_sequence"
+            or step.get("id")=="case" or str(step.get("id","")).startswith("control:"))
+        if model_step and raw and not any(r.get("model_body") is True and (r.get("method","GET").upper(),r.get("path"))==(method,path)
+                                          for r in self.manifest.get("allowed_requests",[])):
+            raise ValueError("A model-written body goes only to an endpoint the operator marked model_body")
         # Transport-generated headers are not part of the reviewed request.
         headers=dict(step.get("headers",{}))
         if raw: headers["Content-Type"]="application/json"
-        prepared={"method":method,"path":path,"headers":headers,"body":None,"identity":identity}
+        # This is the last trusted hop before tb-target: model-written headers are checked here against the model
+        # vocabulary again, not only by the controller's case gate and the untrusted worker.
+        prepared={"method":method,"path":path,"headers":dict(sorted(headers.items())) if model_step else headers,"body":None,
+                  "identity":identity,"designed_by":"model" if model_step else None}
         transient=None
         if isinstance(identity,str) and identity.startswith("session:"):
             transient=self.sessions.get((case_id,identity[8:]))

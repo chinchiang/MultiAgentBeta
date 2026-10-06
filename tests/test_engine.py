@@ -529,9 +529,9 @@ async def test_reconcile_waits_for_the_task_and_keeps_an_operator_cancel_cancell
     engine.store.save(run)
     engine.tasks[run["id"]]=asyncio.get_running_loop().create_future()
     with pytest.raises(PolicyError,match="still executing"):
-        engine.reconcile(run["id"],"done")
+        engine.reconcile(run["id"],"done","local_operator:test")
     engine.tasks[run["id"]].set_result(None)
-    assert engine.reconcile(run["id"],"done")["status"]=="cancelled"
+    assert engine.reconcile(run["id"],"done","local_operator:test")["status"]=="cancelled"
 
 
 def test_api_errors_stay_structured_instead_of_500(tmp_path,monkeypatch):
@@ -571,7 +571,11 @@ def test_api_errors_stay_structured_instead_of_500(tmp_path,monkeypatch):
         assert client.get("/api/runs/no-such-run").status_code==404
 
 
-@pytest.mark.parametrize("token",["x"*31,"x"*32+" ","x"*32+"#"])
+STRONG_TOKEN="Kq7vX2mN9pR4tW8yB3cF6hJ1lZ5sD0gA"
+
+
+# A length and character-set check alone accepts one repeated letter or a short repeated pattern.
+@pytest.mark.parametrize("token",["x"*31,"x"*32+" ","x"*32+"#","s"*40,"ab"*20,"abcdefgh"*5,"Kq7vX2mN"*4])
 def test_weak_startup_token_is_refused(tmp_path,monkeypatch,token):
     monkeypatch.setenv("VIBEAUDIT_SESSION_TOKEN",token)
     with pytest.raises(ValueError,match="VIBEAUDIT_SESSION_TOKEN"):
@@ -579,9 +583,9 @@ def test_weak_startup_token_is_refused(tmp_path,monkeypatch,token):
 
 
 def test_configured_startup_token_opens_session(tmp_path,monkeypatch):
-    monkeypatch.setenv("VIBEAUDIT_SESSION_TOKEN","s"*40)
+    monkeypatch.setenv("VIBEAUDIT_SESSION_TOKEN",STRONG_TOKEN)
     with TestClient(create_app(tmp_path,testing=True)) as client:
-        assert client.get("/api/session",headers={"X-VibeAudit-Token":"s"*40}).status_code==200
+        assert client.get("/api/session",headers={"X-VibeAudit-Token":STRONG_TOKEN}).status_code==200
 
 
 def test_restart_records_a_sent_request_as_outcome_unknown(tmp_path):
@@ -897,8 +901,14 @@ async def live_post_case(engine,*,adapter,provenance):
     case["hash"]=sealed(case)
     run["cases"]=[case]
     run["usage"]["requests"]=0
+    approve(run)
     arm_attempt(engine,run)
     return run
+
+
+def approve(run):
+    """Record the operator's approval of the run's current sealed case set, as POST approve-cases does."""
+    run["case_approval"]={"receipt":digest([c["hash"] for c in run["cases"]]),"actor":"local_operator:test"}
 
 
 @pytest.mark.parametrize("provenance",["model","retest","operator"])
@@ -935,6 +945,7 @@ def as_get_case(run,headers=None):
         item.update(method="GET",body=None,headers=headers or {})
     run["manifest_hash"]=digest(run["manifest"])
     case["hash"]=sealed(case)
+    approve(run)
     return case
 
 
@@ -1086,3 +1097,262 @@ async def test_tool_adapter_cannot_bypass_side_effect_gate(engine,monkeypatch,pr
         assert dispatched==[]
         assert run["executions"][0]["status"]=="blocked"
         assert "reset/cleanup fixture" in run["executions"][0]["reason"]
+
+
+# --- 2026-10-06 VibeSec G4 review follow-ups -------------------------------------------------------
+
+def model_proposal(run,**changes):
+    """A test_designer case for the single live threat, as the model would return it."""
+    threat=run["threat_model"]["threats"][0]
+    proposal={"id":"C-101","threat_ids":[threat["id"]],"requirement_id":threat["requirement_id"],"title":"Model case",
+              "adapter":"http","method":"GET","path":"/orders/private","headers":{},"body":None,"identity":None,"preconditions":[],
+              "oracle":{"kind":"deny_sensitive","forbidden_text":["B-PRIVATE-CANARY"],"allowed_statuses":[403,404],
+                        "required_observations":["http_response"],"expected_role":None},
+              "cleanup":None,"side_effects":False,"repetitions":1,"observation_mode":"external_observation"}
+    proposal.update(changes)
+    return proposal
+
+
+async def designed(engine,monkeypatch,*proposals,allowed=None):
+    run=await live_post_case(engine,adapter="http",provenance="model")
+    run.update(cases=[])
+    run["manifest"].update(cases=[],allowed_requests=allowed or [{"method":"GET","path":"/orders/private"}])
+    run["manifest_hash"]=digest(run["manifest"])
+    async def model(run,profile,instruction,payload,contract=None):
+        return {"cases":copy.deepcopy(list(proposals)),"gaps":[]}
+    monkeypatch.setattr(engine,"model",model)
+    await engine._case_design(run)
+    return run
+
+
+async def test_model_headers_are_sealed_in_one_spelling_and_order(engine,monkeypatch):
+    run=await designed(engine,monkeypatch,model_proposal(await finished_demo(engine),headers={"accept-language":"zh-TW","accept":"application/json"}))
+    assert list(run["cases"][0]["headers"].items())==[("Accept","application/json"),("Accept-Language","zh-TW")]
+
+
+async def test_model_header_repeated_under_another_case_stops_case_design(engine,monkeypatch):
+    with pytest.raises(PolicyError,match="repeats a header name"):
+        await designed(engine,monkeypatch,model_proposal(await finished_demo(engine),headers={"Accept":"*/*","ACCEPT":"text/html"}))
+
+
+async def test_model_cleanup_is_replaced_by_the_engine_and_grants_no_request(engine,monkeypatch):
+    wipe={"method":"POST","path":"/admin/wipe"}
+    scope=[{"method":"GET","path":"/orders/private"},wipe]
+    run=await designed(engine,monkeypatch,model_proposal(await finished_demo(engine),cleanup=wipe),allowed=scope)
+    case=run["cases"][0]
+    assert case["cleanup"] is None
+    # authorize() permits only the sealed case's own steps, never a cleanup the model wrote.
+    with pytest.raises(PolicyError,match="not a step in the sealed test case"):
+        engine.policy.authorize(run,case,engine.cancel_flags[run["id"]],method="POST",path="/admin/wipe")
+    # A model case that claims side effects without a registered protocol gets an engine plan that runs nothing.
+    run=await designed(engine,monkeypatch,model_proposal(await finished_demo(engine),side_effects=True,cleanup=wipe),allowed=scope)
+    assert run["cases"][0]["cleanup"]=={"protocol":None,"required":True}
+
+
+async def test_model_cases_wait_for_operator_approval_of_the_exact_set(engine,monkeypatch):
+    from vibe_audit.service import CaseApprovalRequired
+    run=await live_post_case(engine,adapter="http",provenance="model")
+    case=as_get_case(run)
+    dispatched=[]
+    class Runtime:
+        async def run_case(self,manifest,case,**kwargs):
+            dispatched.append(case["id"])
+            return {"status":"pass","reason":"synthetic","observations":[],"evidence":[],"cleanup_confirmed":True}
+    monkeypatch.setattr(engine,"runtime",lambda _:Runtime())
+    run.pop("case_approval")
+    with pytest.raises(CaseApprovalRequired):
+        await engine._blackbox(run)
+    # An approval of an earlier set does not cover a case changed after it.
+    approve(run)
+    case["headers"]={"Accept":"text/html"}
+    case["hash"]=sealed(case)
+    with pytest.raises(CaseApprovalRequired):
+        await engine._blackbox(run)
+    assert dispatched==[] and run["executions"]==[]
+    approve(run)
+    await engine._blackbox(run)
+    assert dispatched==[case["id"]]
+
+
+async def test_paused_run_records_approval_and_resumes(engine,monkeypatch):
+    run=await live_post_case(engine,adapter="http",provenance="model")
+    as_get_case(run)
+    run.pop("case_approval")
+    run["completed_stages"]=[s for s in run["completed_stages"] if s not in {"blackbox","report"}]
+    async def no_request(*args,**kwargs):
+        raise AssertionError("A request was sent before approval")
+    monkeypatch.setattr(engine,"runtime",lambda _:no_request)
+    await engine._run(run)
+    stored=engine.store.get(run["id"])
+    assert stored["status"]=="awaiting_approval" and stored["executions"]==[]
+    assert "wait for operator approval" in stored["events"][-1]["message"]
+    resumed=[]
+    monkeypatch.setattr(engine,"start",lambda run_id,resume=False:resumed.append((run_id,resume)) or {})
+    with pytest.raises(PolicyError,match="does not match the sealed cases"):
+        engine.approve_cases(run["id"],"stale-receipt","local_operator:abc")
+    receipt=stored["gate_receipts"]["cases"]
+    engine.approve_cases(run["id"],receipt,"local_operator:abc")
+    stored=engine.store.get(run["id"])
+    assert stored["case_approval"]["receipt"]==receipt and stored["case_approval"]["actor"]=="local_operator:abc"
+    evidence=engine.store.evidence(stored["artifacts"][-1],run["id"])
+    assert evidence["producer"]=="operator-attestation" and evidence["content"]["kind"]=="case_approval"
+    assert [c["hash"] for c in evidence["content"]["cases"]]==[c["hash"] for c in stored["cases"]]
+    assert resumed==[(run["id"],True)]
+    stored["status"]="blocked"
+    engine.store.save(stored)
+    with pytest.raises(PolicyError,match="waiting for case approval"):
+        engine.approve_cases(run["id"],receipt,"local_operator:abc")
+
+
+@pytest.mark.parametrize("model_body",[False,True])
+async def test_model_fixture_body_goes_only_to_an_operator_marked_endpoint(engine,monkeypatch,model_body):
+    from vibe_audit import fixture_protocol
+    run=await live_post_case(engine,adapter="ai_http",provenance="model")
+    run["manifest"]["fixture_profile"]="synthetic-ai-v1"
+    run["manifest"]["allowed_requests"]=[{"method":"POST","path":"/orders/private",**({"model_body":True} if model_body else {})}]
+    run["manifest_hash"]=digest(run["manifest"])
+    sent=[]
+    async def fixture_case(runtime,manifest,case,**kwargs):
+        sent.append(case["path"])
+        return {"status":"pass","reason":"synthetic","observations":[],"evidence":[],"requests":1,"cleanup_confirmed":True}
+    monkeypatch.setattr(fixture_protocol,"run_fixture_case",fixture_case)
+    monkeypatch.setattr(engine,"runtime",lambda _:object())
+    await engine._blackbox(run)
+    if model_body:
+        assert sent==["/orders/private"] and run["executions"][0]["status"]=="pass"
+    else:
+        assert sent==[] and run["executions"][0]["status"]=="blocked"
+        assert "model_body" in run["executions"][0]["reason"]
+
+
+def test_scope_entries_accept_only_a_boolean_model_body_flag():
+    base=dict(name="Scope",mode="demo")
+    RunInput(**base,allowed_requests=[{"method":"POST","path":"/chat","model_body":True}])
+    for entry in ({"method":"POST","path":"/chat","model_body":"yes"},{"method":"POST","path":"/chat","writable":True}):
+        with pytest.raises(ValueError):
+            RunInput(**base,allowed_requests=[entry])
+
+
+def sid_of(client):
+    return client.cookies.get("vibeaudit_session")
+
+
+def test_routes_check_the_session_without_the_middleware(tmp_path):
+    # The middleware's path-prefix test is one layer; each route and the workspace router carry their own.
+    app=create_app(tmp_path,testing=True)
+    app.user_middleware.clear()
+    app.middleware_stack=app.build_middleware_stack()
+    with TestClient(app) as client:
+        for path in ("/api/runs","/api/capabilities","/api/projects","/api/models","/api/catalogs"):
+            assert client.get(path).status_code==401,path
+        authorize(client)
+        assert client.get("/api/runs").status_code==200
+        client.headers["X-CSRF-Token"]="wrong"
+        assert client.get("/api/projects").status_code==401
+
+
+def test_workspace_router_cannot_be_mounted_without_a_session_check(tmp_path):
+    from vibe_audit.workspace_api import workspace_router
+    store=Store(tmp_path)
+    try:
+        with pytest.raises(TypeError):
+            workspace_router(store,Engine(store),[])
+    finally:
+        store.close()
+
+
+def test_logout_ends_this_session_or_all_of_them(tmp_path):
+    with TestClient(create_app(tmp_path,testing=True)) as first, TestClient(first.app) as second:
+        authorize(first)
+        authorize(second)
+        assert first.post("/api/session/logout",json={}).json()=={"ended":"this"}
+        assert first.get("/api/runs").status_code==401 and second.get("/api/runs").status_code==200
+        authorize(first)
+        assert second.post("/api/session/logout",json={"all":True}).json()=={"ended":"all"}
+        assert first.get("/api/runs").status_code==401 and second.get("/api/runs").status_code==401
+        assert first.post("/api/session/logout",json={}).status_code==401
+
+
+def test_idle_session_expires_and_sessions_are_capped(tmp_path,monkeypatch):
+    from vibe_audit import api
+    clock=[1000.0]
+    monkeypatch.setattr(api,"clock",lambda:clock[0])
+    with TestClient(create_app(tmp_path,testing=True)) as client:
+        authorize(client)
+        clock[0]+=api.SESSION_IDLE_SECONDS-1
+        assert client.get("/api/runs").status_code==200
+        # Activity moves the idle deadline; silence past it ends the session even inside the absolute lifetime.
+        clock[0]+=api.SESSION_IDLE_SECONDS-1
+        assert client.get("/api/runs").status_code==200
+        clock[0]+=api.SESSION_IDLE_SECONDS+1
+        assert client.get("/api/runs").status_code==401
+        sessions=client.app.state.sessions
+        clients=[TestClient(client.app) for _ in range(api.MAX_SESSIONS+2)]
+        for other in clients:
+            clock[0]+=1
+            authorize(other)
+        assert len(sessions)==api.MAX_SESSIONS
+        assert clients[0].get("/api/runs").status_code==401 and clients[-1].get("/api/runs").status_code==200
+
+
+def test_event_stream_ends_when_its_session_does(tmp_path,monkeypatch):
+    from vibe_audit import api
+    # Each clock read moves a third of the idle limit: the open stream outlives its session within a few polls.
+    ticks=[0]
+    def clock():
+        ticks[0]+=1
+        return 1000.0+ticks[0]*api.SESSION_IDLE_SECONDS/3
+    monkeypatch.setattr(api,"clock",clock)
+    with TestClient(create_app(tmp_path,testing=True)) as client:
+        authorize(client)
+        engine=client.app.state.engine
+        run=engine.create(RunInput(name="Streaming"))
+        run["status"]="running"
+        engine.store.save(run)
+        response=client.get(f"/api/runs/{run['id']}/events")
+    assert response.status_code==200
+    assert response.text.rstrip().endswith("event: expired\ndata: {}")
+    assert "event: progress" not in response.text.split("event: expired")[1]
+
+
+def test_wrong_startup_tokens_are_throttled(tmp_path):
+    from vibe_audit import api
+    with TestClient(create_app(tmp_path,testing=True)) as client:
+        for _ in range(api.TOKEN_FAILURE_LIMIT):
+            assert client.get("/api/session",headers={"X-VibeAudit-Token":"guess"}).status_code==401
+        # Past the limit even the right token waits: a local guesser cannot keep trying.
+        assert open_session(client).status_code==429
+
+
+def test_operator_decisions_name_the_session_that_acted(tmp_path,monkeypatch):
+    import hashlib
+    with TestClient(create_app(tmp_path,testing=True)) as client:
+        authorize(client)
+        actor="local_operator:"+hashlib.sha256(sid_of(client).encode()).hexdigest()[:12]
+        engine=client.app.state.engine
+        run=engine.create(RunInput(name="Approval actor"))
+        run.update(status="awaiting_approval",gate_receipts={"cases":"r1"})
+        engine.store.save(run)
+        calls=[]
+        monkeypatch.setattr(engine,"start",lambda run_id,resume=False:calls.append((run_id,resume)) or {"id":run_id})
+        assert client.post(f"/api/runs/{run['id']}/approve-cases",json={}).status_code==422
+        assert client.post(f"/api/runs/{run['id']}/approve-cases",json={"receipt":"r0"}).status_code==409
+        assert client.post(f"/api/runs/{run['id']}/approve-cases",json={"receipt":"r1"}).status_code==200
+        assert engine.store.get(run["id"])["case_approval"]["actor"]==actor and calls==[(run["id"],True)]
+
+
+def test_data_directory_and_evidence_are_owner_only(tmp_path):
+    import os, stat
+    if os.name!="posix":
+        pytest.skip("POSIX permissions")
+    data=tmp_path/"data"
+    data.mkdir(mode=0o755)
+    data.chmod(0o755)
+    store=Store(data)
+    try:
+        assert stat.S_IMODE(data.stat().st_mode)==0o700
+        assert stat.S_IMODE((data/"artifacts").stat().st_mode)==0o700
+        record=store.put_evidence("r","operator-attestation",{"kind":"x"})
+        assert stat.S_IMODE((data/"artifacts"/record["filename"]).stat().st_mode)==0o600
+    finally:
+        store.close()
