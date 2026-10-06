@@ -12,6 +12,8 @@
 #   - 2026-10-06 @chinchiang：risk_tier 維持 L3（高於決策樹推導的 L2），理由見 risk_tier_rationale。
 #   - 2026-10-06 @chinchiang：保留兩項行為變更（模型金鑰的 origin 綁定、model_selectable 身分），見 decisions。
 #   - 2026-10-06 @chinchiang：t-redaction-gap、t-container-escape、t-supply-chain 接受殘留，改為 accepted，見 decisions。
+#   - 2026-10-06 @chinchiang：G4 第 5–11 輪審查後，接受 t-container-escape 量化後的殘留（每次掃描數 KB）與黑箱容器的時間通道
+#     殘留（t-target-response-parsing 殘留 (2)），並確認保留測試身分憑證以 VIBEAUDIT_TARGET_CREDENTIAL_ORIGINS 綁定 origin 的行為變更。
 #
 # 待辦：docs/01 要求 AppSec 與 Red Team 各一人簽核本模型（分歧保留少數意見）。
 #
@@ -275,7 +277,7 @@ threats:
       測試身分的憑證也比照辦理：run 自己指定 target_url，所以憑證只送往操作者在 VIBEAUDIT_TARGET_CREDENTIAL_ORIGINS 綁定的
       origin，預設不綁定；預檢列出未綁定的變數並拒絕（service.py:382-387），supervisor 環境不帶未綁定的值、只帶綁定設定本身
       （worker_runtime.py:77-95），送出前再以環境的綁定核對一次（adapters.py:78-110、416-418）；該變數也列為保留設定（adapters.py:37）。
-      2026-10-06 第 6 次 G4 identity 審查指出原本只綁定模型金鑰，已補上（代理決定的行為變更，待 @chinchiang 確認）。
+      2026-10-06 第 6 次 G4 identity 審查指出原本只綁定模型金鑰，已補上（行為變更，2026-10-06 @chinchiang 確認保留）。
       殘留：持有 session 的人仍可在已綁定的 origin 使用金鑰（耗用額度），也可用已綁定的測試身分對該 origin 送出 allowed_requests 內的請求。
     status: mitigated
     gate: G5
@@ -353,7 +355,7 @@ threats:
       未要求 userns；/tmp tmpfs 可執行；kernel 漏洞仍可逃逸。容器內的程式仍可藉由選擇回報哪些「檔案、行號、已知規則」組合帶出資訊：
       每個 scanner 至多 1000 筆、以集合計，數百個檔案、每檔數百行時約為每次掃描數 KB，足以帶出一份小型 .env。
       2026-10-06 由 @chinchiang 接受此殘留（當時記為「少量資訊」）；同日第 5 次 G4 架構審查指出 gitleaks／OSV rule ID 只檢查格式、
-      行號沒有上限，實際可達每個 prompt 數百 KiB，已收斂為上述數 KB 等級，量化後的殘留待 @chinchiang 再確認。可再收斂的作法：
+      行號沒有上限，實際可達每個 prompt 數百 KiB，已收斂為上述數 KB 等級，量化後的殘留 2026-10-06 由 @chinchiang 確認接受。可再收斂的作法：
       只讓 gitleaks 看到機密檔，semgrep 與 OSV 改掛不含機密檔的副本。日後若改用 gVisor／userns-remap，須在真 Docker 上重驗。
     status: accepted
     gate: G3
@@ -378,7 +380,7 @@ threats:
       殘留：(1) 容器逃逸同 t-container-escape（已接受）。(2) 若目標回應攻陷了 http_case 的容器，容器內的程式仍知道模型寫的 oracle 與
       control 文字（每個案例至多約 26 KB）；fixture 路徑的容器只知道會送出的 step 請求（本文即送往 model_body 端點的內容）。兩者都可藉
       送出時間與提早停止調變給目標；請求內容、順序與次數都已由 supervisor 固定。這是 c-test-designer
-      切腳論證的前提，2026-10-06 第 6 次 G4 架構審查後補記於 decisions。
+      切腳論證的前提，2026-10-06 第 6 次 G4 架構審查後補記於 decisions；殘留 (2) 同日由 @chinchiang 確認接受。
     status: mitigated
     gate: G4
   - id: t-route-authz-layer
@@ -545,7 +547,7 @@ decisions:
   - >-
     接受三條威脅的殘留（2026-10-06，@chinchiang 決定）：t-redaction-gap（快照遮罩是啟發式，無前綴的高熵 token 無法可靠辨識）、
     t-container-escape（已要求 seccomp，但沒有自訂 seccomp／AppArmor profile 或 userns，kernel 漏洞仍可逃逸；掃描結果的選擇通道
-    在第 5 次 G4 審查後量化為每次掃描數 KB，待再確認）、
+    在第 5 次 G4 審查後量化為每次掃描數 KB，@chinchiang 確認接受）、
     t-supply-chain（工具映像的 Python lock 沒有 hash、apt-get 未釘版、Dockerfile 的 BASE_IMAGE 由操作者提供）。
   - >-
     c-test-designer 的致命三要素以 external_comms 切腳（2026-10-06，@chinchiang 決定）。理由：模型設計的請求只能送往操作者
@@ -560,10 +562,10 @@ decisions:
     本文只到 model_body 端點）與上述決定的範圍一致，決定維持。第六次審查指出這個論證隱含「黑箱容器未被攻陷」的前提：容器拿到
     整個案例，且 http_case 的請求順序與次數原由容器決定。已改為 supervisor 固定序列與次數、容器只拿送出與判定所需的欄位、
     oracle 文字每項至多 120 字。明列前提：若目標回應攻陷了黑箱容器，容器內的程式仍可用送出時間與提早停止，把模型寫的 oracle
-    與 control 文字調變給目標（見 t-target-response-parsing）；此殘留待 @chinchiang 確認。第七、八次審查補充：殘留 (1) 的 fixture
+    與 control 文字調變給目標（見 t-target-response-parsing）；此殘留 2026-10-06 由 @chinchiang 確認接受。第七、八次審查補充：殘留 (1) 的 fixture
     本文可攜帶威脅模型中的快照內容（逐字引用，以及 threat_modeler 寫進其他自由文字欄位的內容，含 t-redaction-gap 遮罩漏掉的部分），
     規模只受威脅模型各欄位上限與模型輸出預算限制；操作者核准前看得到完整本文。
   - >-
     測試身分的憑證只送往操作者以 VIBEAUDIT_TARGET_CREDENTIAL_ORIGINS 綁定的 origin，預設不綁定；live run 用到未綁定的測試身分時
-    預檢即拒絕（2026-10-06 第 6 次 G4 identity 審查後新增；@chinchiang 授權代理決定，行為變更待確認）。
+    預檢即拒絕（2026-10-06 第 6 次 G4 identity 審查後新增；@chinchiang 確認保留此行為變更）。
   - 本模型為 AI 草稿（2026-10-06，依 commit f9d9cf1 起草、同日依本分支修正更新），待 AppSec 與 Red Team 簽核（docs/01「驗證方式」第 4 項）。
