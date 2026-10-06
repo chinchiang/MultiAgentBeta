@@ -9,10 +9,10 @@
 #
 # 已由人類決定：
 #   - 2026-10-06 @chinchiang：c-test-designer 的致命三要素以 trifecta_leg_cut: external_comms 切腳，理由與接受的殘留見 decisions。
+#   - 2026-10-06 @chinchiang：risk_tier 維持 L3（高於決策樹推導的 L2），理由見 risk_tier_rationale。
 #
 # 待維護者決定（docs/01 要求 AppSec 與 Red Team 各一人簽核，分歧保留少數意見）：
-#   1. risk_tier：決策樹推導為 L2（exposure internal），草稿依 docs/01 對 sensitive_pii_or_secrets 的建議提為 L3。
-#   2. 仍為 open 的 3 條（t-redaction-gap、t-container-escape、t-supply-chain）是否接受殘留、修正或轉移。
+#   1. 仍為 open 的 3 條（t-redaction-gap、t-container-escape、t-supply-chain）是否接受殘留、修正或轉移。
 #
 # 修訂：同日依本分支的程式修正，把 t-indirect-injection、t-model-identity、t-probe-key-exfil、t-credential-crossuse、
 #   t-target-internal、t-sarif-injection 改為 mitigated（各條的「殘留」仍待人工確認）；file:line 已對應修正後的程式碼。
@@ -390,7 +390,7 @@ risk_tier_rationale: >-
   docs/01 §4 決策樹推導為 L2：exposure internal（只監聽 127.0.0.1、單一使用者），data_sensitivity
   sensitive_pii_or_secrets，沒有同時對外暴露又有高影響工具的 agent。草稿依 docs/01「建議 L3 若 sensitive_pii_or_secrets」
   提為 L3：本工具持有受測專案的目標憑證與原始碼（含機密檔），操作 Docker daemon（等同 host root），且模型輸出會驅動送往
-  外部系統的請求。最終分級待維護者決定。
+  外部系統的請求。2026-10-06 由 @chinchiang 決定維持 L3。
 
 decisions:
   - 控制台只供本機單一使用者，不提供多人或遠端存取（README「安全政策」）。
