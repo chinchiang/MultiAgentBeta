@@ -73,7 +73,7 @@ async def test_real_ai_reset_tool_sink_five_trials(tmp_path, monkeypatch, mode, 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode,expected", [("vulnerable", "fail"), ("fixed", "pass")])
-async def test_real_login_logout_session_held_by_supervisor(tmp_path, mode, expected):
+async def test_real_login_logout_session_held_by_supervisor(tmp_path, monkeypatch, mode, expected):
     node = node_runtime()
     if not node:
         pytest.skip("Node24 is required for the explicit Web fixture integration")
