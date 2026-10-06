@@ -42,6 +42,8 @@ def _refuse_xml_declarations(data):
     scan.EntityDeclHandler = refuse
     try:
         scan.Parse(data, True)
+    except ToolInputError:
+        raise   # the handlers' own refusal, kept as is (ToolInputError is a ValueError)
     except (expat.ExpatError, ValueError, LookupError) as exc:
         # A declared encoding expat cannot use (utf-7, UTF-32, unknown names) raises ValueError or LookupError.
         raise ToolInputError("Malformed XML artifact") from exc

@@ -110,10 +110,12 @@ def test_no_schemathesis_cases_or_external_xml_entities_rejected():
     # A UTF-16 document hides its DTD from a byte search but expat still decodes and expands it.
     hidden = ('<?xml version="1.0" encoding="UTF-16"?><!DOCTYPE x [<!ENTITY a "expanded">]>'
               '<testsuite><testcase name="&a;"/></testsuite>').encode("utf-16")
-    for raw in (b'<testsuite tests="0"/>', b'<!DOCTYPE x [<!ENTITY a SYSTEM "file:///secret">]><testsuite/>', hidden):
+    for raw, reason in ((b'<testsuite tests="0"/>', "Schemathesis executed no test cases"),
+                        (b'<!DOCTYPE x [<!ENTITY a SYSTEM "file:///secret">]><testsuite/>', "Untrusted XML declaration"),
+                        (hidden, "Untrusted XML declaration")):
         result=parse_tool_result("schemathesis",{"status":"completed","exit_code":0,"cleanup_confirmed":True,
             "artifacts":{"schemathesis.xml":raw}},case_id="case-one")
-        assert result["status"] == "execution_error"
+        assert (result["status"], result["reason"]) == ("execution_error", reason)
         assert "expanded" not in json.dumps(result)
 
 
