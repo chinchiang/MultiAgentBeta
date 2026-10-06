@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import re
 from datetime import datetime, timezone
@@ -8,7 +9,7 @@ from typing import Any, Literal
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-from .adapters import RESERVED_ENV
+from .adapters import RESERVED_ENV, target_ip_refused
 from .contracts import OperatorCase, SecurityRequirement
 
 
@@ -69,6 +70,9 @@ class AuthProfile(StrictModel):
     header: str = "Authorization"
     scheme: str = "Bearer"
     role: str = ""
+    # Model-designed cases may send only identities the operator opted in, so an injected or mistaken
+    # case cannot pick a privileged account. Operator-written cases may use any configured identity.
+    model_selectable: bool = False
 
     @field_validator("credential_env")
     @classmethod
@@ -100,6 +104,18 @@ class RunInput(StrictModel):
     deployment_header: str | None = Field(default=None, pattern=r"^[A-Za-z0-9-]{1,100}$")
     cases: list[dict] = Field(default_factory=list, max_length=100)
 
+    @field_validator("allowed_target_ips")
+    @classmethod
+    def target_ips(cls, value):
+        for item in value:
+            try:
+                address = ipaddress.ip_address(item)
+            except ValueError:
+                raise ValueError("Allowed target IPs must be explicit IP addresses, not hostnames or ranges") from None
+            if target_ip_refused(address):
+                raise ValueError("Target IPs cannot be cloud metadata, link-local, unspecified or multicast addresses")
+        return value
+
     @field_validator("cases")
     @classmethod
     def supplied_cases(cls, value):
@@ -123,6 +139,9 @@ class RunInput(StrictModel):
         auth_ids = [p.id for p in self.auth_profiles]
         if len(auth_ids) != len(set(auth_ids)):
             raise ValueError("Test identity IDs must be unique")
+        # Values are compared at preflight, when the environment is read; names can be refused now.
+        if {p.credential_env for p in self.models if p.credential_env} & {p.credential_env for p in self.auth_profiles}:
+            raise ValueError("A credential cannot serve both a model and a test identity")
         for request in self.allowed_requests:
             if set(request)-{"method","path"} or not isinstance(request.get("path"),str) or not request["path"].startswith("/") or request["path"].startswith("//") or any(c in request["path"] for c in "\r\n\\"):
                 raise ValueError("Scope requires an exact relative HTTP path")

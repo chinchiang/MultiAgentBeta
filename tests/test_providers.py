@@ -90,8 +90,51 @@ async def test_explicit_origin_and_credential_references(profile, policy, fake_p
     assert err.value.code == "invalid_credential_reference"
     profile["credential_env"] = "VIBEAUDIT_TEST_KEY"
     monkeypatch.setenv("VIBEAUDIT_TEST_KEY", "synthetic-test-key")
+    monkeypatch.setenv("VIBEAUDIT_MODEL_CREDENTIAL_ORIGINS", "VIBEAUDIT_TEST_KEY=http://127.0.0.1:11434")
     await providers.generate_json(profile, "Review", {}, policy)
     assert fake_provider[0][0][4] == "synthetic-test-key"
+
+
+@pytest.mark.asyncio
+async def test_model_key_goes_only_to_the_origin_the_operator_bound(profile, policy, fake_provider, monkeypatch):
+    # The request body names the endpoint and its allowlist; only the environment binds a key to an origin.
+    monkeypatch.setenv("VIBEAUDIT_TEST_KEY", "synthetic-test-key")
+    monkeypatch.delenv("VIBEAUDIT_MODEL_CREDENTIAL_ORIGINS", raising=False)
+    profile["credential_env"] = "VIBEAUDIT_TEST_KEY"
+    for binding in [None, "VIBEAUDIT_TEST_KEY=http://127.0.0.1:11435", "VIBEAUDIT_OTHER_KEY=http://127.0.0.1:11434"]:
+        if binding:
+            monkeypatch.setenv("VIBEAUDIT_MODEL_CREDENTIAL_ORIGINS", binding)
+        with pytest.raises(providers.ProviderError) as err:
+            await providers.generate_json(profile, "Review", {}, policy)
+        assert err.value.code == "credential_origin_denied" and "synthetic-test-key" not in str(err.value)
+        assert err.value.usage["model_calls"] == 0
+    assert fake_provider[0] == []
+    monkeypatch.setenv("VIBEAUDIT_MODEL_CREDENTIAL_ORIGINS", "VIBEAUDIT_OTHER_KEY=https://api.example.com, VIBEAUDIT_TEST_KEY=http://127.0.0.1:11434/")
+    await providers.generate_json(profile, "Review", {}, policy)
+    assert fake_provider[0][0][4] == "synthetic-test-key"
+    # A key-less local endpoint needs no binding.
+    profile["credential_env"] = ""
+    monkeypatch.delenv("VIBEAUDIT_MODEL_CREDENTIAL_ORIGINS")
+    await providers.generate_json(profile, "Review", {}, policy)
+    assert len(fake_provider[0]) == 2
+
+
+def test_credential_origin_bindings_and_defaults(monkeypatch):
+    monkeypatch.delenv("VIBEAUDIT_MODEL_CREDENTIAL_ORIGINS", raising=False)
+    assert providers.credential_origins() == {"VIBEAUDIT_OPENAI_API_KEY": {"https://api.openai.com"},
+                                              "VIBEAUDIT_ANTHROPIC_API_KEY": {"https://api.anthropic.com"}}
+    # The operator can rebind a pre-filled name, e.g. to a gateway, and list several origins for one key.
+    bound = providers.credential_origins({"VIBEAUDIT_MODEL_CREDENTIAL_ORIGINS":
+        "VIBEAUDIT_OPENAI_API_KEY=https://gateway.example:8443,VIBEAUDIT_LOCAL_KEY=http://[::1]:8001,VIBEAUDIT_LOCAL_KEY=http://127.0.0.1:8001"})
+    assert bound["VIBEAUDIT_OPENAI_API_KEY"] == {"https://gateway.example:8443"}
+    assert bound["VIBEAUDIT_LOCAL_KEY"] == {"http://[::1]:8001", "http://127.0.0.1:8001"}
+    for raw in ["VIBEAUDIT_KEY", "OPENAI_API_KEY=https://api.openai.com", "VIBEAUDIT_KEY=https://api.example.com/v1",
+                "VIBEAUDIT_KEY=ftp://api.example.com", "VIBEAUDIT_KEY=https://user:pw@api.example.com"]:
+        with pytest.raises(providers.ProviderError) as err:
+            providers.credential_origins({"VIBEAUDIT_MODEL_CREDENTIAL_ORIGINS": raw})
+        assert err.value.code == "invalid_credential_binding"
+    from vibe_audit.adapters import credential_env_allowed
+    assert not credential_env_allowed("VIBEAUDIT_MODEL_CREDENTIAL_ORIGINS", {})
 
 
 @pytest.mark.parametrize("name,value", [
@@ -130,6 +173,7 @@ async def test_failures_before_dispatch_cost_nothing_and_keep_usage_known(policy
     assert err.value.code == "endpoint_unavailable" and err.value.usage["tokens_known"] is True
     # A policy denial of the resolved address is not a billed attempt either.
     monkeypatch.setenv("VIBEAUDIT_TEST_KEY", "synthetic-test-key")
+    monkeypatch.setenv("VIBEAUDIT_MODEL_CREDENTIAL_ORIGINS", "VIBEAUDIT_TEST_KEY=https://10.0.0.5")
     profile.update(endpoint="https://10.0.0.5/v1", temperature=0.2, credential_env="VIBEAUDIT_TEST_KEY")
     policy.update(data_policy="cloud_allowed", allowed_model_origins=["https://10.0.0.5"])
     with pytest.raises(providers.ProviderError) as err:
@@ -143,6 +187,14 @@ def test_run_input_rejects_reserved_credential_names():
         ModelProfile(id="a", role="reviewer", provider="openai", model_id="m", family="f", credential_env="VIBEAUDIT_DATABASE_URL")
     with pytest.raises(ValueError, match="Vibe Audit setting"):
         AuthProfile(id="alice", credential_env="VIBEAUDIT_SESSION_TOKEN")
+
+
+def test_run_input_rejects_a_model_key_named_as_a_test_identity():
+    from vibe_audit.domain import RunInput
+    model = {"id": "a", "role": "reviewer", "provider": "openai", "model_id": "m", "family": "f", "credential_env": "VIBEAUDIT_OPENAI_API_KEY"}
+    with pytest.raises(ValueError, match="both a model and a test identity"):
+        RunInput(models=[model], auth_profiles=[{"id": "alice", "credential_env": "VIBEAUDIT_OPENAI_API_KEY"}])
+    RunInput(models=[model], auth_profiles=[{"id": "alice", "credential_env": "VIBEAUDIT_ALICE_TOKEN"}])
 
 
 @pytest.mark.parametrize("endpoint", ["http://127.0.0.1:11434/v1", "http://[::1]:11434/v1"])
@@ -397,6 +449,7 @@ async def test_unreachable_endpoint_is_known_zero_usage(profile, policy, monkeyp
             raise OSError("synthetic name resolution failure")
         monkeypatch.setattr(asyncio.get_running_loop(), "getaddrinfo", no_dns)
         monkeypatch.setenv("VIBEAUDIT_TEST_KEY", "synthetic")
+        monkeypatch.setenv("VIBEAUDIT_MODEL_CREDENTIAL_ORIGINS", "VIBEAUDIT_TEST_KEY=https://model.example.invalid")
         profile.update(endpoint="https://model.example.invalid/v1", credential_env="VIBEAUDIT_TEST_KEY")
         policy.update(data_policy="cloud_allowed", allowed_model_origins=["https://model.example.invalid"])
     profile["provider"] = provider
@@ -456,6 +509,12 @@ async def test_retry_policy_denial_retains_previous_billed_usage(profile, policy
     # Keys after blank lines or on the line after a separator, and schemes behind a dotted prefix.
     "\n\n   password: synthetic-secret", "Server=db;\r\nPassword=synthetic-secret",
     "url = svc.db.postgres://app:synthetic-secret@db/app", "define('my-secret', 'synthetic-secret')",
+    # Short password names, signing keys and cloud connection-string keys.
+    "DB_PASS=synthetic-secret", "  smtp_pwd: synthetic-secret", 'GPG_PASSPHRASE = "synthetic-secret"',
+    'signing_key = "synthetic-secret"', "export WEBHOOK_KEY=synthetic-secret",
+    "DefaultEndpointsProtocol=https;AccountName=demo;AccountKey=synthetic-secret;EndpointSuffix=core.windows.net",
+    "hf = hf_" + "s" * 34, "aws = ASIA" + "S" * 16, "mail = SG." + "s" * 22 + "." + "s" * 43, "google = ya29." + "s" * 30,
+    "hook = https://hooks.slack.com/services/T0000/B0000/" + "s" * 24,
 ])
 def test_redaction_covers_common_secret_formats(content):
     redacted = redact_text(content)
@@ -464,14 +523,16 @@ def test_redaction_covers_common_secret_formats(content):
 
 
 @pytest.mark.parametrize("content", ["password_hash = bcrypt.hashpw(password, salt)", "login(user, password=password)",
-                                     'tokenizer = load("cl100k")', '<input type="password" name="password">'])
+                                     'tokenizer = load("cl100k")', '<input type="password" name="password">',
+                                     'bypass = "cache"', "compass: north", "passthrough = True", "for item in items: pass"])
 def test_redaction_keeps_security_relevant_code_readable(content):
     # Reviewers must still see how credentials are handled, not only that they exist.
     assert redact_text(content) == content
 
 
 @pytest.mark.parametrize("unit", ["a", "token", "secret_", "\n", " \n", "a.", "a+", "define('token", "export token_",
-                                  "eyJ-", "sk-a", "xoxb-", "glpat-"])
+                                  "eyJ-", "sk-a", "xoxb-", "glpat-", "pass", "_pass", "DB_PASS=", "export pwd_",
+                                  "SG.", "hf_", "ASIA", "ya29.", "hooks.slack.com/services/", ";AccountKey="])
 def test_redaction_stays_linear_on_hostile_single_token_files(unit):
     # Each of these took minutes at the per-file limit with backtracking name scans.
     import time

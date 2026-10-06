@@ -11,7 +11,7 @@ export interface ProjectSetting {id:string;name:string;configuration:RunInput}
 export interface CatalogEntry {id:string;official_id:string;standard:string;version:string;title:string;description?:string;source:string;license:string}
 export interface CatalogData {manifest:{collections:{standard:string;version:string;count:number;quality_notes:string[]}[]};entries:CatalogEntry[]}
 export interface Budget { max_seconds: number; max_requests: number; max_model_calls: number; max_tokens: number }
-export interface AuthProfile { id:string; credential_env:string; header:string; scheme:string; role:string }
+export interface AuthProfile { id:string; credential_env:string; header:string; scheme:string; role:string; model_selectable?:boolean }
 export interface RunInput {
   name: string; mode: 'demo' | 'live'; source_path: string; deployment_id: string; target_url: string;
   data_policy: 'local_only' | 'cloud_allowed'; allowed_model_origins: string[]; allowed_target_ips: string[];

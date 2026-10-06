@@ -60,12 +60,14 @@ SUPERVISOR_FRAME=64*1024*1024
 
 
 def _client_env(manifest):
-    from .adapters import credential_env_allowed
+    from .adapters import credential_env_allowed,shared_credentials
     from .worker_entry import clean_env
     result=clean_env()
+    # A model key must never reach the supervisor that talks to the target, even under a second name.
+    shared=set(shared_credentials(manifest))
     for profile in manifest.get("auth_profiles",[]):
         key=profile.get("credential_env","")
-        if credential_env_allowed(key) and key in os.environ:
+        if credential_env_allowed(key) and key in os.environ and key not in shared:
             result[key]=os.environ[key]
     return result
 
@@ -221,7 +223,14 @@ class WorkerRuntime:
             from .worker_entry import docker_api
             status,info=await asyncio.to_thread(docker_api,"GET","/info")
             if status!=200 or info.get("OSType")!="linux": raise WorkerBlocked("Docker daemon unavailable")
-            return {"available":True,"isolation":"docker_network_none","production_ready":True}
+            # Whitebox workers parse hostile repositories; a daemon started without seccomp leaves every syscall open.
+            options=[str(item).split(",") for item in info.get("SecurityOptions") or []]
+            seccomp=next((item for item in options if item[0]=="name=seccomp"),None)
+            if not seccomp or "profile=unconfined" in seccomp:
+                return {"available":False,"reason":"The Docker daemon applies no seccomp profile; workers need its default profile"}
+            # Recorded with the run, so whether AppArmor, user namespaces or rootless mode also applied stays visible.
+            return {"available":True,"isolation":"docker_network_none","production_ready":True,
+                    "security_options":sorted(item[0].removeprefix("name=") for item in options)}
         except Exception:
             return {"available":False,"reason":"Local Linux Docker daemon could not be verified"}
 
