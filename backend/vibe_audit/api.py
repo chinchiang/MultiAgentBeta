@@ -71,11 +71,15 @@ def create_app(data_dir=None, database_url=None, testing=False, session_token=No
     engine=Engine(store,database_url)
     sessions={}
     token_failures=deque()
-    allowed_origins={"http://127.0.0.1:8000","http://localhost:8000","http://[::1]:8000"}
-    allowed_origins|={s.rstrip("/") for s in os.getenv("VIBEAUDIT_UI_ORIGINS","").split(",") if s}
+    default_origins={"http://127.0.0.1:8000","http://localhost:8000","http://[::1]:8000"}
+    configured={s.rstrip("/") for s in os.getenv("VIBEAUDIT_UI_ORIGINS","").split(",") if s}
+    # Configured origins (the launcher adds the port it listens on) replace the :8000 defaults, so another
+    # local service on :8000 is not a trusted origin while the console runs on a different port.
+    allowed_origins=set(configured or default_origins)
     if testing:
         allowed_origins.add("http://testserver")
-    engine.console_origins=set(allowed_origins)
+    # A live target must not be any address this console answers on, the defaults included.
+    engine.console_origins=allowed_origins|default_origins
     allowed_hosts={s.split("://",1)[1] for s in allowed_origins}
     source_roots=[Path(p).resolve() for p in os.getenv("VIBEAUDIT_SOURCE_ROOTS",str(ROOT/"fixtures")).split(os.pathsep) if p]
 

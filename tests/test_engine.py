@@ -182,6 +182,7 @@ async def test_whitebox_resume_keeps_paid_reviews_and_sealed_scans(engine,monkey
     engine.runtime_configs["h"]={}
     monkeypatch.setattr("vibe_audit.staging.verify_staging",lambda staging:True)
     monkeypatch.setattr("vibe_audit.resource_manifest.resource_manifest",lambda config,tools:{"tools":1})
+    monkeypatch.setattr("vibe_audit.staging.staged_line_count",lambda staging,path:10)
     scans,calls=[],[]
     class Runtime:
         async def run_scanner(self,tool,path,**kwargs):
@@ -210,6 +211,35 @@ async def test_whitebox_resume_keeps_paid_reviews_and_sealed_scans(engine,monkey
     assert scans==["semgrep","osv"] and [r["scanner_id"] for r in run["tool_results"]]==["semgrep","osv"]
     assert [r["agent_id"] for r in run["reviews"]]==reviewers and all(r["status"]=="completed" for r in run["reviews"])
     assert run["commander_plan"]["focus"]==focus
+
+
+async def test_scanner_locations_must_exist_in_the_staged_copy(engine,monkeypatch,tmp_path):
+    from vibe_audit.staging import stage_source
+    source=tmp_path/"repo"
+    source.mkdir()
+    (source/"app.py").write_text("a = 1\nb = 2\nc = 3\n")
+    (source/".env").write_text("DB_PASSWORD=synthetic")
+    run=await finished_demo(engine)
+    run.update(mode="live",status="running",stage="whitebox",tool_results=[],gaps=[])
+    run["manifest"].update(static_tools=["gitleaks"])
+    run.update(staging=stage_source(str(source),engine.store.root/"scanner-inputs"),tool_manifest={"tools":1},runtime_config_hash="h")
+    engine.runtime_configs["h"]={}
+    monkeypatch.setattr("vibe_audit.resource_manifest.resource_manifest",lambda config,tools:{"tools":1})
+    # A line number is the container's choice; past the file's end it can only be carrying something else.
+    reported=[{"file":"app.py","line":3},{"file":".env","line":1},{"file":"app.py","line":None},
+              {"file":"app.py","line":5},{"file":".env","line":int("9"*4000)},{"file":"missing.py","line":1}]
+    class Runtime:
+        async def run_scanner(self,tool,path,**kwargs):
+            return {"status":"completed","findings":[{**item,"rule_id":"generic-api-key","title":"t"} for item in reported],"gaps":[],"limitations":[]}
+    monkeypatch.setattr(engine,"runtime",lambda run:Runtime())
+    engine.cancel_flags[run["id"]]=asyncio.Event()
+    await engine._scan_source(run)
+    result=run["tool_results"][0]
+    assert [(f["file"],f["line"]) for f in result["findings"]]==[("app.py",3),(".env",1),("app.py",None)]
+    assert "gitleaks: 3 finding(s) named a file or line outside the staged snapshot and were not imported" in run["gaps"]
+    # The sealed evidence holds the bounded result, not the container's claim.
+    evidence=engine.store.evidence(next(a for a in run["artifacts"] if a["id"]==result["evidence_id"]),run["id"])["content"]
+    assert len(evidence["findings"])==3 and "9"*50 not in json.dumps(evidence)
 
 
 async def test_one_unverifiable_citation_does_not_void_a_review(engine,monkeypatch):
@@ -451,6 +481,16 @@ def test_engine_knows_the_console_origins_a_target_must_not_reach(tmp_path,monke
         assert {"http://127.0.0.1:8000","http://127.0.0.1:8123"}<=app.state.engine.console_origins
     finally:
         app.state.store.close()
+
+
+def test_configured_ui_origins_replace_the_default_port(tmp_path,monkeypatch):
+    # Started on another port, the console must not trust whatever else listens on :8000.
+    monkeypatch.setenv("VIBEAUDIT_UI_ORIGINS","http://127.0.0.1:9000")
+    with TestClient(create_app(tmp_path,testing=True)) as client:
+        assert client.get("/api/session",headers={"Origin":"http://127.0.0.1:8000"}).status_code==403
+        assert client.get("/api/session",headers={"Host":"127.0.0.1:8000"}).status_code==403
+        assert client.get("/api/session",headers={"Host":"127.0.0.1:9000","Origin":"http://127.0.0.1:9000"}).status_code==401
+        assert "http://127.0.0.1:8000" in client.app.state.engine.console_origins
 
 
 def test_local_api_session_csrf_origin_host_and_source_boundary(tmp_path):

@@ -133,6 +133,22 @@ def discard_staging(record: dict, private_root: str | Path) -> bool:
     return remove_private_tree(root)
 
 
+def staged_line_count(record: dict, path: str) -> int | None:
+    """Line count of one file of a verified staging copy; None when the record does not list it or it changed."""
+    entry = next((item for item in record["files"] if item["path"] == path), None)
+    if entry is None:
+        return None
+    try:
+        with os.fdopen(_open_regular(Path(record["path"]) / path), "rb") as handle:
+            content = handle.read(entry["bytes"] + 1)
+    except OSError:
+        return None
+    if hashlib.sha256(content).hexdigest() != entry["sha256"]:
+        return None
+    # A last line without a newline is still a line; one past a trailing newline is allowed too, as editors number it.
+    return content.count(b"\n") + 1
+
+
 def verify_staging(record: dict) -> bool:
     root = Path(record["path"])
     if not _safe_ancestors(root):

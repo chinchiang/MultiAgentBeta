@@ -487,7 +487,7 @@ class WorkerRuntime:
         return supervised_verdict(case,await self.execute_tool({"operation":"http_case","tool_id":"http_case","cases":[case],"phase":"blackbox", "timeout_seconds":min(120,manifest.get("budget",{}).get("max_seconds",120))},manifest=manifest,cancel_event=cancel_event,request_hook=request_hook,lease_hook=lease_hook,repetition=repetition))
 
     async def run_scanner(self,scanner_id,source_dir,*,manifest,cancel_event,request_hook=None,lease_hook=None,image_pin=None,offline_db_dir=None):
-        from .sandbox import _parse
+        from .sandbox import _parse,osv_database_ids
         offline_db_dir=offline_db_dir or self.offline_db_dir
         async def deny_network(**kwargs):
             raise WorkerBlocked("White-box scanners cannot use target egress")
@@ -507,7 +507,8 @@ class WorkerRuntime:
         else: return {"status":"blocked","reason":"Unknown fixed white-box scanner","cleanup_confirmed":True}
         result=await self.execute_tool({"tool_id":scanner_id,"phase":"whitebox","source_dir":source_dir,"argv":argv,"input_files":files,"image_pin":image_pin,"offline_db_dir":offline_db_dir},manifest=manifest,cancel_event=cancel_event,request_hook=request_hook,lease_hook=lease_hook)
         if result.get("status")=="completed":
-            try: result["findings"],result["gaps"]=_parse(scanner_id,result.get("stdout","").encode(),result.get("exit_code"))
+            # The database was hash-checked against the run's tool manifest before this scan (service._scan_source).
+            try: result["findings"],result["gaps"]=_parse(scanner_id,result.get("stdout","").encode(),result.get("exit_code"),osv_database_ids(offline_db_dir) if scanner_id=="osv" else frozenset())
             except Exception: result.update(status="execution_error",reason="Scanner output schema or exit status invalid",findings=[])
         caveats=[gap for gap in result.get("gaps",[]) if gap.startswith("Offline OSV results depend")]
         result["limitations"]=caveats

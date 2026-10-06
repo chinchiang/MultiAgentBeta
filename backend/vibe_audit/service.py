@@ -471,6 +471,12 @@ class Engine:
                 self.check_active(run)
             result=await runtime.run_scanner(tool,run["staging"]["path"],manifest=manifest,cancel_event=self.cancel_flags[run["id"]],lease_hook=lease_hook)
             result["scanner_id"]=tool
+            # The container chose each file and line it reports; only a place that exists in the staged copy is imported,
+            # as for a reviewer's citation, so an unbounded line number cannot carry staged secret files out.
+            kept=[item for item in result.get("findings",[]) if self.staged_location(run,item)]
+            if len(kept)<len(result.get("findings",[])):
+                result.setdefault("gaps",[]).append(f"{len(result['findings'])-len(kept)} finding(s) named a file or line outside the staged snapshot and were not imported")
+                result["findings"]=kept
             artifact=self.store.put_evidence(run["id"],tool,{**result,"tool_manifest":run["tool_manifest"]})
             run["artifacts"].append(artifact)
             run.setdefault("tool_results",[]).append({**result,"evidence_id":artifact["id"]})
@@ -479,6 +485,13 @@ class Engine:
             if result.get("status") not in {"completed","pass","fail"}:
                 run["gaps"].append(tool+": "+result.get("reason","Scanner did not establish coverage"))
             self.event(run,"Static tool completed: "+tool+" / "+result.get("status","unknown"))
+
+    def staged_location(self,run,item):
+        from .staging import staged_line_count
+        if not item.get("file"):
+            return True
+        lines=staged_line_count(run["staging"],item["file"])
+        return lines is not None and (item.get("line") is None or item["line"]<=lines)
 
     def source(self,run):
         return self.store.evidence(next(a for a in run["artifacts"] if a["id"]==run["snapshot_id"]),run["id"])["content"]

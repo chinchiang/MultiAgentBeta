@@ -129,3 +129,42 @@ def test_supervisor_manifest_names_model_credentials_without_their_values(monkey
     assert adapters.shared_credentials(narrow, {}) == ["VIBEAUDIT_LOCAL_MODEL_KEY"]
     with pytest.raises(AdapterBlocked, match="model credential"):
         _prepare_request(narrow, {"method": "GET", "path": "/orders", "identity": "alice"})
+
+
+async def test_osv_findings_name_only_records_in_the_provisioned_database(tmp_path, monkeypatch):
+    import json, zipfile
+    from vibe_audit.worker_runtime import WorkerRuntime
+    database = tmp_path / "osv"
+    archive = database / "osv-scanner" / "PyPI" / "all.zip"
+    archive.parent.mkdir(parents=True)
+    with zipfile.ZipFile(archive, "w") as bundle:
+        bundle.writestr("PYSEC-2024-1.json", "{}")
+    output = {"results": [{"source": {"path": "/src/requirements.txt"}, "packages": [
+        {"vulnerabilities": [{"id": "PYSEC-2024-1"}, {"id": "PYSEC-2024-" + "4142".zfill(12)}]}]}]}
+    runtime = WorkerRuntime(tmp_path / "work", backend="process_test", allow_process_test=True, offline_db_dir=str(database))
+    try:
+        async def execute_tool(spec, **kwargs):
+            return {"status": "completed", "stdout": json.dumps(output), "exit_code": 1}
+        monkeypatch.setattr(runtime, "execute_tool", execute_tool)
+        result = await runtime.run_scanner("osv", str(tmp_path), manifest={}, cancel_event=None)
+    finally:
+        runtime.leases.close()
+    assert sorted(f["rule_id"] for f in result["findings"]) == ["PYSEC-2024-1", "unrecognized-rule"]
+
+
+def test_staged_line_count_reads_only_the_listed_unchanged_file(tmp_path):
+    import os
+    from vibe_audit.staging import stage_source, staged_line_count
+    source = tmp_path / "repo"
+    source.mkdir()
+    (source / "app.py").write_text("a\nb\n")
+    (source / "one.txt").write_text("no newline")
+    record = stage_source(str(source), tmp_path / "private")
+    assert staged_line_count(record, "app.py") == 3 and staged_line_count(record, "one.txt") == 1
+    assert staged_line_count(record, "missing.py") is None and staged_line_count(record, "../repo/app.py") is None
+    changed = os.path.join(record["path"], "app.py")
+    os.chmod(changed, 0o644)
+    with open(changed, "a") as handle:
+        handle.write("\n" * 5000)
+    # The count is of the copy the scanner saw, so a file that no longer matches its recorded hash counts nothing.
+    assert staged_line_count(record, "app.py") is None
