@@ -764,6 +764,10 @@ async def test_real_worker_sends_the_header_values_the_operator_listed(runtime,h
     result=await runtime.run_case(scope,value,cancel_event=asyncio.Event(),request_hook=allow)
     assert result["status"]=="inconclusive" and [p for p,_,_ in seen]==["/fixture"],(result,seen)
     assert [o["path"] for o in result["broker_observations"]]==["/fixture"],result["broker_observations"]
+    # The control passed (supervisor record), so the worker did send /private and the relay refused it (502): the stop
+    # is the supervisor's list check, not an unmet control.
+    assert [o["value"] for o in result["observations"] if o["kind"]=="precondition"]==[True],result["observations"]
+    assert 502 in [o.get("status_code") for o in result["worker_observations"] if o.get("kind")!="precondition"],result["worker_observations"]
     # A value outside the fixed vocabulary is refused by the worker itself, before any request is sent.
     seen.clear()
     outside=dict(value,headers={"Accept":"application/x-sk-live-0123456789"});outside.pop("hash")
@@ -771,6 +775,8 @@ async def test_real_worker_sends_the_header_values_the_operator_listed(runtime,h
     scope["run_id"]=uuid.uuid4().hex
     result=await runtime.run_case(scope,outside,cancel_event=asyncio.Event(),request_hook=allow)
     assert result["status"]=="blocked" and seen==[] and result["broker_observations"]==[],(result,seen)
+    # The worker ran and refused the header itself, rather than the task never starting.
+    assert "worker_started" in result["lifecycle"] and "request header" in result["worker_reason"],result
 
 
 async def test_docker_runtime_rejects_a_work_root_too_long_for_the_broker_socket(tmp_path,monkeypatch):
