@@ -15,7 +15,7 @@ export interface AuthProfile { id:string; credential_env:string; header:string; 
 export interface RunInput {
   name: string; mode: 'demo' | 'live'; source_path: string; deployment_id: string; target_url: string;
   data_policy: 'local_only' | 'cloud_allowed'; allowed_model_origins: string[]; allowed_target_ips: string[];
-  allowed_requests: {method: HttpMethod; path:string; model_body?:boolean}[];
+  allowed_requests: {method: HttpMethod; path:string; model_body?:boolean; model_headers?:Record<string,string[]>}[];
   budget: Budget; models: ModelProfile[]; auth_profiles: AuthProfile[]; notes: string; parent_run_id: string | null; cases: TestCase[];
   schema_version?:2; requirements?:SecurityRequirement[]; runtime_profile?:string; fixture_profile?:string|null;
   static_tools?:('semgrep'|'osv'|'gitleaks')[]; deployment_header?:string|null; parent_finding_ids?:string[];

@@ -110,7 +110,8 @@ def _provision_script():
 
 DIGEST = "python@sha256:" + "2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b94cd8ebbe06a9"
 NOT_PINNED = ["python:3.13-slim", "python", "python@sha256:" + "A" * 64, "python@sha256:" + "a" * 63,
-              DIGEST + "0", DIGEST + " ", "@sha256:" + "a" * 64, DIGEST + "\npython:latest", ""]
+              DIGEST + "0", DIGEST + " ", "@sha256:" + "a" * 64, DIGEST + "\npython:latest",
+              DIGEST + "\n" + DIGEST, DIGEST + "\n", ""]
 
 
 def test_worker_dockerfile_refuses_a_base_image_that_is_not_digest_pinned():
@@ -170,4 +171,4 @@ def test_provisioning_writes_nothing_for_a_worker_without_a_digest_pinned_base(t
     labels["worker"] = {provision.BASE_LABEL: DIGEST}
     provision.main()
     import json
-    assert json.loads(out.with_suffix(".images.json").read_text())["worker"]["base_image"] == DIGEST
+    assert json.loads(out.with_suffix(".images.json").read_text())["worker"]["base_image_label"] == DIGEST

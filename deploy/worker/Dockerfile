@@ -6,9 +6,11 @@ ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 ARG BASE_IMAGE
 LABEL org.opencontainers.image.base.name="${BASE_IMAGE}"
-# grep prints only the matching line, so an empty or multi-line value never equals its own match.
+# BASE_IMAGE must be exactly one non-empty line equal to its own grep match; the line count also rules out a
+# multi-line value whose every line matches. The label is only what this build declares about itself.
 # The runtime mounts a bounded mode-1777 tmpfs over /out, so this directory's mode is never used.
-RUN [ -n "${BASE_IMAGE}" ] && [ "$(printf '%s\n' "${BASE_IMAGE}" | grep -Ex '[^@[:space:]]+@sha256:[0-9a-f]{64}')" = "${BASE_IMAGE}" ] \
+RUN [ -n "${BASE_IMAGE}" ] && [ "$(printf '%s\n' "${BASE_IMAGE}" | grep -c '')" = 1 ] \
+    && [ "$(printf '%s\n' "${BASE_IMAGE}" | grep -Ex '[^@[:space:]]+@sha256:[0-9a-f]{64}')" = "${BASE_IMAGE}" ] \
     || { echo "BASE_IMAGE must be pinned by digest: <name>@sha256:<64 hex>" >&2; exit 1; } \
     && mkdir -p /inputs /out /broker /runtime /tmp/vibeaudit-inputs \
     && chmod 1777 /tmp && chmod 755 /inputs /broker /runtime && chmod 777 /out

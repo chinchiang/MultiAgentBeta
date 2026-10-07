@@ -146,7 +146,10 @@ MODEL_CASE_HEADER_NAMES = {"accept": "Accept", "accept-language": "Accept-Langua
 MODEL_CASE_HEADERS = frozenset(MODEL_CASE_HEADER_NAMES)
 # A model reads the snapshot and operator notes, so a free-form header value could carry them to the target.
 # Its header values come from small fixed vocabularies instead, one value per header with no list or q parameter:
-# every extra choice is room to encode snapshot text. Operator-written cases keep free values.
+# every extra choice is room to encode snapshot text. Within those vocabularies a model-designed request may use only
+# the values the operator lists for that method and path (allowed_requests[].model_headers); an endpoint without a
+# list takes no model-chosen header at all, so by default the headers carry no choice. Operator-written cases keep
+# free values.
 _MEDIA_TYPES = ("*/*", "text/*", "image/*", "application/*", "application/json", "application/problem+json",
                 "application/xml", "application/x-www-form-urlencoded", "application/octet-stream", "application/pdf",
                 "multipart/form-data", "text/html", "text/plain", "text/csv", "text/xml", "text/event-stream",
@@ -171,6 +174,37 @@ _MODEL_HEADER_VALUES = {
 }
 
 
+def model_header_list_error(model_headers):
+    """Why an allowed_requests[].model_headers value is not acceptable, or None.
+
+    Each name has its one spelling and each value must already pass the fixed model vocabulary, so an operator list
+    can only narrow what a model may send, never widen it."""
+    if not isinstance(model_headers, dict):
+        return "model_headers must map header names to lists of values"
+    for name, values in model_headers.items():
+        lower = name.lower() if isinstance(name, str) else None
+        if MODEL_CASE_HEADER_NAMES.get(lower) != name:
+            return f"model_headers names must be one of {', '.join(sorted(MODEL_CASE_HEADER_NAMES.values()))}"
+        if (not isinstance(values, list) or not values or len(values) != len(set(map(str, values)))
+                or not all(isinstance(v, str) and _MODEL_HEADER_VALUES[lower].fullmatch(v) for v in values)):
+            return f"model_headers[{name}] must be a non-empty list of distinct values from the model vocabulary"
+    return None
+
+
+def model_header_vocabulary(manifest, method, path):
+    """{lower-case name: allowed values} that the operator lists for this method and path; empty when none."""
+    vocabulary = {}
+    for request in (manifest or {}).get("allowed_requests", []) or []:
+        if (not isinstance(request, dict) or str(request.get("method", "GET")).upper() != str(method).upper()
+                or request.get("path") != path):
+            continue
+        lists = request.get("model_headers") or {}
+        if model_header_list_error(lists) is None:
+            for name, values in lists.items():
+                vocabulary.setdefault(name.lower(), set()).update(values)
+    return {name: frozenset(values) for name, values in vocabulary.items()}
+
+
 def canonical_model_headers(headers):
     """A model-designed header map with each name in its one spelling and in sorted order.
 
@@ -188,8 +222,12 @@ def canonical_model_headers(headers):
     return {name: out[name] for name in sorted(out)}
 
 
-def case_headers_allowed(headers, *, model_designed=False, relay=False):
-    """relay=True only inside the worker, which adds its own case and identity routing headers."""
+def case_headers_allowed(headers, *, model_designed=False, relay=False, vocabulary=None):
+    """relay=True only inside the worker, which adds its own case and identity routing headers.
+
+    vocabulary is model_header_vocabulary() for the request's method and path; a model-designed header must be in it,
+    and None means the operator listed nothing, so any model-designed header is refused."""
+    vocabulary = vocabulary or {}
     if headers is None:
         return True
     if not isinstance(headers, dict) or len(headers) > 24:
@@ -203,7 +241,8 @@ def case_headers_allowed(headers, *, model_designed=False, relay=False):
         if not model_designed:
             return lower not in _FORBIDDEN_HEADERS
         return (MODEL_CASE_HEADER_NAMES.get(lower) == name
-                and bool(_MODEL_HEADER_VALUES[lower].fullmatch(value)))
+                and bool(_MODEL_HEADER_VALUES[lower].fullmatch(value))
+                and value in vocabulary.get(lower, ()))
     return all(isinstance(name, str) and _HEADER_NAME.fullmatch(name)
                and isinstance(value, str) and len(value) <= 4096 and all(32 <= ord(c) <= 126 for c in value)
                and allowed(name, value)
@@ -379,7 +418,9 @@ class _PinnedHTTPSConnection(_PinnedHTTPConnection):
             raise
 
 
-def _prepare_request(manifest, case):
+def _prepare_request(manifest, case, *, transport_headers=None):
+    """transport_headers are added by trusted transport code (the supervisor's Content-Type for a body it forwards):
+    they are not a model's choice, so they skip the per-endpoint model vocabulary but keep the same wire order."""
     method = case.get("method", "GET")
     if method not in {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}:
         raise AdapterBlocked("Unsupported HTTP method.")
@@ -393,8 +434,15 @@ def _prepare_request(manifest, case):
         raise AdapterBlocked("Case path must use ASCII URL encoding.") from None
     headers = {"Accept": "application/json", "Accept-Encoding": "identity", "Connection": "close"}
     supplied = case.get("headers") or {}
-    if not case_headers_allowed(supplied, model_designed=case.get("designed_by") == "model", relay=manifest.get("relay") is True):
+    model_designed = case.get("designed_by") == "model"
+    vocabulary = model_header_vocabulary(manifest, method, path) if model_designed else None
+    if not case_headers_allowed(supplied, model_designed=model_designed, relay=manifest.get("relay") is True,
+                                vocabulary=vocabulary):
         raise AdapterBlocked("Case contains an unsupported, routing or credential-bearing request header.")
+    if transport_headers:
+        supplied = {**supplied, **transport_headers}
+        if model_designed:
+            supplied = dict(sorted(supplied.items()))
     # A supplied Accept takes the default's place, so an explicit application/json and none at all look the same on the
     # wire; a model's other names follow in sorted order (case_headers_allowed), never in an order the model chose.
     headers.update(supplied)
