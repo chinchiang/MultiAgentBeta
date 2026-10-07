@@ -115,6 +115,28 @@ def test_supervisor_sends_a_model_body_only_to_an_operator_marked_endpoint(monke
     assert "Content-Type" not in model_supervisor(monkeypatch, model_body=True).manifest["allowed_requests"][0]["model_headers"]
 
 
+def test_supervisor_applies_the_header_list_to_model_steps_of_a_sequence_only(monkeypatch):
+    monkeypatch.setitem(sys.modules, "adapters", adapters)
+    supervisor = Supervisor.__new__(Supervisor)
+    supervisor.manifest = {"auth_profiles": [], "allowed_requests": [
+        {"method": "GET", "path": "/fixture"}, {"method": "GET", "path": "/private", "model_headers": {"Accept": ["text/html"]}}]}
+    step = lambda sid, path, headers: {"id": sid, "case_id": "C1", "method": "GET", "path": path, "identity": None,
+                                       "headers": headers, "body": None}
+    steps = [step("fixture:setup", "/fixture", {"X-Fixture": "engine"}),   # engine lifecycle step: not a model choice
+             step("case", "/private", {"Accept": "text/html"}),            # listed for /private
+             step("control:1", "/fixture", {"Accept": "text/html"})]       # /fixture lists nothing
+    supervisor.spec = {"operation": "request_sequence", "cases": [{"id": "C1", "designed_by": "model"}], "requests": steps}
+    supervisor.sessions, supervisor.sequence_stopped = {}, False
+    request = lambda s: {"case_id": "C1", "method": "GET", "path": s["path"], "identity": None, "headers": s["headers"], "body_b64": ""}
+    for index, expected in ((0, True), (1, True), (2, False)):
+        supervisor.sequence = index
+        if expected:
+            supervisor.allowed_request(request(steps[index]))
+        else:
+            with pytest.raises(AdapterBlocked):
+                supervisor.allowed_request(request(steps[index]))
+
+
 def test_supervisor_rechecks_the_operator_header_list_before_tb_target(monkeypatch):
     # A sealed model step with a vocabulary value the operator did not list (as if the case gate had let it through)
     # stops at the last trusted hop; so does any model header on an endpoint with no list.

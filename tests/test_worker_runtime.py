@@ -727,6 +727,43 @@ async def test_real_worker_sees_only_its_view_of_a_model_case(runtime,target):
     assert [o["name"] for o in result["observations"] if o["kind"]=="precondition"]==["model-written control name"]
 
 
+@pytest.fixture
+def header_target():
+    seen=[]
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self,*args):pass
+        def do_GET(self):
+            seen.append((self.path,self.headers.get("Accept"),self.headers.get("If-None-Match")))
+            body=b"TEST-CANARY" if self.path=="/fixture" else b"Forbidden"
+            self.send_response(200 if self.path=="/fixture" else 403)
+            self.send_header("Content-Length",str(len(body)));self.end_headers();self.wfile.write(body)
+    server=ThreadingHTTPServer(("127.0.0.1",0),Handler)
+    thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+    yield f"http://127.0.0.1:{server.server_port}",seen
+    server.shutdown();server.server_close();thread.join(timeout=2)
+
+
+async def test_real_worker_sends_the_header_values_the_operator_listed(runtime,header_target):
+    # The worker's own manifest has no allowed_requests: the per-endpoint list is the supervisor's check.
+    origin,seen=header_target
+    scope=manifest(origin)
+    scope["allowed_requests"]=[{"method":"GET","path":"/fixture","model_headers":{"If-None-Match":["*"]}},
+                               {"method":"GET","path":"/private","model_headers":{"Accept":["text/html"]}}]
+    value=case();value.pop("hash")
+    value.update(designed_by="model",headers={"Accept":"text/html"})
+    value["preconditions"][0]["headers"]={"If-None-Match":"*"}
+    value["hash"]=canonical_hash(value)
+    result=await runtime.run_case(scope,value,cancel_event=asyncio.Event(),request_hook=allow)
+    assert result["status"]=="pass",result
+    assert [(p,i) for p,_,i in seen if p=="/fixture"]==[("/fixture","*")] and ("/private","text/html",None) in seen,seen
+    # A value the operator did not list for that endpoint never reaches the target, from the worker or past the supervisor.
+    seen.clear()
+    scope["allowed_requests"][1]["model_headers"]={"Accept":["application/xml"]}
+    scope["run_id"]=uuid.uuid4().hex
+    result=await runtime.run_case(scope,value,cancel_event=asyncio.Event(),request_hook=allow)
+    assert result["status"]!="pass" and ("/private","text/html",None) not in seen,(result,seen)
+
+
 async def test_docker_runtime_rejects_a_work_root_too_long_for_the_broker_socket(tmp_path,monkeypatch):
     import vibe_audit.worker_entry as worker_entry_module
     class Leases:

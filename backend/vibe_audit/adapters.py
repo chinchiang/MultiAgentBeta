@@ -226,7 +226,9 @@ def case_headers_allowed(headers, *, model_designed=False, relay=False, vocabula
     """relay=True only inside the worker, which adds its own case and identity routing headers.
 
     vocabulary is model_header_vocabulary() for the request's method and path; a model-designed header must be in it,
-    and None means the operator listed nothing, so any model-designed header is refused."""
+    and None means the operator listed nothing, so any model-designed header is refused. Inside the worker (relay)
+    the manifest holds no allowed_requests, so only the fixed vocabulary is checked there: the per-endpoint list is
+    enforced by the case gate and again by the supervisor, the last trusted hop, whose manifest has no relay flag."""
     vocabulary = vocabulary or {}
     if headers is None:
         return True
@@ -242,7 +244,7 @@ def case_headers_allowed(headers, *, model_designed=False, relay=False, vocabula
             return lower not in _FORBIDDEN_HEADERS
         return (MODEL_CASE_HEADER_NAMES.get(lower) == name
                 and bool(_MODEL_HEADER_VALUES[lower].fullmatch(value))
-                and value in vocabulary.get(lower, ()))
+                and (relay or value in vocabulary.get(lower, ())))
     return all(isinstance(name, str) and _HEADER_NAME.fullmatch(name)
                and isinstance(value, str) and len(value) <= 4096 and all(32 <= ord(c) <= 126 for c in value)
                and allowed(name, value)
@@ -435,7 +437,7 @@ def _prepare_request(manifest, case, *, transport_headers=None):
     headers = {"Accept": "application/json", "Accept-Encoding": "identity", "Connection": "close"}
     supplied = case.get("headers") or {}
     model_designed = case.get("designed_by") == "model"
-    vocabulary = model_header_vocabulary(manifest, method, path) if model_designed else None
+    vocabulary = model_header_vocabulary(manifest, method, path) if model_designed and manifest.get("relay") is not True else None
     if not case_headers_allowed(supplied, model_designed=model_designed, relay=manifest.get("relay") is True,
                                 vocabulary=vocabulary):
         raise AdapterBlocked("Case contains an unsupported, routing or credential-bearing request header.")
