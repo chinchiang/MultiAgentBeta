@@ -107,10 +107,34 @@ async def test_uncompilable_case_is_blocked_before_any_positive_control():
 
 
 def test_no_schemathesis_cases_or_external_xml_entities_rejected():
-    for raw in (b'<testsuite tests="0"/>', b'<!DOCTYPE x [<!ENTITY a SYSTEM "file:///secret">]><testsuite/>'):
+    # A UTF-16 document hides its DTD from a byte search but expat still decodes and expands it.
+    hidden = ('<?xml version="1.0" encoding="UTF-16"?><!DOCTYPE x [<!ENTITY a "expanded">]>'
+              '<testsuite><testcase name="&a;"/></testsuite>').encode("utf-16")
+    for raw, reason in ((b'<testsuite tests="0"/>', "Schemathesis executed no test cases"),
+                        (b'<!DOCTYPE x [<!ENTITY a SYSTEM "file:///secret">]><testsuite/>', "Untrusted XML declaration"),
+                        (hidden, "Untrusted XML declaration")):
         result=parse_tool_result("schemathesis",{"status":"completed","exit_code":0,"cleanup_confirmed":True,
             "artifacts":{"schemathesis.xml":raw}},case_id="case-one")
-        assert result["status"] == "execution_error"
+        assert (result["status"], result["reason"]) == ("execution_error", reason)
+        assert "expanded" not in json.dumps(result)
+
+
+
+@pytest.mark.parametrize("encoding", ["utf-7", "utf-32", "rot13", "no-such-codec"])
+def test_xml_in_an_encoding_expat_cannot_use_is_refused_as_malformed(encoding):
+    raw = f'<?xml version="1.0" encoding="{encoding}"?><testsuite><testcase name="a"/></testsuite>'.encode()
+    result = parse_tool_result("schemathesis", {"status":"completed","exit_code":0,"cleanup_confirmed":True,
+        "artifacts":{"schemathesis.xml":raw}}, case_id="case-one")
+    assert (result["status"], result["reason"]) == ("execution_error", "Malformed XML artifact")
+
+
+def test_well_formed_schemathesis_report_still_parses_in_any_encoding():
+    report = '<?xml version="1.0"?><testsuite><testcase name="ok"/><testcase name="bad"><failure/></testcase></testsuite>'
+    for raw in (report.encode(), report.replace('version="1.0"', 'version="1.0" encoding="UTF-16"').encode("utf-16")):
+        result = parse_tool_result("schemathesis", {"status":"completed","exit_code":1,"cleanup_confirmed":True,
+            "artifacts":{"schemathesis.xml":raw}}, case_id="case-one")
+        assert result["status"] == "completed" and result["tool_tests"] == 2
+        assert [f["name"] for f in result["findings"]] == ["bad"]
 
 
 @pytest.mark.asyncio

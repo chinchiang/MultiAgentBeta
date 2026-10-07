@@ -11,6 +11,7 @@ import hashlib
 import json
 import re
 import xml.etree.ElementTree as ET
+from xml.parsers import expat
 from urllib.parse import urlsplit
 
 VERSIONS = {"schemathesis": "4.28.0", "playwright": "1.63.0", "promptfoo": "0.123.1", "pyrit": "1.1.0", "zap": "2.17.0"}
@@ -25,6 +26,27 @@ DOCS = {
 
 class ToolInputError(ValueError):
     pass
+
+
+def _refuse_xml_declarations(data):
+    """Refuse any DTD or entity declaration before ElementTree parses untrusted XML.
+
+    The byte check alone misses encodings that are not ASCII-compatible (a UTF-16 BOM),
+    so expat, which decodes exactly as ElementTree's parser will, scans the document first."""
+    if b"<!DOCTYPE" in data.upper() or b"<!ENTITY" in data.upper():
+        raise ToolInputError("Untrusted XML declaration")
+    def refuse(*_):
+        raise ToolInputError("Untrusted XML declaration")
+    scan = expat.ParserCreate()
+    scan.StartDoctypeDeclHandler = refuse
+    scan.EntityDeclHandler = refuse
+    try:
+        scan.Parse(data, True)
+    except ToolInputError:
+        raise   # the handlers' own refusal, kept as is (ToolInputError is a ValueError)
+    except (expat.ExpatError, ValueError, LookupError) as exc:
+        # A declared encoding expat cannot use (utf-7, UTF-32, unknown names) raises ValueError or LookupError.
+        raise ToolInputError("Malformed XML artifact") from exc
 
 
 def _json(value):
@@ -236,8 +258,7 @@ def parse_tool_result(tool_id, result, *, case_id):
                 base["tool_assertions"] = report["results"].get("stats", {})
         elif tool_id == "schemathesis":
             data = raw("schemathesis.xml")
-            if b"<!DOCTYPE" in data.upper() or b"<!ENTITY" in data.upper():
-                raise ToolInputError("Untrusted XML declaration")
+            _refuse_xml_declarations(data)
             root = ET.fromstring(data)
             tests = list(root.iter("testcase"))
             if not tests:
