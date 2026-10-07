@@ -20,8 +20,8 @@ BASE_LABEL="org.opencontainers.image.base.name"
 def worker_base(image):
     """deploy/worker/Dockerfile records its BASE_IMAGE in the OCI base-image label and refuses tags.
     An image without a digest-pinned label was not built from that recipe, so its ID is not recorded.
-    The label is self-declared: anyone who can build or tag images on the Docker daemon can set it,
-    so a present label is a claim, not proof of the base image."""
+    The label is self-declared: anyone who can build or tag images on the Docker daemon can set it, and an
+    image built FROM a labeled worker inherits it, so a present label is a claim, not proof of the base image."""
     base=((image.get("Config") or {}).get("Labels") or {}).get(BASE_LABEL)
     if not isinstance(base,str) or not DIGEST_REFERENCE.fullmatch(base):
         raise SystemExit("Worker image has no digest-pinned "+BASE_LABEL+" label; rebuild it from "

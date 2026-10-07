@@ -45,8 +45,9 @@ The build fails unless `BASE_IMAGE` is a single line `<name>@sha256:<64 hex>`; a
 such as `python:3.13-slim` is refused. The reference is kept in the OCI label
 `org.opencontainers.image.base.name`, and `scripts/provision-runtime.py` refuses to
 record a worker image without a digest-pinned label. These checks catch an accidental
-tag or a stale image; they are not provenance. The label is the image's own claim, and
-any account that can operate the Docker daemon can set it, so `base_image_label` in the
+tag or a stale unlabeled image; they are not provenance. The label is the image's own
+claim: any account that can operate the Docker daemon can set it, and an image built
+FROM a labeled worker inherits it without running this check, so `base_image_label` in the
 `.images.json` side file records that claim only. The runtime does not re-check it. The
 digest itself must still be checked against the official image by the operator.
 

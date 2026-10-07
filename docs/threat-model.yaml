@@ -489,7 +489,7 @@ threats:
       org.opencontainers.image.base.name（deploy/worker/Dockerfile:7-14）；(2) provision-runtime.py 不記錄沒有 digest 形式標籤的
       worker image ID（scripts/provision-runtime.py:17-29、52）。這兩道只擋得住誤用 tag 建置、以及在這次變更前或用其他配方建出的
       無標籤映像。標籤是映像自己的宣告，能操作 Docker daemon 的帳號（等同 host root，見 tb-host）可以自行設定，所以有標籤不等於
-      證明基礎映像；.images.json 的 base_image_label 是這個宣告的紀錄，不是已驗證的來源。runtime 不再檢查標籤，手寫的 runtime
+      證明基礎映像；從已標籤映像衍生的映像也會繼承這個標籤。.images.json 的 base_image_label 是這個宣告的紀錄，不是已驗證的來源。runtime 不檢查標籤，手寫的 runtime
       profile 不經過 provision-runtime.py。docs/runtime-images.json 目前記錄的 worker image ID 早於這次變更，重建 worker 並重跑
       provision-runtime.py 後，第 (2) 道才對它生效。該 digest 是否確實是官方 python 映像，仍由操作者自行核對。
     status: accepted
