@@ -1111,21 +1111,28 @@ async def test_model_header_must_be_listed_by_the_operator_for_that_endpoint(eng
     assert dispatched==[] and run["executions"]==[]
 
 
-@pytest.mark.parametrize("listed",[False,True])
-async def test_model_designed_control_header_needs_the_list_for_its_own_endpoint(engine,monkeypatch,listed):
+@pytest.mark.parametrize("listed_on,allowed",[("case",False),("control",True),(None,False)])
+async def test_model_designed_control_header_needs_the_list_for_its_own_endpoint(engine,monkeypatch,listed_on,allowed):
+    # The control is on /orders/fixture and the case on /orders/private: each request is checked against the list of
+    # its own method and path, so a list on the case's endpoint does not cover the control.
     run=await live_post_case(engine,adapter="http",provenance="model")
-    control=[{"name":"fixture","method":"GET","path":"/orders/private","headers":{"If-None-Match":"*"},
+    control=[{"name":"fixture","method":"GET","path":"/orders/fixture","headers":{"If-None-Match":"*"},
               "expected_status":200,"required_text":["x"]}]
     for item in [run["cases"][0],*run["manifest"]["cases"]]:
         item.update(preconditions=control)
-    as_get_case(run,model_headers={"If-None-Match":["*"]} if listed else None)
+    as_get_case(run)
+    lists={"If-None-Match":["*"]}
+    run["manifest"]["allowed_requests"]=[{"method":"GET","path":"/orders/private",**({"model_headers":lists} if listed_on=="case" else {})},
+                                         {"method":"GET","path":"/orders/fixture",**({"model_headers":lists} if listed_on=="control" else {})}]
+    run["manifest_hash"]=digest(run["manifest"])
+    approve(run)
     dispatched=[]
     class Runtime:
         async def run_case(self,manifest,case,**kwargs):
             dispatched.append(case["id"])
             return {"status":"pass","reason":"synthetic","observations":[],"evidence":[],"cleanup_confirmed":True}
     monkeypatch.setattr(engine,"runtime",lambda _:Runtime())
-    if listed:
+    if allowed:
         await engine._blackbox(run)
         assert dispatched==[run["cases"][0]["id"]]
     else:

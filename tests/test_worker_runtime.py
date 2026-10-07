@@ -756,12 +756,21 @@ async def test_real_worker_sends_the_header_values_the_operator_listed(runtime,h
     result=await runtime.run_case(scope,value,cancel_event=asyncio.Event(),request_hook=allow)
     assert result["status"]=="pass",result
     assert [(p,i) for p,_,i in seen if p=="/fixture"]==[("/fixture","*")] and ("/private","text/html",None) in seen,seen
-    # A value the operator did not list for that endpoint never reaches the target, from the worker or past the supervisor.
+    # A vocabulary value the operator did not list for that endpoint passes the worker (it has no list) and stops at the
+    # supervisor: the control on /fixture is still sent through the broker, the case on /private never is.
     seen.clear()
     scope["allowed_requests"][1]["model_headers"]={"Accept":["application/xml"]}
     scope["run_id"]=uuid.uuid4().hex
     result=await runtime.run_case(scope,value,cancel_event=asyncio.Event(),request_hook=allow)
-    assert result["status"]!="pass" and ("/private","text/html",None) not in seen,(result,seen)
+    assert result["status"]=="inconclusive" and [p for p,_,_ in seen]==["/fixture"],(result,seen)
+    assert [o["path"] for o in result["broker_observations"]]==["/fixture"],result["broker_observations"]
+    # A value outside the fixed vocabulary is refused by the worker itself, before any request is sent.
+    seen.clear()
+    outside=dict(value,headers={"Accept":"application/x-sk-live-0123456789"});outside.pop("hash")
+    outside["hash"]=canonical_hash(outside)
+    scope["run_id"]=uuid.uuid4().hex
+    result=await runtime.run_case(scope,outside,cancel_event=asyncio.Event(),request_hook=allow)
+    assert result["status"]=="blocked" and seen==[] and result["broker_observations"]==[],(result,seen)
 
 
 async def test_docker_runtime_rejects_a_work_root_too_long_for_the_broker_socket(tmp_path,monkeypatch):

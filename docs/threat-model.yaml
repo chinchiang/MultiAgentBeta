@@ -175,7 +175,7 @@ agents:
     high_impact_tools: [sealed_case_http_dispatch]   # 它設計的封存案例由確定性程式派發為送往目標的 HTTP 請求；live 時須經操作者核准（service.py:724-727、policy.py:178-180）
     # 設計上的控制（見 t-indirect-injection、t-model-identity）：method/path（含 query）須完全符合操作者的 allowed_requests；
     # 模型設計的 POST 一律 blocked（fixture profile 除外）；fixture 路徑的模型本文只送往操作者標 model_body 的端點（service.py:758、815-827）；
-    # header 名稱只允許 6 個、拼法與順序固定、值限固定詞彙中的單一值（adapters.py:144-174、225-248）；身分限 model_selectable（policy.py:138-142）；
+    # header 名稱只允許 6 個、拼法與順序固定、值限固定詞彙中的單一值（adapters.py:144-174、225-251）；身分限 model_selectable（policy.py:138-142）；
     # 目標 IP 釘選；整組封存案例須經操作者核准才發出第一個請求（service.py:724-727）。
     # 這些是程式碼層控制，VibeSec 目前只能驗證 claude_permission 類證據，所以沒有 mitigation_evidence。
     # 2026-10-06 由 @chinchiang 決定：以上控制視為切斷對外通訊這隻腳。can_communicate_externally 仍標 true，因為請求確實會送出；
@@ -211,12 +211,12 @@ threats:
       `; charset=utf-8` 一種寫法）、
       If-Match／If-None-Match 只能是 *（模型看不到目標回應，沒有真的 ETag）、X-Requested-With 只能是 XMLHttpRequest
       （adapters.py:165-174）。2026-10-07 起再收窄：模型設計的請求只能用操作者在 allowed_requests[].model_headers 為該 method
-      與 path 明列的值，清單只能是上述詞彙的子集（adapters.py:177-205、225-247；RunInput 驗證 domain.py:150-153）；沒有清單的端點，
+      與 path 明列的值，清單只能是上述詞彙的子集（adapters.py:177-205、225-251；RunInput 驗證 domain.py:150-153）；沒有清單的端點，
       模型設計的請求不能帶任何 header，所以預設沒有 header 選擇。清單由 case_gate 與 supervisor 依請求的 method 與 path 檢查；不受信任的 worker 拿到的 manifest 不含 allowed_requests，只檢查固定詞彙，不是這道控制的一環。supervisor 為本文補上的 Content-Type 屬傳輸層，不算模型選擇
       （adapters.py:423-448；worker_entry.py:339-347）。header 名稱只有一種拼法（Accept、Accept-Language…），大小寫不同的重複名稱在設計階段即拒絕，
       依名稱排序送出（adapters.py:144-146、208-224；service.py:680-690）：大小寫、重複與順序都不再是模型的選擇。
       case_gate 先擋（policy.py:132-137）；目標前最後一個受信任的節點 supervisor 依 sealed case 的來源標記，再以模型詞彙與操作者清單重驗
-      （worker_entry.py:334-351），不只靠不受信任容器內的檢查。fixture 路徑上，模型撰寫的本文只送往操作者在 allowed_requests
+      （worker_entry.py:334-353），不只靠不受信任容器內的檢查。fixture 路徑上，模型撰寫的本文只送往操作者在 allowed_requests
       標 model_body 的端點（service.py:758、815-827；supervisor 再擋一次，worker_entry.py:336-338）。整組封存案例須經操作者
       核准（核准綁定案例雜湊收據），之後才發出第一個請求（service.py:183-197、724-727）；執行 capability 本身也要求這份核准
       （policy.py:178-180），不只靠 black-box 階段的順序。身分只能是 model_selectable 的測試身分
