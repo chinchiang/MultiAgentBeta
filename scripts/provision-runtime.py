@@ -14,6 +14,18 @@ REFERENCES={"worker":"vibeaudit-worker:test","semgrep":"semgrep/semgrep:1.153.0"
     "gitleaks":"vibeaudit-gitleaks:8.30.1","osv":"vibeaudit-osv:2.3.5",
     "zap":"ghcr.io/zaproxy/zaproxy:2.17.0",**{tool:"vibeaudit-tools:integration" for tool in ("schemathesis","playwright","promptfoo","pyrit")}}
 
+DIGEST_REFERENCE=re.compile(r"[^@\s]+@sha256:[0-9a-f]{64}")
+BASE_LABEL="org.opencontainers.image.base.name"
+
+def worker_base(image):
+    """deploy/worker/Dockerfile records its BASE_IMAGE in the OCI base-image label and refuses tags.
+    An image without a digest-pinned label was not built from that recipe, so its ID is not recorded."""
+    base=((image.get("Config") or {}).get("Labels") or {}).get(BASE_LABEL)
+    if not isinstance(base,str) or not DIGEST_REFERENCE.fullmatch(base):
+        raise SystemExit("Worker image has no digest-pinned "+BASE_LABEL+" label; rebuild it from "
+                         "deploy/worker/Dockerfile with BASE_IMAGE=<name>@sha256:<digest>")
+    return base
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output",type=Path,required=True)
@@ -34,6 +46,8 @@ def main():
             raise SystemExit("Missing local provisioned image: "+reference)
         images[tool]=data["Id"]
         provenance[tool]={"reference":reference,"image_id":data["Id"],"repository_digests":data.get("RepoDigests",[])}
+        if tool=="worker":
+            provenance[tool]["base_image"]=worker_base(data)
     profile={"backend":"docker","work_root":args.work_root,"database_url_env":args.database_env,
              "image_pins":images,"offline_db_dir":args.offline_db,"ttl_seconds":10}
     args.output.parent.mkdir(parents=True,exist_ok=True)

@@ -46,7 +46,7 @@ docker pull semgrep/semgrep:1.153.0
 docker pull ghcr.io/zaproxy/zaproxy:2.17.0
 ```
 
-映像標籤只用於 provisioning。下個步驟將本地實際 image ID 寫進設定；runner 只接受 immutable SHA256。工具映像的確切 Python/npm 鎖定檔在 deploy/worker/locks；Dockerfile.tools 保留原始 provisioning 配方，Dockerfile.tools.locked 使用捕獲的完整依賴鎖定檔。固定 image ID 與驗收版本另存於 docs/runtime-images.json。跨架構或重建後必須重新跑工具契約，不能假設 image ID 相同。
+worker 的 `BASE_IMAGE` 必須是 `<name>@sha256:<64 hex>`，否則建置失敗；provision-runtime.py 也不記錄沒有 digest 基礎映像標籤（`org.opencontainers.image.base.name`）的 worker。映像標籤只用於 provisioning。下個步驟將本地實際 image ID 寫進設定；runner 只接受 immutable SHA256。工具映像的確切 Python/npm 鎖定檔在 deploy/worker/locks；Dockerfile.tools 保留原始 provisioning 配方，Dockerfile.tools.locked 使用捕獲的完整依賴鎖定檔。固定 image ID 與驗收版本另存於 docs/runtime-images.json。跨架構或重建後必須重新跑工具契約，不能假設 image ID 相同。
 
 ## 4. 離線漏洞資料與 runtime profile
 
@@ -131,7 +131,7 @@ docker pull semgrep/semgrep:1.153.0
 docker pull ghcr.io/zaproxy/zaproxy:2.17.0
 ```
 
-Image tags are used for provisioning only. The next step writes the actual local image IDs into the configuration; the runner accepts only immutable SHA256 values. The exact Python/npm lockfiles for the tool images are in deploy/worker/locks; Dockerfile.tools keeps the original provisioning recipe, while Dockerfile.tools.locked uses the captured full dependency lockfiles. The pinned image IDs and validated versions are also stored in docs/runtime-images.json. After a cross-architecture build or any rebuild you must re-run the tool contracts; never assume the image IDs are unchanged.
+The worker's `BASE_IMAGE` must be `<name>@sha256:<64 hex>` or the build fails; provision-runtime.py also refuses a worker without a digest base-image label (`org.opencontainers.image.base.name`). Image tags are used for provisioning only. The next step writes the actual local image IDs into the configuration; the runner accepts only immutable SHA256 values. The exact Python/npm lockfiles for the tool images are in deploy/worker/locks; Dockerfile.tools keeps the original provisioning recipe, while Dockerfile.tools.locked uses the captured full dependency lockfiles. The pinned image IDs and validated versions are also stored in docs/runtime-images.json. After a cross-architecture build or any rebuild you must re-run the tool contracts; never assume the image IDs are unchanged.
 
 ## 4. Offline vulnerability data and the runtime profile
 

@@ -41,6 +41,12 @@ docker build --build-arg BASE_IMAGE=python@sha256:<verified-digest> -t vibeaudit
 docker image inspect vibeaudit-worker:test --format '{{.Id}}'
 ```
 
+The build fails unless `BASE_IMAGE` is `<name>@sha256:<64 hex>`; a tag such as
+`python:3.13-slim` is refused. The reference is kept in the OCI label
+`org.opencontainers.image.base.name`, and `scripts/provision-runtime.py` refuses to
+record a worker image without a digest-pinned label. The digest itself must still
+be checked against the official image by the operator.
+
 Tool images must contain `python3` and the fixed tool executable. Static tools
 are completely offline. OSV requires a separately provisioned and verified
 database snapshot whose directory contains `osv-scanner/`; that directory is

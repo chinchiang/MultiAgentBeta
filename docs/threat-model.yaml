@@ -482,9 +482,12 @@ threats:
     mitigation: >-
       根目錄 requirements.lock.txt 以 --require-hashes 安裝；runtime 只接受 sha256 image ID；工具映像 FROM 釘 digest；
       工具映像 npm ci --ignore-scripts；OSV 離線 archive 有雜湊；掃描時不拉映像、不安裝套件。殘留：
-      deploy/worker/locks/python-requirements.txt 沒有 hash；apt-get 未釘版（docs/VALIDATION.md）；deploy/worker/Dockerfile
-      的 BASE_IMAGE 由操作者提供。補 hash 會改動已驗收的 Dockerfile.tools.locked，須在有 Docker 的環境重建工具映像並重跑工具
-      契約（docs/image-validation.json）後才能宣告，本次未改。2026-10-06 由 @chinchiang 接受此殘留。
+      deploy/worker/locks/python-requirements.txt 沒有 hash；apt-get 未釘版（docs/VALIDATION.md）。補 hash 會改動已驗收的
+      Dockerfile.tools.locked，須在有 Docker 的環境重建工具映像並重跑工具契約（docs/image-validation.json）後才能宣告，本次未改。
+      2026-10-06 由 @chinchiang 接受此殘留。原本同列殘留的「worker 的 BASE_IMAGE 由操作者提供、程式不檢查」已於 2026-10-07
+      改為程式強制：BASE_IMAGE 不是 <name>@sha256:<64 hex> 時建置失敗，並記在 OCI 標籤 org.opencontainers.image.base.name
+      （deploy/worker/Dockerfile:7-13）；provision-runtime.py 不記錄沒有這個標籤的 worker image ID（scripts/provision-runtime.py:17-26、50）。
+      仍由操作者自行核對該 digest 確實是官方 python 映像。
     status: accepted
     gate: G1
   - id: t-raw-staging-retention
@@ -548,7 +551,8 @@ decisions:
     接受三條威脅的殘留（2026-10-06，@chinchiang 決定）：t-redaction-gap（快照遮罩是啟發式，無前綴的高熵 token 無法可靠辨識）、
     t-container-escape（已要求 seccomp，但沒有自訂 seccomp／AppArmor profile 或 userns，kernel 漏洞仍可逃逸；掃描結果的選擇通道
     在第 5 次 G4 審查後量化為每次掃描數 KB，@chinchiang 確認接受）、
-    t-supply-chain（工具映像的 Python lock 沒有 hash、apt-get 未釘版、Dockerfile 的 BASE_IMAGE 由操作者提供）。
+    t-supply-chain（工具映像的 Python lock 沒有 hash、apt-get 未釘版、Dockerfile 的 BASE_IMAGE 由操作者提供；
+    最後一項已於 2026-10-07 改為程式強制 digest，見 t-supply-chain 的 mitigation）。
   - >-
     c-test-designer 的致命三要素以 external_comms 切腳（2026-10-06，@chinchiang 決定）。理由：模型設計的請求只能送往操作者
     明列的 origin 與 IP，method/path（含 query）須完全符合 allowed_requests；POST 除 fixture profile 外一律 blocked；header 值限
