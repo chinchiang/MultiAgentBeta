@@ -1041,8 +1041,11 @@ def as_get_case(run,headers=None,model_headers=None):
 ])
 async def test_case_headers_cannot_override_method_path_or_relay(engine,monkeypatch,provenance,headers,allowed):
     run=await live_post_case(engine,adapter="http",provenance=provenance)
-    # The operator lists each model header value used here, so these rows test the fixed vocabulary itself.
-    as_get_case(run,headers,model_headers={name:[value] for name,value in headers.items()} if provenance=="model" else None)
+    # The operator lists each model header value that the fixed vocabulary accepts. A value outside the vocabulary
+    # cannot be listed (RunInput refuses it), so those rows reach the vocabulary check itself with no list entry.
+    from vibe_audit.adapters import model_header_list_error
+    listed={name:[value] for name,value in headers.items() if model_header_list_error({name:[value]}) is None}
+    as_get_case(run,headers,model_headers=listed if provenance=="model" else None)
     dispatched=[]
     class Runtime:
         async def run_case(self,manifest,case,**kwargs):
@@ -1108,6 +1111,36 @@ async def test_model_header_must_be_listed_by_the_operator_for_that_endpoint(eng
     assert dispatched==[] and run["executions"]==[]
 
 
+@pytest.mark.parametrize("listed_on,allowed",[("case",False),("control",True),(None,False)])
+async def test_model_designed_control_header_needs_the_list_for_its_own_endpoint(engine,monkeypatch,listed_on,allowed):
+    # The control is on /orders/fixture and the case on /orders/private: each request is checked against the list of
+    # its own method and path, so a list on the case's endpoint does not cover the control.
+    run=await live_post_case(engine,adapter="http",provenance="model")
+    control=[{"name":"fixture","method":"GET","path":"/orders/fixture","headers":{"If-None-Match":"*"},
+              "expected_status":200,"required_text":["x"]}]
+    for item in [run["cases"][0],*run["manifest"]["cases"]]:
+        item.update(preconditions=control)
+    as_get_case(run)
+    lists={"If-None-Match":["*"]}
+    run["manifest"]["allowed_requests"]=[{"method":"GET","path":"/orders/private",**({"model_headers":lists} if listed_on=="case" else {})},
+                                         {"method":"GET","path":"/orders/fixture",**({"model_headers":lists} if listed_on=="control" else {})}]
+    run["manifest_hash"]=digest(run["manifest"])
+    approve(run)
+    dispatched=[]
+    class Runtime:
+        async def run_case(self,manifest,case,**kwargs):
+            dispatched.append(case["id"])
+            return {"status":"pass","reason":"synthetic","observations":[],"evidence":[],"cleanup_confirmed":True}
+    monkeypatch.setattr(engine,"runtime",lambda _:Runtime())
+    if allowed:
+        await engine._blackbox(run)
+        assert dispatched==[run["cases"][0]["id"]]
+    else:
+        with pytest.raises(PolicyError,match="model_headers"):
+            await engine._blackbox(run)
+        assert dispatched==[]
+
+
 async def test_operator_written_case_headers_need_no_operator_list(engine,monkeypatch):
     run=await live_post_case(engine,adapter="http",provenance="operator")
     as_get_case(run,{"Accept":"application/json;q=0.9","X-Tenant":"tenant-b"})
@@ -1126,6 +1159,8 @@ async def test_operator_written_case_headers_need_no_operator_list(engine,monkey
     ({"Accept-Language":["zh-TW"],"If-None-Match":["*"]},True),
     ({"accept":["application/json"]},False),            # one spelling per name
     ({"X-Tenant":["tenant-b"]},False),                  # not a model header name
+    ({"Authorization":["Bearer x"]},False),             # credentials are attached from auth profiles only
+    ({"X-API-Key":["x"]},False),
     ({"Accept":["application/json;q=0.9"]},False),      # outside the fixed vocabulary
     ({"Accept":["application/json, text/html"]},False),
     ({"If-Match":['"etag"']},False),

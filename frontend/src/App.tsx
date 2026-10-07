@@ -208,7 +208,8 @@ type AllowedRequest=RunInput['allowed_requests'][number];
 // One allowed request per line: METHOD /path, then optional model-body, then an optional JSON object of the header
 // values a model-designed case may use on this endpoint, e.g. GET /api {"Accept":["application/json","text/html"]}.
 // JSON because a value such as "application/json; charset=utf-8" contains a space. The server checks the values.
-const REQUEST_LINE=/^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+(\/\S*)(\s+model-body)?(?:\s+(\{.*\}))?$/;
+// The path cannot hold '{', so header JSON written without a space before it is refused, not read as part of the path.
+const REQUEST_LINE=/^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+(\/[^\s{]*)(\s+model-body)?(?:\s+(\{.*\}))?$/;
 function parseRequestLine(line:string):AllowedRequest|null{
   const m=REQUEST_LINE.exec(line.trim());if(!m)return null;
   let headers:Record<string,string[]>|undefined;
