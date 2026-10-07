@@ -362,11 +362,16 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
         control = {"name": "fixture_exists", "method": "GET", "path": "/leak", "identity": None,
                    "expected_status": 200, "required_text": ["TENANT_B_CANARY"], "headers": {"If-None-Match": '"snapshot-text"'}}
         self.case.update(designed_by="model", path="/ok", preconditions=[control])
+        self.manifest["allowed_requests"] = [{"method": "GET", "path": "/leak", "model_headers": {"If-None-Match": ["*"]}}]
         result = await self.run_case()
         self.assertEqual((result["status"], result["requests"]), ("blocked", 0))
         control["headers"] = {"If-None-Match": "*"}
         result = await self.run_case()
         self.assertEqual((result["status"], result["requests"]), ("pass", 2))
+        # The same control on an endpoint the operator listed nothing for sends nothing.
+        self.manifest["allowed_requests"] = [{"method": "GET", "path": "/leak"}]
+        result = await self.run_case()
+        self.assertEqual((result["status"], result["requests"]), ("blocked", 0))
 
     async def test_failed_positive_control_does_not_send_main_request(self):
         self.case["preconditions"] = [{"name": "fixture_exists", "method": "GET", "path": "/ok",

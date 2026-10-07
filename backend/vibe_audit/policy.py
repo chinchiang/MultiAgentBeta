@@ -4,7 +4,7 @@ import time
 from urllib.parse import urlsplit, unquote
 from datetime import datetime, timezone
 
-from .adapters import case_headers_allowed
+from .adapters import case_headers_allowed, model_header_vocabulary
 from .domain import digest, now
 
 
@@ -130,8 +130,11 @@ class Policy:
             if not 1<=case.get("repetitions",1)<=20:
                 raise PolicyError("Invalid repetition count")
             model_designed=case.get("designed_by")=="model"
-            if not all(case_headers_allowed(r.get("headers"),model_designed=model_designed) for r in [case,*[p for p in case.get("preconditions",[]) if isinstance(p,dict)]]):
-                raise PolicyError("Case headers cannot carry credentials, relay controls or method/path overrides; model-designed values come from fixed vocabularies")
+            # A model-designed request may use only the header values the operator listed for its method and path.
+            if not all(case_headers_allowed(r.get("headers"),model_designed=model_designed,
+                                            vocabulary=model_header_vocabulary(run["manifest"],r.get("method","GET"),r.get("path")) if model_designed else None)
+                       for r in [case,*[p for p in case.get("preconditions",[]) if isinstance(p,dict)]]):
+                raise PolicyError("Case headers cannot carry credentials, relay controls or method/path overrides; a model-designed header must be one the operator listed in allowed_requests[].model_headers for that method and path")
             if model_designed:
                 selectable={p.get("id") for p in run["manifest"].get("auth_profiles",[]) if p.get("model_selectable") is True}
                 identities={case.get("identity")}|{p.get("identity") for p in case.get("preconditions",[]) if isinstance(p,dict)}

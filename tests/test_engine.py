@@ -1007,9 +1007,11 @@ async def test_model_designed_post_cannot_declare_itself_read_only(engine,monkey
         assert run["usage"]["requests"]==0
 
 
-def as_get_case(run,headers=None):
-    """Make the live POST case a read-only GET, with optional case headers, and reseal it."""
-    run["manifest"]["allowed_requests"]=[{"method":"GET","path":"/orders/private"}]
+def as_get_case(run,headers=None,model_headers=None):
+    """Make the live POST case a read-only GET, with optional case headers, and reseal it.
+
+    model_headers is what the operator lists for GET /orders/private in allowed_requests[].model_headers."""
+    run["manifest"]["allowed_requests"]=[{"method":"GET","path":"/orders/private",**({"model_headers":model_headers} if model_headers else {})}]
     case=run["cases"][0]
     case.update(method="GET",body=None,headers=headers or {})
     for item in run["manifest"]["cases"]:
@@ -1039,7 +1041,8 @@ def as_get_case(run,headers=None):
 ])
 async def test_case_headers_cannot_override_method_path_or_relay(engine,monkeypatch,provenance,headers,allowed):
     run=await live_post_case(engine,adapter="http",provenance=provenance)
-    as_get_case(run,headers)
+    # The operator lists each model header value used here, so these rows test the fixed vocabulary itself.
+    as_get_case(run,headers,model_headers={name:[value] for name,value in headers.items()} if provenance=="model" else None)
     dispatched=[]
     class Runtime:
         async def run_case(self,manifest,case,**kwargs):
@@ -1086,6 +1089,62 @@ async def test_model_designed_case_uses_only_opted_in_identities(engine,monkeypa
         assert dispatched==[] and run["executions"]==[]
 
 
+@pytest.mark.parametrize("model_headers",[
+    None,                                   # the operator listed nothing for this endpoint: no model header at all
+    {"Accept":["text/html"]},               # another value from the vocabulary is not the listed one
+    {"Accept-Language":["application/json"]},
+])
+async def test_model_header_must_be_listed_by_the_operator_for_that_endpoint(engine,monkeypatch,model_headers):
+    run=await live_post_case(engine,adapter="http",provenance="model")
+    as_get_case(run,{"Accept":"application/json"},model_headers=model_headers)
+    dispatched=[]
+    class Runtime:
+        async def run_case(self,manifest,case,**kwargs):
+            dispatched.append(case["headers"])
+            return {"status":"pass","reason":"synthetic","observations":[],"evidence":[],"cleanup_confirmed":True}
+    monkeypatch.setattr(engine,"runtime",lambda _:Runtime())
+    with pytest.raises(PolicyError,match="model_headers"):
+        await engine._blackbox(run)
+    assert dispatched==[] and run["executions"]==[]
+
+
+async def test_operator_written_case_headers_need_no_operator_list(engine,monkeypatch):
+    run=await live_post_case(engine,adapter="http",provenance="operator")
+    as_get_case(run,{"Accept":"application/json;q=0.9","X-Tenant":"tenant-b"})
+    dispatched=[]
+    class Runtime:
+        async def run_case(self,manifest,case,**kwargs):
+            dispatched.append(case["headers"])
+            return {"status":"pass","reason":"synthetic","observations":[],"evidence":[],"cleanup_confirmed":True}
+    monkeypatch.setattr(engine,"runtime",lambda _:Runtime())
+    await engine._blackbox(run)
+    assert dispatched==[{"Accept":"application/json;q=0.9","X-Tenant":"tenant-b"}]
+
+
+@pytest.mark.parametrize("model_headers,ok",[
+    ({"Accept":["application/json","text/html"]},True),
+    ({"Accept-Language":["zh-TW"],"If-None-Match":["*"]},True),
+    ({"accept":["application/json"]},False),            # one spelling per name
+    ({"X-Tenant":["tenant-b"]},False),                  # not a model header name
+    ({"Accept":["application/json;q=0.9"]},False),      # outside the fixed vocabulary
+    ({"Accept":["application/json, text/html"]},False),
+    ({"If-Match":['"etag"']},False),
+    ({"Accept":[]},False),
+    ({"Accept":["text/html","text/html"]},False),
+    ({"Accept":"text/html"},False),
+    (["Accept"],False),
+])
+def test_operator_model_header_lists_can_only_narrow_the_vocabulary(model_headers,ok):
+    from pydantic import ValidationError
+    from vibe_audit.domain import RunInput
+    make=lambda: RunInput(name="Header lists",allowed_requests=[{"method":"GET","path":"/a","model_headers":model_headers}])
+    if ok:
+        assert make().allowed_requests[0]["model_headers"]==model_headers
+    else:
+        with pytest.raises(ValidationError,match="model_headers"):
+            make()
+
+
 async def test_test_designer_is_told_which_identities_and_headers_it_may_use(engine,monkeypatch):
     run=await finished_demo(engine)
     run["mode"]="live"
@@ -1102,8 +1161,15 @@ async def test_test_designer_is_told_which_identities_and_headers_it_may_use(eng
         await engine._case_design(run)
     instruction,payload=seen[0]
     assert payload["identities"]==["alice"]
-    assert "one of the given identities" in instruction and "If-None-Match: *" in instruction
-    assert "without lists or q parameters" in instruction
+    assert "one of the given identities" in instruction and "allowed_headers" in instruction and "headers:{}" in instruction
+    assert payload["allowed_headers"]==[]
+    # The designer sees exactly the per-endpoint lists the operator wrote, and nothing for unlisted endpoints.
+    run["manifest"]["allowed_requests"]=[{"method":"GET","path":"/a","model_headers":{"Accept":["application/json","text/html"]}},
+                                         {"method":"GET","path":"/b"}]
+    seen.clear()
+    with pytest.raises(PolicyError):
+        await engine._case_design(run)
+    assert seen[0][1]["allowed_headers"]==[{"method":"GET","path":"/a","headers":{"Accept":["application/json","text/html"]}}]
 
 
 def test_test_identities_are_not_model_selectable_by_default():
@@ -1197,7 +1263,8 @@ async def designed(engine,monkeypatch,*proposals,allowed=None):
 
 
 async def test_model_headers_are_sealed_in_one_spelling_and_order(engine,monkeypatch):
-    run=await designed(engine,monkeypatch,model_proposal(await finished_demo(engine),headers={"accept-language":"zh-TW","accept":"application/json"}))
+    run=await designed(engine,monkeypatch,model_proposal(await finished_demo(engine),headers={"accept-language":"zh-TW","accept":"application/json"}),
+                       allowed=[{"method":"GET","path":"/orders/private","model_headers":{"Accept":["application/json"],"Accept-Language":["zh-TW"]}}])
     assert list(run["cases"][0]["headers"].items())==[("Accept","application/json"),("Accept-Language","zh-TW")]
 
 
@@ -1224,7 +1291,7 @@ async def test_model_cleanup_is_replaced_by_the_engine_and_grants_no_request(eng
 async def test_model_cases_wait_for_operator_approval_of_the_exact_set(engine,monkeypatch):
     from vibe_audit.service import CaseApprovalRequired
     run=await live_post_case(engine,adapter="http",provenance="model")
-    case=as_get_case(run)
+    case=as_get_case(run,model_headers={"Accept":["text/html"]})
     dispatched=[]
     class Runtime:
         async def run_case(self,manifest,case,**kwargs):

@@ -7,6 +7,13 @@ import pytest
 
 from vibe_audit import adapters
 from vibe_audit.adapters import AdapterBlocked, _prepare_request, canonical_model_headers, case_headers_allowed
+
+# Every value of the fixed model vocabulary that these tests use, as an operator would list it for an endpoint.
+LISTED = {"accept": {"application/json", "text/html", "*/*"}, "accept-language": {"zh-TW"},
+          "content-type": {"application/json; charset=utf-8", "application/json;charset=utf-8"},
+          "if-none-match": {"*"}, "x-requested-with": {"XMLHttpRequest"}}
+LISTED_MANIFEST = {"allowed_requests": [{"method": "GET", "path": "/orders", "model_headers": {
+    "Accept": ["application/json", "text/html"], "If-None-Match": ["*"]}}]}
 from vibe_audit.worker_entry import Supervisor
 
 
@@ -19,9 +26,23 @@ from vibe_audit.worker_entry import Supervisor
     ({"Accept-Language": "zh-TW", "Accept": "application/json"}, False),
 ])
 def test_model_header_names_have_one_spelling_and_one_order(headers, allowed):
-    assert case_headers_allowed(headers, model_designed=True) is allowed
+    assert case_headers_allowed(headers, model_designed=True, vocabulary=LISTED) is allowed
+    # Without the operator's list for the endpoint no model header passes at all.
+    assert case_headers_allowed(headers, model_designed=True) is False
     # Operator-written cases keep their free spelling and order.
     assert case_headers_allowed(headers) is True
+
+
+def test_model_header_vocabulary_reads_only_valid_operator_lists():
+    from vibe_audit.adapters import model_header_vocabulary
+    entry = lambda lists: {"method": "GET", "path": "/a", "model_headers": lists}
+    # Two entries for one endpoint add up; method letter case does not matter.
+    manifest = {"allowed_requests": [entry({"Accept": ["text/html"]}), entry({"Accept": ["*/*"], "If-None-Match": ["*"]})]}
+    assert model_header_vocabulary(manifest, "get", "/a") == {"accept": {"text/html", "*/*"}, "if-none-match": {"*"}}
+    assert model_header_vocabulary(manifest, "GET", "/b") == {}
+    # A list that RunInput would refuse grants nothing even if it reaches the runtime (defense in depth).
+    for bad in ({"accept": ["application/json"]}, {"Accept": ["application/json;q=0.9"]}, {"Accept": "text/html"}, ["Accept"]):
+        assert model_header_vocabulary({"allowed_requests": [entry(bad)]}, "GET", "/a") == {}
 
 
 def test_model_headers_are_canonicalized_and_repeats_refused():
@@ -30,31 +51,41 @@ def test_model_headers_are_canonicalized_and_repeats_refused():
     with pytest.raises(ValueError, match="repeats a header name"):
         canonical_model_headers({"Accept": "*/*", "ACCEPT": "text/html"})
     # A name outside the vocabulary keeps its spelling, so the gate still sees and refuses it.
-    assert case_headers_allowed(canonical_model_headers({"X-Tenant": "b"}), model_designed=True) is False
+    assert case_headers_allowed(canonical_model_headers({"X-Tenant": "b"}), model_designed=True, vocabulary=LISTED) is False
 
 
 def test_model_request_sends_defaults_then_its_names_in_sorted_order():
     case = {"method": "GET", "path": "/orders", "designed_by": "model",
             "headers": {"Accept": "text/html", "If-None-Match": "*"}}
-    _, _, headers, _, _ = _prepare_request({}, case)
+    _, _, headers, _, _ = _prepare_request(LISTED_MANIFEST, case)
     assert list(headers.items()) == [("Accept", "text/html"), ("Accept-Encoding", "identity"), ("Connection", "close"),
                                      ("If-None-Match", "*")]
+    # The same headers on an endpoint the operator listed nothing for, or on another path, are refused.
+    for manifest, request in (({}, case), (LISTED_MANIFEST, {**case, "path": "/orders/1"}),
+                              (LISTED_MANIFEST, {**case, "method": "HEAD"})):
+        with pytest.raises(AdapterBlocked):
+            _prepare_request(manifest, request)
+    # A value from the vocabulary that the operator did not list is refused too.
+    with pytest.raises(AdapterBlocked):
+        _prepare_request(LISTED_MANIFEST, {**case, "headers": {"Accept": "*/*"}})
 
 
 def test_model_header_choices_that_mean_the_same_look_the_same():
     def sent(headers):
-        return list(_prepare_request({}, {"method": "GET", "path": "/orders", "designed_by": "model", "headers": headers})[2].items())
+        return list(_prepare_request(LISTED_MANIFEST, {"method": "GET", "path": "/orders", "designed_by": "model", "headers": headers})[2].items())
     # Omitting Accept and sending the default value explicitly are one choice, not two.
     assert sent({}) == sent({"Accept": "application/json"})
-    # The charset parameter has one spelling.
-    assert case_headers_allowed({"Content-Type": "application/json; charset=utf-8"}, model_designed=True)
-    assert not case_headers_allowed({"Content-Type": "application/json;charset=utf-8"}, model_designed=True)
+    # The charset parameter has one spelling, even when an operator lists the other one.
+    assert case_headers_allowed({"Content-Type": "application/json; charset=utf-8"}, model_designed=True, vocabulary=LISTED)
+    assert not case_headers_allowed({"Content-Type": "application/json;charset=utf-8"}, model_designed=True, vocabulary=LISTED)
 
 
-def model_supervisor(monkeypatch, *, model_body=False, designed_by="model", headers=None):
+def model_supervisor(monkeypatch, *, model_body=False, designed_by="model", headers=None, model_headers=None):
     monkeypatch.setitem(sys.modules, "adapters", adapters)
     instance = Supervisor.__new__(Supervisor)
-    entry = {"method": "POST", "path": "/chat", **({"model_body": True} if model_body else {})}
+    listed = {"Accept": ["application/json"]} if model_headers is None else model_headers
+    entry = {"method": "POST", "path": "/chat", **({"model_body": True} if model_body else {}),
+             **({"model_headers": listed} if listed else {})}
     instance.manifest = {"allowed_requests": [entry], "auth_profiles": []}
     case = {"id": "C1", "method": "POST", "path": "/chat", "identity": None,
             "headers": headers if headers is not None else {"Accept": "application/json"}, "body": {"q": "hi"}}
@@ -80,6 +111,19 @@ def test_supervisor_sends_a_model_body_only_to_an_operator_marked_endpoint(monke
     assert list(headers)[0] == "Accept" and list(headers)[-1] == "Content-Type"
     # An operator-written case is not a model body.
     model_supervisor(monkeypatch, designed_by=None).allowed_request(chat_request())
+    # The supervisor's own Content-Type is transport, so the operator lists only what the model wrote.
+    assert "Content-Type" not in model_supervisor(monkeypatch, model_body=True).manifest["allowed_requests"][0]["model_headers"]
+
+
+def test_supervisor_rechecks_the_operator_header_list_before_tb_target(monkeypatch):
+    # A sealed model step with a vocabulary value the operator did not list (as if the case gate had let it through)
+    # stops at the last trusted hop; so does any model header on an endpoint with no list.
+    for listed in ({"Accept": ["text/html"]}, {}):
+        with pytest.raises(AdapterBlocked):
+            model_supervisor(monkeypatch, model_body=True, model_headers=listed).allowed_request(chat_request())
+    # A model step with no headers of its own needs no list; the Content-Type for its body is the supervisor's.
+    model_supervisor(monkeypatch, model_body=True, headers={}, model_headers={}).allowed_request(
+        chat_request({"Content-Type": "application/json"}))
 
 
 def test_supervisor_rechecks_the_model_vocabulary_before_tb_target(monkeypatch):

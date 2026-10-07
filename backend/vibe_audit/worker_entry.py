@@ -338,9 +338,11 @@ class Supervisor:
             raise ValueError("A model-written body goes only to an endpoint the operator marked model_body")
         # Transport-generated headers are not part of the reviewed request.
         headers=dict(step.get("headers",{}))
-        if raw: headers["Content-Type"]="application/json"
+        transport={"Content-Type":"application/json"} if raw else None
+        if transport: headers.pop("Content-Type",None)
         # This is the last trusted hop before tb-target: model-written headers are checked here against the model
-        # vocabulary again, not only by the controller's case gate and the untrusted worker.
+        # vocabulary and the operator's per-endpoint list again, not only by the controller's case gate and the
+        # untrusted worker. The supervisor's own Content-Type is transport, not a model choice.
         prepared={"method":method,"path":path,"headers":dict(sorted(headers.items())) if model_step else headers,"body":None,
                   "identity":identity,"designed_by":"model" if model_step else None}
         transient=None
@@ -348,7 +350,7 @@ class Supervisor:
             transient=self.sessions.get((case_id,identity[8:]))
             if not transient: raise ValueError("Captured session is unavailable")
             prepared["identity"]=None
-        method,path,headers,_,secrets=_prepare_request(self.manifest,prepared)
+        method,path,headers,_,secrets=_prepare_request(self.manifest,prepared,transport_headers=transport)
         if transient:
             headers["Authorization"]="Bearer "+transient
             secrets.append(transient)

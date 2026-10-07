@@ -9,7 +9,7 @@ from typing import Any, Literal
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-from .adapters import RESERVED_ENV, target_ip_refused
+from .adapters import RESERVED_ENV, model_header_list_error, target_ip_refused
 from .contracts import OperatorCase, SecurityRequirement
 
 
@@ -143,10 +143,14 @@ class RunInput(StrictModel):
         if {p.credential_env for p in self.models if p.credential_env} & {p.credential_env for p in self.auth_profiles}:
             raise ValueError("A credential cannot serve both a model and a test identity")
         for request in self.allowed_requests:
-            if set(request)-{"method","path","model_body"} or not isinstance(request.get("model_body",False),bool) or not isinstance(request.get("path"),str) or not request["path"].startswith("/") or request["path"].startswith("//") or any(c in request["path"] for c in "\r\n\\"):
+            if set(request)-{"method","path","model_body","model_headers"} or not isinstance(request.get("model_body",False),bool) or not isinstance(request.get("path"),str) or not request["path"].startswith("/") or request["path"].startswith("//") or any(c in request["path"] for c in "\r\n\\"):
                 raise ValueError("Scope requires an exact relative HTTP path")
             if request.get("method") not in {"GET","POST","PUT","PATCH","DELETE","HEAD","OPTIONS"}:
                 raise ValueError("Scope requires an explicit HTTP method")
+            if "model_headers" in request:
+                problem=model_header_list_error(request["model_headers"])
+                if problem:
+                    raise ValueError(problem)
         if self.mode == "live":
             if "budget" not in self.model_fields_set:
                 raise ValueError("Live runs require an explicit request, time and model-usage budget")
