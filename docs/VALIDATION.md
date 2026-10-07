@@ -59,7 +59,7 @@ docs/history 保留 Schemathesis header 修正前的兩份失敗收據，分別�
 
 ## 映像與可重現性
 
-runtime-images.json 保存 provision 時讀出的 image IDs。工具依賴先以實際工作映像驗證，再以 deploy/worker/locks 的完整 Python/npm 鎖定檔重建。測試使用的 image ID 及對應報告另見 image-validation.json。
+runtime-images.json 保存 provision 時讀出的 image IDs。工具依賴先以實際工作映像驗證，再以 deploy/worker/locks 的完整 Python/npm 鎖定檔重建。測試使用的 image ID 及對應報告另見 image-validation.json。 2026-10-07 起 worker 的 Dockerfile 強制 BASE_IMAGE 為 digest，並加上基礎映像標籤；runtime-images.json 中的 worker image ID 早於這次變更，重建 worker 後要重新執行 provision-runtime.py 記錄新的 ID。
 
 固定版本與 hash 提供可追溯輸入，不保證所有 CPU 架構產出完全相同的 image ID。Dockerfile 仍包含作業系統套件安裝，系統套件來源未作完整時間快照；換環境重建必須重新驗收。所有來源、工具、規則、標準和模型分別保留授權。
 
@@ -161,7 +161,7 @@ docs/history keeps the two failed receipts from before the Schemathesis header f
 
 ## Images and Reproducibility
 
-runtime-images.json stores the image IDs read at provision time. Tool dependencies were first verified against the actual working images, then rebuilt with the complete Python/npm lockfiles under deploy/worker/locks. The image IDs used in testing and the corresponding reports are in image-validation.json.
+runtime-images.json stores the image IDs read at provision time. Tool dependencies were first verified against the actual working images, then rebuilt with the complete Python/npm lockfiles under deploy/worker/locks. The image IDs used in testing and the corresponding reports are in image-validation.json. Since 2026-10-07 the worker Dockerfile requires a digest BASE_IMAGE and adds a base-image label; the worker image ID in runtime-images.json predates that change, so after rebuilding the worker re-run provision-runtime.py to record the new ID.
 
 Pinned versions and hashes provide traceable inputs and do not guarantee that all CPU architectures produce identical image IDs. The Dockerfile still includes operating system package installation, and the system package sources were not fully time-snapshotted; rebuilding in a different environment requires re-acceptance. All sources, tools, rules, standards and models retain their respective licenses.
 
