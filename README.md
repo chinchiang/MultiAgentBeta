@@ -35,6 +35,123 @@ Windows 原生不執行 live 隔離掃描。真實工作流請在 Linux 或 WSL2
 
 工具整合使用有界、固定案例。此版沒有任意站點探索、全站主動 fuzz、任意瀏覽器腳本、任意 shell、自動修補/部署、多人 SaaS 或法證級不可竄改儲存。查看 [完整交付對照](docs/DELIVERY.md)。
 
+## 系統架構與流程 (Architecture Overview)
+
+操作者在本機瀏覽器開啟 React 控制台，所有操作都經 FastAPI（session／CSRF／Host-Origin 檢查）進入 `service.py` 的 LangGraph 圖；圖依固定順序走過白箱、裁決、威脅模型、案例設計、黑箱與報告，每一階段的閘門由程式判定而不是模型。黑箱請求只能經由獨立 supervisor 與 lease 送往目標，證據與追溯寫入 PostgreSQL（示範為 SQLite）後再回到控制台。控制平面／資料平面與信任邊界見 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)，API 與模組契約見 [IMPLEMENTATION.md](IMPLEMENTATION.md)。
+
+```mermaid
+flowchart TB
+  OP["操作者瀏覽器<br/>127.0.0.1:8000/#token=…"] --> UI["React 控制台<br/>frontend/src → frontend/dist"]
+  UI -- "/api/* + cookie + X-CSRF-Token" --> API["FastAPI<br/>api.py（session / CSRF / Host-Origin、runs、SSE、evidence、report）<br/>workspace_api.py（projects、models、catalogs、trace、retest、decision、reconcile）"]
+  API --> SVC["LangGraph 編排 service.py<br/>intake → preflight → whitebox → adjudication → threat_model → case_design → blackbox → report → complete"]
+
+  subgraph WB["白箱（原始碼只掛載到這裡）"]
+    STG["staging.py / snapshot.py<br/>raw 私密 staging 與脫敏快照"]
+    PRV["providers.py（LiteLLM）<br/>3 個獨立 reviewer + 1 輪 challenger，無 fallback"]
+    TR1["sandbox.py + worker_runtime.run_scanner<br/>Semgrep / Gitleaks / OSV 隔離掃描（deploy/scanners）"]
+    STG --> PRV
+    STG --> TR1
+  end
+
+  subgraph TMC["威脅模型與案例"]
+    CAT["catalog.py ← catalogs/*.json<br/>ASVS 5.0.0 / WSTG 4.2 / LLM 2026 / Agentic 2026"]
+    CON["contracts.py / policy.py / domain.py<br/>case contract、case gate、header 詞彙"]
+    FIX["fixture_protocol.py<br/>reset / setup / cleanup、測試身分"]
+    APR{"模型設計案例？<br/>live run 先停在「待核准案例」"}
+    CAT --> CON --> FIX --> APR
+  end
+
+  subgraph BB["黑箱（無原始碼、network none）"]
+    WR["worker_runtime.py<br/>controller + 獨立 supervisor（Unix socket relay、IP 釘選、目標憑證）"]
+    LS["lease.py<br/>capability / lease 帳本"]
+    WE["worker_entry.py<br/>Docker worker（deploy/worker、UID 65533）<br/>ZAP / Schemathesis / Playwright / promptfoo / PyRIT"]
+    EC["effect_collector.py<br/>事件序列與 sink 收據"]
+    WR <--> LS
+    WR <--> WE
+    EC --> WR
+  end
+
+  TGT["目標<br/>fixtures/web-api（TS）、fixtures/ai-agent（Python）<br/>或操作者提供的隔離 staging"]
+
+  subgraph PERSIST["持久化與結果"]
+    ST["store.py<br/>PostgreSQL（正式）/ SQLite（示範）<br/>run、job、lease、LangGraph checkpoint"]
+    TRC["traceability.py<br/>實體版本與證據連結"]
+    RPT["報告與證據信封<br/>JSON / Markdown / SARIF"]
+    ST --> TRC --> RPT
+  end
+
+  SVC --> WB
+  WB --> TMC
+  APR -- "操作者核准封存案例" --> BB
+  WR -- "精確 METHOD/path、身分、IP、預算" --> TGT
+  TGT --> EC
+  SVC <--> ST
+  BB --> ST
+  RPT --> API
+
+  BM["benchmark.py / benchmark_matching.py<br/>benchmarks/：七組公平預算比較（僅驗證管線）"]
+  SVC -.-> BM
+```
+
+| 階段 | 主要模組 | 產出與閘門 |
+|---|---|---|
+| intake / preflight | `api.py`、`policy.py`、`staging.py`、`resource_manifest.py` | 不可變 manifest、凍結原始碼摘要、模型端點探測、憑證與目標 IP 預檢 |
+| whitebox | `snapshot.py`、`providers.py`、`sandbox.py`、`worker_runtime.py` | 三份獨立封存審查、Semgrep/Gitleaks/OSV 證據；reviewer 看不到彼此與掃描器結論 |
+| adjudication | `service.py`、`providers.py` | 證據聯集、來源引用驗證、至多一輪 challenger；不以多數票決定 |
+| threat_model | `catalog.py`、`contracts.py`、`traceability.py` | 資產／資料流／信任邊界／威脅／Requirement，綁定 canonical 標準 ID 與版本 |
+| case_design | `contracts.py`、`policy.py`、`fixture_protocol.py` | 可追溯、含 positive control 與 oracle 的固定案例；模型設計案例需操作者核准 |
+| blackbox | `worker_runtime.py`、`lease.py`、`worker_entry.py`、`tool_runners.py`、`effect_collector.py`、`adapters.py` | 經 supervisor 的受控請求、獨立觀測與 sink 收據；pass/fail/inconclusive/blocked/execution_error/outcome_unknown |
+| report / complete | `service.py`、`store.py`、`traceability.py` | 雜湊驗證的證據信封、追溯圖、JSON/Markdown/SARIF 匯出、關聯複測 |
+
+### 整體目錄結構
+
+```text
+MultiAgentBeta/
+├── backend/vibe_audit/            # Python 套件（pip install -e . 後提供 vibe-audit 指令）
+│   ├── __main__.py                #   啟動 uvicorn（127.0.0.1）、印出啟動網址
+│   ├── api.py                     #   FastAPI：session/CSRF/Host-Origin、/api/runs、SSE、evidence、report、靜態 UI
+│   ├── workspace_api.py           #   /api/projects、/models、/catalogs、trace、retest、decision、reconcile
+│   ├── service.py                 #   LangGraph 編排、各階段、閘門、Markdown/SARIF 報告
+│   ├── providers.py               #   LiteLLM 模型呼叫、憑證 origin 綁定、無 fallback
+│   ├── staging.py / snapshot.py   #   raw 私密 staging 與脫敏快照
+│   ├── sandbox.py                 #   白箱掃描器（Semgrep/Gitleaks/OSV）路徑、上限與結果解析
+│   ├── tool_runners.py            #   黑箱工具固定執行：ZAP/Schemathesis/Playwright/promptfoo/PyRIT
+│   ├── catalog.py                 #   canonical 標準 ID 與來源釘選
+│   ├── contracts.py / policy.py   #   case contract、閘門、header 詞彙、憑證規則
+│   ├── domain.py / schemas.py     #   資料模型與 JSON schema
+│   ├── adapters.py                #   受控 HTTP 傳輸、IP 釘選、oracle 評估
+│   ├── fixture_protocol.py        #   reset/setup/cleanup 協定、測試身分
+│   ├── worker_runtime.py          #   controller + 獨立 supervisor、Unix socket relay
+│   ├── worker_entry.py            #   Docker worker 進入點
+│   ├── lease.py                   #   capability/lease 帳本、續約與撤銷
+│   ├── effect_collector.py        #   獨立事件序列與 sink 收據
+│   ├── store.py / traceability.py #   PostgreSQL/SQLite 儲存、版本化實體與證據連結
+│   ├── resource_manifest.py       #   資源版本紀錄
+│   ├── benchmark.py / benchmark_matching.py  # 比較評估 runner 與結果比對
+│   └── tokenizers/                #   離線 tiktoken 詞彙表
+├── frontend/                      # React + TypeScript + Vite 控制台
+│   ├── src/                       #   App.tsx、api.ts、types.ts、extensions.tsx、main.tsx
+│   ├── dist/                      #   已建置的 UI，由 FastAPI 同 origin 提供
+│   └── scripts/                   #   browser-smoke、contract-smoke
+├── tests/                         # pytest（engine、providers、worker_runtime、lease、sandbox、local_pipeline…）
+├── catalogs/                      # ASVS 5.0.0、WSTG 4.2、LLM 2026、Agentic 2026 canonical JSON、manifest、source-lock
+│   └── sources/                   #   原始標準內容與授權
+├── fixtures/                      # 合成靶場
+│   ├── web-api/                   #   TypeScript Web API（BOLA 案例）
+│   └── ai-agent/                  #   Python AI agent 目標
+├── deploy/                        # postgres.compose.yml
+│   ├── worker/                    #   worker Dockerfile、工具映像鎖定、runtime.example.json
+│   └── scanners/                  #   Gitleaks、OSV 映像
+├── benchmarks/                    # 比較評估設計、synthetic-v1、examples/、results-local/、results-synthetic/
+├── docs/                          # ARCHITECTURE、LINUX_SETUP、DELIVERY、VALIDATION、SOURCES、schema、驗證紀錄（XML/JSON）、history/
+├── scripts/                       # setup/start-local、verify、provision-runtime/offline-db、package-release、hash-lock、refresh-catalog
+├── .github/workflows/ci.yml       # backend（pytest + PostgreSQL）與 frontend（typecheck）
+├── IMPLEMENTATION.md              # API 與模組契約
+├── README.md · LICENSE · NOTICE
+├── pyproject.toml · requirements.lock.txt   # 固定依賴（hash 檢查）
+└── source-manifest.sha256         # 來源檔案雜湊清單（scripts/package-release.py）
+```
+
 ## 安全政策
 
 - 沒有完整三模型初審、有效威脅模型、追溯 Requirement 和 Oracle，黑箱不能取得權限。
@@ -105,6 +222,123 @@ Windows natively does not run live isolated scans. For the real workflow, start 
 | Comparative evaluation | Seven groups of fair-budget runners, synthetic plumbing and a local AST baseline, human ground-truth format; no real-model effectiveness conclusions |
 
 Tool integrations use bounded, fixed cases. This version has no arbitrary site exploration, site-wide active fuzzing, arbitrary browser scripting, arbitrary shell, automatic patching/deployment, multi-tenant SaaS, or forensics-grade tamper-proof storage. See the [full delivery comparison](docs/DELIVERY.md).
+
+## Architecture Overview
+
+The operator opens the React console in a local browser; every action goes through FastAPI (session, CSRF and Host/Origin checks) into the LangGraph graph in `service.py`. The graph walks white-box review, adjudication, threat modeling, case design, black-box execution and reporting in a fixed order, and each gate is decided by code, not by a model. Black-box requests reach the target only through the independent supervisor and its lease; evidence and traceability are written to PostgreSQL (SQLite for the demo) and then return to the console. Control/data planes and trust boundaries are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md); API and module contracts are in [IMPLEMENTATION.md](IMPLEMENTATION.md).
+
+```mermaid
+flowchart TB
+  OP["Operator browser<br/>127.0.0.1:8000/#token=…"] --> UI["React console<br/>frontend/src → frontend/dist"]
+  UI -- "/api/* + cookie + X-CSRF-Token" --> API["FastAPI<br/>api.py (session / CSRF / Host-Origin, runs, SSE, evidence, report)<br/>workspace_api.py (projects, models, catalogs, trace, retest, decision, reconcile)"]
+  API --> SVC["LangGraph orchestration service.py<br/>intake → preflight → whitebox → adjudication → threat_model → case_design → blackbox → report → complete"]
+
+  subgraph WB["White-box (the only place source is mounted)"]
+    STG["staging.py / snapshot.py<br/>raw private staging and redacted snapshot"]
+    PRV["providers.py (LiteLLM)<br/>3 independent reviewers + 1 challenger round, no fallback"]
+    TR1["sandbox.py + worker_runtime.run_scanner<br/>Semgrep / Gitleaks / OSV isolated scans (deploy/scanners)"]
+    STG --> PRV
+    STG --> TR1
+  end
+
+  subgraph TMC["Threat model and cases"]
+    CAT["catalog.py ← catalogs/*.json<br/>ASVS 5.0.0 / WSTG 4.2 / LLM 2026 / Agentic 2026"]
+    CON["contracts.py / policy.py / domain.py<br/>case contract, case gate, header vocabulary"]
+    FIX["fixture_protocol.py<br/>reset / setup / cleanup, test identities"]
+    APR{"Model-designed cases?<br/>a live run first stops at 'awaiting approval'"}
+    CAT --> CON --> FIX --> APR
+  end
+
+  subgraph BB["Black-box (no source, network none)"]
+    WR["worker_runtime.py<br/>controller + independent supervisor (Unix socket relay, IP pinning, target credentials)"]
+    LS["lease.py<br/>capability / lease ledger"]
+    WE["worker_entry.py<br/>Docker worker (deploy/worker, UID 65533)<br/>ZAP / Schemathesis / Playwright / promptfoo / PyRIT"]
+    EC["effect_collector.py<br/>sequenced events and sink receipts"]
+    WR <--> LS
+    WR <--> WE
+    EC --> WR
+  end
+
+  TGT["Target<br/>fixtures/web-api (TS), fixtures/ai-agent (Python)<br/>or operator-provided isolated staging"]
+
+  subgraph PERSIST["Persistence and results"]
+    ST["store.py<br/>PostgreSQL (production) / SQLite (demo)<br/>runs, jobs, leases, LangGraph checkpoints"]
+    TRC["traceability.py<br/>entity versions and evidence links"]
+    RPT["Reports and evidence envelopes<br/>JSON / Markdown / SARIF"]
+    ST --> TRC --> RPT
+  end
+
+  SVC --> WB
+  WB --> TMC
+  APR -- "operator approves the sealed set" --> BB
+  WR -- "exact METHOD/path, identity, IP, budget" --> TGT
+  TGT --> EC
+  SVC <--> ST
+  BB --> ST
+  RPT --> API
+
+  BM["benchmark.py / benchmark_matching.py<br/>benchmarks/: seven fair-budget arms (plumbing only)"]
+  SVC -.-> BM
+```
+
+| Stage | Main modules | Output and gate |
+|---|---|---|
+| intake / preflight | `api.py`, `policy.py`, `staging.py`, `resource_manifest.py` | Immutable manifest, frozen source digest, model endpoint probe, credential and target-IP preflight |
+| whitebox | `snapshot.py`, `providers.py`, `sandbox.py`, `worker_runtime.py` | Three sealed independent reviews, Semgrep/Gitleaks/OSV evidence; reviewers see neither each other nor scanner results |
+| adjudication | `service.py`, `providers.py` | Evidence union, source-citation verification, at most one challenger round; no majority vote |
+| threat_model | `catalog.py`, `contracts.py`, `traceability.py` | Assets / data flows / trust boundaries / threats / Requirements bound to canonical standard IDs and versions |
+| case_design | `contracts.py`, `policy.py`, `fixture_protocol.py` | Traceable fixed cases with positive controls and oracles; model-designed cases need operator approval |
+| blackbox | `worker_runtime.py`, `lease.py`, `worker_entry.py`, `tool_runners.py`, `effect_collector.py`, `adapters.py` | Supervised controlled requests, independent observations and sink receipts; pass/fail/inconclusive/blocked/execution_error/outcome_unknown |
+| report / complete | `service.py`, `store.py`, `traceability.py` | Hash-verified evidence envelopes, trace graph, JSON/Markdown/SARIF export, linked retests |
+
+### Repository Layout
+
+```text
+MultiAgentBeta/
+├── backend/vibe_audit/            # Python package (pip install -e . provides the vibe-audit command)
+│   ├── __main__.py                #   starts uvicorn on 127.0.0.1 and prints the launch URL
+│   ├── api.py                     #   FastAPI: session/CSRF/Host-Origin, /api/runs, SSE, evidence, report, static UI
+│   ├── workspace_api.py           #   /api/projects, /models, /catalogs, trace, retest, decision, reconcile
+│   ├── service.py                 #   LangGraph orchestration, stages, gates, Markdown/SARIF reports
+│   ├── providers.py               #   LiteLLM model calls, credential origin binding, no fallback
+│   ├── staging.py / snapshot.py   #   raw private staging and redacted snapshot
+│   ├── sandbox.py                 #   white-box scanner (Semgrep/Gitleaks/OSV) paths, bounds and result parsing
+│   ├── tool_runners.py            #   fixed black-box tool runs: ZAP/Schemathesis/Playwright/promptfoo/PyRIT
+│   ├── catalog.py                 #   canonical standard IDs and source pins
+│   ├── contracts.py / policy.py   #   case contract, gates, header vocabulary, credential rules
+│   ├── domain.py / schemas.py     #   data model and JSON schemas
+│   ├── adapters.py                #   controlled HTTP transport, IP pinning, oracle evaluation
+│   ├── fixture_protocol.py        #   reset/setup/cleanup protocol, test identities
+│   ├── worker_runtime.py          #   controller + independent supervisor, Unix socket relay
+│   ├── worker_entry.py            #   Docker worker entry point
+│   ├── lease.py                   #   capability/lease ledger, renewal and revocation
+│   ├── effect_collector.py        #   independent sequenced events and sink receipts
+│   ├── store.py / traceability.py #   PostgreSQL/SQLite storage, versioned entities and evidence links
+│   ├── resource_manifest.py       #   resource version records
+│   ├── benchmark.py / benchmark_matching.py  # comparative-evaluation runner and result matching
+│   └── tokenizers/                #   offline tiktoken vocabulary
+├── frontend/                      # React + TypeScript + Vite console
+│   ├── src/                       #   App.tsx, api.ts, types.ts, extensions.tsx, main.tsx
+│   ├── dist/                      #   built UI, served by FastAPI on the same origin
+│   └── scripts/                   #   browser-smoke, contract-smoke
+├── tests/                         # pytest (engine, providers, worker_runtime, lease, sandbox, local_pipeline, …)
+├── catalogs/                      # ASVS 5.0.0, WSTG 4.2, LLM 2026, Agentic 2026 canonical JSON, manifest, source-lock
+│   └── sources/                   #   original standard content and licenses
+├── fixtures/                      # synthetic targets
+│   ├── web-api/                   #   TypeScript Web API (BOLA case)
+│   └── ai-agent/                  #   Python AI agent target
+├── deploy/                        # postgres.compose.yml
+│   ├── worker/                    #   worker Dockerfile, tool image locks, runtime.example.json
+│   └── scanners/                  #   Gitleaks and OSV images
+├── benchmarks/                    # comparison design, synthetic-v1, examples/, results-local/, results-synthetic/
+├── docs/                          # ARCHITECTURE, LINUX_SETUP, DELIVERY, VALIDATION, SOURCES, schema, validation records (XML/JSON), history/
+├── scripts/                       # setup/start-local, verify, provision-runtime/offline-db, package-release, hash-lock, refresh-catalog
+├── .github/workflows/ci.yml       # backend (pytest + PostgreSQL) and frontend (typecheck)
+├── IMPLEMENTATION.md              # API and module contracts
+├── README.md · LICENSE · NOTICE
+├── pyproject.toml · requirements.lock.txt   # pinned dependencies (hash-checked)
+└── source-manifest.sha256         # source file hash list (scripts/package-release.py)
+```
 
 ## Security Policy
 
