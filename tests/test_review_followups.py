@@ -51,7 +51,19 @@ def test_model_headers_are_canonicalized_and_repeats_refused():
     with pytest.raises(ValueError, match="repeats a header name"):
         canonical_model_headers({"Accept": "*/*", "ACCEPT": "text/html"})
     # A name outside the vocabulary keeps its spelling, so the gate still sees and refuses it.
+    assert canonical_model_headers({"X-Tenant": "b"}) == {"X-Tenant": "b"}
     assert case_headers_allowed(canonical_model_headers({"X-Tenant": "b"}), model_designed=True, vocabulary=LISTED) is False
+    # Anything that is not a header map, or a name that is not text, is left for the gate to refuse.
+    assert canonical_model_headers(["Accept"]) == ["Accept"] and canonical_model_headers({7: "x"}) == {7: "x"}
+
+
+def test_request_method_defaults_to_get_and_accepts_only_known_methods():
+    assert _prepare_request({}, {"path": "/a"})[0] == "GET"
+    for method in ("PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"):
+        assert _prepare_request({}, {"method": method, "path": "/a"})[0] == method
+    for method in ("get", "TRACE", "CONNECT", None):
+        with pytest.raises(AdapterBlocked, match="Unsupported HTTP method"):
+            _prepare_request({}, {"method": method, "path": "/a"})
 
 
 def test_model_request_sends_defaults_then_its_names_in_sorted_order():

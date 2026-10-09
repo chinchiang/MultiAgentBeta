@@ -9,3 +9,6 @@ frontend/.npm-cache/
 *.tsbuildinfo
 .env*
 local-secrets.*
+# Mutation testing: mutmut's working copy and the src -> backend link scripts/mutation-test.py makes for a run.
+mutants/
+/src

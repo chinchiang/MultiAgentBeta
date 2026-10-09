@@ -11,8 +11,11 @@ from vibe_audit.messages import PATTERNS, STATUS_ZH, ZH, zh
 
 ROOT = Path(__file__).resolve().parents[1]
 BACKEND = ROOT / "backend" / "vibe_audit"
+# The source scans below read the checkout. Mutation testing (scripts/mutation-test.py) runs a copy of the tests
+# next to a mutated copy of the package, where there is no checkout to scan.
+from_checkout = pytest.mark.skipif(not BACKEND.is_dir(), reason="the backend sources are not next to these tests")
 CJK = re.compile(r"[一-鿿]")
-RAISERS = {"PolicyError", "HTTPException", "problem", "AdapterBlocked", "ProviderError", "CatalogError"}
+RAISERS = {"PolicyError", "HTTPException", "problem", "AdapterBlocked", "ProviderError", "CatalogError", "LeaseError"}
 # Calls whose first message argument is shown to the operator: activity events, snapshot gaps and run gaps.
 REPORTERS = {"event": 1, "gap": 0}
 # The separate benchmark tool and the table itself report nothing to the console.
@@ -79,6 +82,7 @@ def candidates(node):
     return []
 
 
+@from_checkout
 @pytest.mark.parametrize("message", list(raise_sites()))
 def test_every_reported_message_has_chinese_wording(message):
     for text in candidates(message):
@@ -104,6 +108,7 @@ def test_every_engine_written_text_of_the_demo_run_reads_in_chinese():
     assert not missing, f"engine-written demo text without Chinese wording: {missing}"
 
 
+@from_checkout
 def test_chinese_wording_is_chinese_and_every_entry_is_used():
     source = "\n".join(path.read_text(encoding="utf-8") for path in BACKEND.glob("*.py") if path.name != "messages.py")
     # Starlette writes these two itself.
@@ -120,6 +125,14 @@ def test_dynamic_messages_keep_their_values():
     assert zh("Scanner resources are not pinned and verified: Isolated runtime unavailable") == "掃描器資源未經釘選與驗證：隔離執行環境無法使用"
     assert zh("Model call failed (rate_limited): Provider rate limit") == "模型呼叫失敗（rate_limited）：Provider rate limit"
     assert zh("A message from a target") is None and zh(None) is None
+
+
+def test_label_and_message_joins_read_each_side_on_its_own():
+    # The label, the status and the message each decide on their own; the split is at the first colon.
+    assert zh("C-1: pass") == "C-1：未觀測到違規"
+    assert zh("Note: Model refused the request") == "Note：模型拒絕了請求"
+    assert zh("Excluded directory: x: y") == "排除的目錄：x: y"
+    assert zh("Note: whatever") is None and zh("pass") is None
 
 
 def test_api_errors_carry_chinese_detail(tmp_path):

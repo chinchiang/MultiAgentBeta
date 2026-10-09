@@ -317,6 +317,29 @@ ZH.update({
     "Unexpected finish reason/tool call; no tools were executed": "非預期的結束原因或工具呼叫；沒有執行任何工具",
     "Model output failed local JSON/schema validation": "模型輸出未通過本機 JSON／格式驗證",
     "No model result": "沒有模型結果",
+    # lease.py: a worker capability that stops a dispatch names the reason the console shows
+    "The PostgreSQL lease database and connection must use UTF8 encoding": "PostgreSQL 的 lease 資料庫與連線必須使用 UTF8 編碼",
+    "A durable lease database is required": "需要持久化的 lease 資料庫",
+    "Worker lease not found": "找不到 worker 的 lease",
+    "Complete immutable capability bindings are required": "需要完整且不可變的 capability 綁定",
+    "Invalid worker lease limits": "worker lease 的限制值無效",
+    "Task already exists; prepared/sent/finished/unknown tasks are never implicitly replayed": "工作已存在；prepared／sent／finished／unknown 狀態的工作一律不會隱含重播",
+    "Worker capability identity or binding mismatch": "worker capability 的身分或綁定不符",
+    "Worker capability revoked or expired": "worker capability 已撤銷或過期",
+    "Capability is claimed by another worker": "capability 已被另一個 worker 取得",
+    "Worker identity is required": "需要 worker 身分",
+    "Worker capability has already been claimed": "worker capability 已被取得",
+    "Only the controller can renew a lease": "只有 controller 能續約 lease",
+    "A unique request ID is required": "需要唯一的請求 ID",
+    "External task is terminal or has a different lease": "外部工作已結束或屬於另一個 lease",
+    "Request ID already journaled; dispatch cannot be replayed": "請求 ID 已記錄在日誌中；派送不能重播",
+    "Worker request budget exhausted": "worker 的請求預算已用完",
+    "Result does not match the journaled dispatch request": "結果與日誌中的派送請求不符",
+    "No pending dispatch matches this result": "沒有待完成的派送符合這個結果",
+    "An external dispatch outcome remains unknown": "有一次外部派送的結果仍不明",
+    "Task is already terminal": "工作已經結束",
+    "Worker task not found": "找不到 worker 的工作",
+    "Lease expired; external task must be reconciled": "lease 已過期；外部工作必須經過確認",
     # Synthetic demo content (service.py): the demo's findings, threat model and cases
     "Synthetic cross-tenant order disclosure": "合成的跨租戶訂單外洩",
     "Synthetic agent export claim needs effect evidence": "合成的 agent 匯出主張需要副作用證據",
@@ -415,8 +438,8 @@ def zh(text):
         if match:
             # A group that is itself a known message or status (for example a wrapped reason) is shown in Chinese too.
             return template.format(*(_part(group) for group in match.groups()))
-    # "<label>: <message>": a known label or a known message on either side of the first colon.
+    # "<label>: <message>": a known label, or a known message or status, on either side of the first colon.
     label, colon, rest = text.partition(": ")
-    if colon and (label in ZH or rest in ZH or rest in STATUS_ZH or zh(rest) is not None):
+    if colon and (label in ZH or rest in STATUS_ZH or zh(rest) is not None):
         return f"{ZH.get(label, label)}：{_part(rest)}"
     return None

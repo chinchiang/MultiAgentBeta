@@ -23,7 +23,8 @@ corpus += ["Excluded directory: node_modules/", "semgrep: Scanner did not establ
            "Entering report", "Static tool completed: gitleaks / blocked", "Catalog file unavailable: a.json", "Automated threats without cases: T-1, T-2",
            "Model call failed (refusal): Model refused the request", "Invalid run configuration: field required", "Gate: pass",
            "R-1: dropped 2 citation(s) of F-1 that do not match the frozen snapshot", "Model request failed; no request was sent",
-           "Note: something a model wrote", "constructor", "toString: x", "", "Unknown text"]
+           "Note: something a model wrote", "constructor", "toString: x", "", "Unknown text",
+           "C-1: pass", "Note: Model refused the request", "Excluded directory: x: y", "Note: whatever", "pass"]
 json.dump({"table": {"exact": ZH, "status": STATUS_ZH, "patterns": [list(p) for p in PATTERNS]},
            "cases": [[text, zh(text)] for text in corpus]}, sys.stdout, ensure_ascii=False)
 `;

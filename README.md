@@ -132,7 +132,7 @@ MultiAgentBeta/
 │   ├── src/                       #   App.tsx、extensions.tsx、api.ts、types.ts、i18n.ts（中英切換）、messages.ts（引擎訊息中文）、樣式
 │   ├── scripts/                   #   contract-smoke、browser-smoke、check-i18n、check-messages
 │   └── dist/                      #   已建置的介面，由 FastAPI 同 origin 提供
-├── tests/                         # pytest（22 個檔案，含 test_bilingual_docs.py 文件雙語檢查）
+├── tests/                         # pytest（23 個檔案，含 test_bilingual_docs.py 文件雙語檢查）
 ├── catalogs/                      # ASVS 5.0.0、WSTG 4.2、LLM 2026、Agentic 2026 標準 JSON 與 manifest
 │   └── sources/                   #   原始標準內容與授權
 ├── fixtures/                      # 掃描器規則與設定（Semgrep、Gitleaks、OSV）
@@ -145,14 +145,15 @@ MultiAgentBeta/
 ├── docs/                          # ARCHITECTURE、LINUX_SETUP、DOCKER_INTEGRATION_TESTING、VALIDATION、DELIVERY、SOURCES、
 │                                  #   VIBESEC_ADVISORIES、threat-model.yaml、run-input.schema.json、驗證收據、截圖、history/
 ├── scripts/                       # setup／start-local、verify、provision-runtime／offline-db、package-release、hash-lock、
-│                                  #   redact-receipts、summarize-validation、refresh-catalog、render-sample-report
+│                                  #   redact-receipts、summarize-validation、refresh-catalog、render-sample-report、mutation-test
 ├── .github/workflows/ci.yml       # backend（pytest ＋ PostgreSQL）與 frontend（typecheck、check:i18n、check:messages、建置一致性、清單）
 ├── .github/workflows/integration.yml  # 以 deploy/ 建置的映像跑 Docker worker、掃描器、工具、fixture 與完整 pipeline 整合測試
+├── .github/workflows/mutation.yml     # mutmut 突變測試：閘門與解析模組的每個突變都要被測試抓到（scripts/mutation-test.py）
 ├── .claude/                       # 雲端 session 的 SessionStart hook（不進發佈檔）
 ├── CLAUDE.md                      # 開發指引（不進發佈檔）
 ├── IMPLEMENTATION.md              # API 與模組契約
 ├── README.md · LICENSE · NOTICE
-├── pyproject.toml · requirements.lock.txt   # 固定版本並檢查雜湊的相依套件
+├── pyproject.toml · requirements.lock.txt · requirements.mutation.lock.txt   # 固定版本並檢查雜湊的相依套件；第二份只供突變測試
 └── source-manifest.sha256         # 每個被追蹤檔案的雜湊清單（scripts/package-release.py）
 ```
 
@@ -189,7 +190,9 @@ cd frontend
 npm.cmd run build
 ```
 
-沒有 Linux/PostgreSQL/固定映像的測試環境，對應整合測試會明確 skip。不能將 skipped 當作驗證通過。核心 Apache-2.0；外部工具、規則、模型與標準內容各保留原授權。
+沒有 Linux/PostgreSQL/固定映像的測試環境，對應整合測試會明確 skip。不能將 skipped 當作驗證通過。
+
+突變測試（Linux，離線）：`python -m pip install --require-hashes -r requirements.mutation.lock.txt` 後執行 `python scripts/mutation-test.py`。mutmut 會逐一改壞 `policy.py`、`adapters.py`、`catalog.py`、`lease.py`、`snapshot.py` 與 `messages.py` 的運算子、常數與分支，再跑涵蓋該函式的單元測試（端對端測試套件因執行時間不在其中，仍由 ci.yml 執行）；測試仍通過或沒有測試涵蓋的改動就是盲點，腳本會列出，而任一模組的數量超過 `tests/mutation-baseline.json` 記錄的上限就以非零結束。`.github/workflows/mutation.yml` 在這些檔案或測試變動時與每週執行同一件事。核心 Apache-2.0；外部工具、規則、模型與標準內容各保留原授權。
 
 ---
 # Vibe Audit 0.2.1
@@ -326,7 +329,7 @@ MultiAgentBeta/
 │   ├── src/                       #   App.tsx, extensions.tsx, api.ts, types.ts, i18n.ts (language switch), messages.ts (engine messages in Chinese), styles
 │   ├── scripts/                   #   contract-smoke, browser-smoke, check-i18n, check-messages
 │   └── dist/                      #   built UI, served by FastAPI on the same origin
-├── tests/                         # pytest (22 files, including test_bilingual_docs.py for bilingual docs)
+├── tests/                         # pytest (23 files, including test_bilingual_docs.py for bilingual docs)
 ├── catalogs/                      # ASVS 5.0.0, WSTG 4.2, LLM 2026, Agentic 2026 standard JSON and manifest
 │   └── sources/                   #   original standard content and licenses
 ├── fixtures/                      # scanner rules and settings (Semgrep, Gitleaks, OSV)
@@ -339,14 +342,15 @@ MultiAgentBeta/
 ├── docs/                          # ARCHITECTURE, LINUX_SETUP, DOCKER_INTEGRATION_TESTING, VALIDATION, DELIVERY, SOURCES,
 │                                  #   VIBESEC_ADVISORIES, threat-model.yaml, run-input.schema.json, receipts, screenshots, history/
 ├── scripts/                       # setup/start-local, verify, provision-runtime/offline-db, package-release, hash-lock,
-│                                  #   redact-receipts, summarize-validation, refresh-catalog, render-sample-report
+│                                  #   redact-receipts, summarize-validation, refresh-catalog, render-sample-report, mutation-test
 ├── .github/workflows/ci.yml       # backend (pytest + PostgreSQL) and frontend (typecheck, check:i18n, check:messages, build parity, manifest)
 ├── .github/workflows/integration.yml  # Docker worker, scanner, tool, fixture and full-pipeline integration tests on images built from deploy/
+├── .github/workflows/mutation.yml     # mutmut mutation testing: every mutant of the gate and parser modules must be caught (scripts/mutation-test.py)
 ├── .claude/                       # SessionStart hook for cloud sessions (excluded from releases)
 ├── CLAUDE.md                      # development guide (excluded from releases)
 ├── IMPLEMENTATION.md              # API and module contracts
 ├── README.md · LICENSE · NOTICE
-├── pyproject.toml · requirements.lock.txt   # pinned, hash-checked dependencies
+├── pyproject.toml · requirements.lock.txt · requirements.mutation.lock.txt   # pinned, hash-checked dependencies; the second only for mutation testing
 └── source-manifest.sha256         # hash list of every tracked file (scripts/package-release.py)
 ```
 
@@ -383,4 +387,6 @@ cd frontend
 npm.cmd run build
 ```
 
-Without a test environment with Linux/PostgreSQL/pinned images, the corresponding integration tests explicitly skip. Skipped must not be treated as verification passed. The core is Apache-2.0; external tools, rules, models, and standard content retain their original licenses.
+Without a test environment with Linux/PostgreSQL/pinned images, the corresponding integration tests explicitly skip. Skipped must not be treated as verification passed.
+
+Mutation testing (Linux, offline): `python -m pip install --require-hashes -r requirements.mutation.lock.txt`, then `python scripts/mutation-test.py`. mutmut changes one operator, constant or branch of `policy.py`, `adapters.py`, `catalog.py`, `lease.py`, `snapshot.py` and `messages.py` at a time and runs the unit tests that cover that function (the end-to-end suites are left out for run time; ci.yml still runs them); a change the tests still pass, or that no test reaches, is a blind spot: the script lists them and exits non-zero when any module exceeds the ceiling recorded in `tests/mutation-baseline.json`. `.github/workflows/mutation.yml` does the same when those files or the tests change, and weekly. The core is Apache-2.0; external tools, rules, models, and standard content retain their original licenses.

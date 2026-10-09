@@ -1,0 +1,36 @@
+# Mutation testing of the deterministic gates and parsers (scripts/mutation-test.py): no module may let more
+# mutants escape its tests than tests/mutation-baseline.json allows. A full run takes hours (every surviving
+# mutant runs all the tests that cover its function), so this runs weekly and on request, not per pull
+# request; run it locally after changing a listed module or its tests. No model credentials, Docker images or
+# targets are used.
+name: mutation
+
+on:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mutation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mutmut:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 330
+    env:
+      PYTHONPATH: backend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --require-hashes -r requirements.lock.txt
+      - run: python -m pip install --require-hashes -r requirements.mutation.lock.txt
+      - run: python -m pip check
+      - run: python scripts/mutation-test.py
