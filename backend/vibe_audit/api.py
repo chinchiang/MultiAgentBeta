@@ -303,8 +303,8 @@ def create_app(data_dir=None, database_url=None, testing=False, session_token=No
 
     @api.get("/runs")
     async def list_runs():
-        # Inventory excludes large snapshots, which stay in the protected evidence service.
-        return {"runs":store.list()}
+        # The inventory carries each run's summary; events, findings and evidence records come with the run itself.
+        return {"runs":await asyncio.to_thread(store.summaries)}
 
     @api.post("/runs",status_code=201)
     async def create_run(data:RunInput):
@@ -319,7 +319,8 @@ def create_app(data_dir=None, database_url=None, testing=False, session_token=No
 
     @api.get("/runs/{run_id}")
     async def get_run(run_id:str):
-        return store.get(run_id)
+        # Database reads run off the event loop, so a slow database stalls one request, not every other one.
+        return await asyncio.to_thread(store.get,run_id)
 
     @api.post("/runs/{run_id}/start")
     async def start(run_id:str):
@@ -359,7 +360,7 @@ def create_app(data_dir=None, database_url=None, testing=False, session_token=No
                 if current_session(request) is None:
                     yield "event: expired\ndata: {}\n\n"
                     return
-                run=store.get(run_id)
+                run=await asyncio.to_thread(store.get,run_id)
                 for event in run["events"]:
                     if event["seq"]>cursor:
                         cursor=event["seq"]

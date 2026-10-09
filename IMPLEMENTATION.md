@@ -14,7 +14,7 @@
 | GET / PUT | /models, /models/{id} | 列出／儲存 profile；僅限憑證參照 |
 | GET | /catalogs?standard=... | 標準 ID、版本與來源出處 |
 | POST | /models/probe | 明確的端點契約，含 policy／預算 |
-| GET / POST | /runs | 列出／建立不可變的 manifest |
+| GET / POST | /runs | 列出 run 摘要（id、名稱、模式、狀態、階段、時間、用量、錯誤；事件、發現與證據紀錄隨 /runs/{id} 回傳）／建立不可變的 manifest |
 | GET | /runs/{id} | 狀態、用量、缺口與發現 |
 | POST | /runs/{id}/start, /cancel, /resume | 生命週期轉換 |
 | GET | /runs/{id}/events | SSE 進度事件 |
@@ -72,7 +72,7 @@ All routes start with /api; with a session, an unknown /api path is a JSON 404. 
 | GET / PUT | /models, /models/{id} | List/save profiles; credential references only |
 | GET | /catalogs?standard=... | Canonical IDs, versions and provenance |
 | POST | /models/probe | Explicit endpoint contract with policy/budget |
-| GET / POST | /runs | List/create immutable manifests |
+| GET / POST | /runs | List run summaries (id, name, mode, status, stage, times, usage, error; events, findings and evidence records come with /runs/{id}) / create immutable manifests |
 | GET | /runs/{id} | State, usage, gaps and findings |
 | POST | /runs/{id}/start, /cancel, /resume | Lifecycle transitions |
 | GET | /runs/{id}/events | SSE progress events |

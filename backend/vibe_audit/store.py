@@ -43,6 +43,10 @@ def private_dirs(*paths):
             raise PermissionError(f"Data directory {path} is accessible to other local accounts; make it owner-only (chmod 700)")
 
 
+SUMMARY_FIELDS = ("id", "name", "mode", "status", "stage", "created_at", "updated_at", "usage", "usage_unknown", "error", "error_zh",
+                  "workers_pending_cleanup", "deployment_changed")
+
+
 class RunNotFound(KeyError):
     """Only an unknown run is a 404; any other KeyError is a bug and must not read as one."""
 
@@ -165,6 +169,10 @@ class Store:
     def list(self) -> list[dict]:
         with self.lock:
             return [json.loads(r[0]) for r in self._execute("SELECT payload FROM runs ORDER BY updated DESC").fetchall()]
+
+    def summaries(self) -> list[dict]:
+        """The inventory of runs: what a list shows, without events, findings, cases or evidence records."""
+        return [{key: run.get(key) for key in SUMMARY_FIELDS} for run in self.list()]
 
     def job(self, run_id: str, case: dict) -> str:
         job_id = str(uuid.uuid4())
