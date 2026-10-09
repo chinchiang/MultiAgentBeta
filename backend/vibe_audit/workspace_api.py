@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from .domain import ModelProfile, RunInput, now
+from .adapters import case_headers_allowed, model_header_vocabulary
 from .policy import PolicyError
 
 
@@ -92,6 +93,17 @@ def workspace_router(store, engine, source_roots, *, session):
         if parent["cases"]:
             manifest["cases"] = [{k: v for k, v in case.items() if k not in
                                   {"hash", "source_digest", "threat_model_hash"}} for case in parent["cases"]]
+        # A retest keeps the parent's manifest, so a model-designed case whose headers that manifest never listed
+        # would only be refused later by the case gate, after the white-box stage had spent its budget. Say so now.
+        refused = sorted(str(case.get("id", "?")) for case in manifest.get("cases", []) if case.get("designed_by") == "model"
+                         and not all(case_headers_allowed(step.get("headers"), model_designed=True,
+                                                          vocabulary=model_header_vocabulary(manifest, step.get("method", "GET"), step.get("path")))
+                                     for step in [case, *[p for p in case.get("preconditions", []) if isinstance(p, dict)]]))
+        if refused:
+            raise PolicyError("This retest would copy model-designed cases (" + ", ".join(refused) + ") whose headers the original "
+                              "run's allowed_requests[].model_headers do not list, so the case gate would refuse them. A retest cannot "
+                              "change the original scope: create a new assessment that lists those header values for their method and "
+                              "path, or supply operator-written cases.")
         model = RunInput.model_validate(manifest)
         if model.mode == "live":
             path = Path(model.source_path).resolve()

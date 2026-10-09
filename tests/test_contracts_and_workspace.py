@@ -292,6 +292,18 @@ def test_workspace_settings_catalog_and_linked_retest(tmp_path):
         chinese=client.get(f"/api/runs/{child['id']}/report",params={"format":"markdown","lang":"zh-Hant"}).text
         assert "複測對象："+run["id"]+"（發現："+finding_id.replace("_","\\_")+"）" in chinese and "## 發現" in chinese
         assert client.get(f"/api/runs/{child['id']}/report",params={"format":"markdown","lang":"fr"}).status_code==400
+        # A parent whose model-designed case carries a header its scope never listed cannot be retested as is:
+        # the refusal comes at creation, names the case and says what to do, instead of failing after the white-box stage.
+        parent=app.state.store.get(run["id"])
+        parent["cases"][0].update(designed_by="model",headers={"Accept":"application/json"})
+        app.state.store.save(parent)
+        refused=client.post(f"/api/runs/{run['id']}/retest",json=body,headers=headers)
+        assert refused.status_code==409 and parent["cases"][0]["id"] in refused.json()["detail"]
+        assert "new assessment" in refused.json()["detail"] and "model_headers" in refused.json()["detail"]
+        # Without the unlisted header the same model-designed case is retested as before.
+        parent["cases"][0]["headers"]={}
+        app.state.store.save(parent)
+        assert client.post(f"/api/runs/{run['id']}/retest",json=body,headers=headers).status_code==201
 
 
 def test_finding_decision_needs_independent_execution_evidence(tmp_path):
