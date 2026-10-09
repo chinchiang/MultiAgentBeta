@@ -113,6 +113,7 @@ MultiAgentBeta/
 │   ├── providers.py               #   LiteLLM 模型呼叫與探測、憑證 origin 綁定、無 fallback
 │   ├── messages.py                #   錯誤訊息的正體中文對照（API 的 detail_zh、run 的 error_zh）
 │   ├── diagnostics.py             #   本機診斷記錄：被固定文字取代的失敗只記例外類型與位置（vibe-audit.log）
+│   ├── settings.py                #   後端程序的 VIBEAUDIT_* 設定：一次讀取並檢查（權杖、資料目錄、資料庫、控制台 origins、來源根目錄、目錄與設定檔路徑）
 │   ├── staging.py / snapshot.py   #   raw 私密 staging（給掃描器）與脫敏快照（給模型）
 │   ├── sandbox.py                 #   白箱掃描器的路徑檢查、上限與結果解析
 │   ├── catalog.py                 #   標準 ID 與來源釘選
@@ -134,7 +135,7 @@ MultiAgentBeta/
 │   ├── tests/                     #   vitest 單元與元件測試（happy-dom 模擬瀏覽器，不需後端）
 │   ├── scripts/                   #   contract-smoke、browser-smoke、check-i18n、check-messages
 │   └── dist/                      #   已建置的介面，由 FastAPI 同 origin 提供
-├── tests/                         # pytest（26 個檔案，含 test_bilingual_docs.py 文件雙語檢查與 test_properties.py 的 Hypothesis 性質測試）
+├── tests/                         # pytest（27 個檔案，含 test_bilingual_docs.py 文件雙語檢查與 test_properties.py 的 Hypothesis 性質測試）
 ├── catalogs/                      # ASVS 5.0.0、WSTG 4.2、LLM 2026、Agentic 2026 標準 JSON 與 manifest
 │   └── sources/                   #   原始標準內容與授權
 ├── fixtures/                      # 掃描器規則與設定（Semgrep、Gitleaks、OSV）
@@ -314,6 +315,7 @@ MultiAgentBeta/
 │   ├── providers.py               #   LiteLLM model calls and probes, credential origin binding, no fallback
 │   ├── messages.py                #   Traditional Chinese wording of error messages (detail_zh, error_zh)
 │   ├── diagnostics.py             #   local diagnostics: failures reported in fixed words log their type and location (vibe-audit.log)
+│   ├── settings.py                #   the backend process's VIBEAUDIT_* settings, read and checked once (token, data dir, database, console origins, source roots, catalog and config paths)
 │   ├── staging.py / snapshot.py   #   raw private staging (for scanners) and redacted snapshot (for models)
 │   ├── sandbox.py                 #   white-box scanner path checks, bounds and result parsing
 │   ├── catalog.py                 #   standard IDs and source pins
@@ -335,7 +337,7 @@ MultiAgentBeta/
 │   ├── tests/                     #   vitest unit and component tests (happy-dom simulated browser, no backend)
 │   ├── scripts/                   #   contract-smoke, browser-smoke, check-i18n, check-messages
 │   └── dist/                      #   built UI, served by FastAPI on the same origin
-├── tests/                         # pytest (26 files, including test_bilingual_docs.py for bilingual docs and the Hypothesis property tests in test_properties.py)
+├── tests/                         # pytest (27 files, including test_bilingual_docs.py for bilingual docs and the Hypothesis property tests in test_properties.py)
 ├── catalogs/                      # ASVS 5.0.0, WSTG 4.2, LLM 2026, Agentic 2026 standard JSON and manifest
 │   └── sources/                   #   original standard content and licenses
 ├── fixtures/                      # scanner rules and settings (Semgrep, Gitleaks, OSV)

@@ -21,6 +21,7 @@ import uuid
 
 from .diagnostics import note_failure
 from .lease import LeaseStore,LeaseError,canonical_hash
+from .settings import runtime_config
 from .staging import remove_private_tree
 
 HERE=Path(__file__).resolve().parent
@@ -34,7 +35,7 @@ class WorkerBlocked(RuntimeError):
 
 def load_config(profile_id="default",config_path=None):
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}",profile_id): raise WorkerBlocked("Invalid runtime profile ID")
-    path=config_path or os.getenv("VIBEAUDIT_RUNTIME_CONFIG")
+    path=config_path or runtime_config()
     if not path: raise WorkerBlocked("Trusted runtime configuration is not provisioned")
     data=json.loads(Path(path).read_text(encoding="utf-8"))
     profile=(data.get("profiles",data)).get(profile_id)

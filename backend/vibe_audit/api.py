@@ -3,12 +3,10 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-import math
-import os
 import re
 import secrets
 import time
-from collections import Counter, deque
+from collections import deque
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -22,9 +20,9 @@ from .domain import Budget, ModelProfile, RunInput
 from .messages import PATTERNS, STATUS_ZH, ZH, zh
 from .policy import PolicyError
 from .service import REPORT_LANGUAGES, Engine, report_markdown, report_sarif
+from .settings import DEFAULT_CONSOLE_ORIGINS, ROOT, Settings, startup_token_strong  # noqa: F401  (startup_token_strong: kept for callers)
 from .store import RunNotFound, Store
 
-ROOT=Path(__file__).resolve().parents[2]
 LIMITATIONS=[
     "Demo uses synthetic reviewers and fixtures, not real model or target validation.",
     "Live runs require PostgreSQL, three configured models and explicit target IP authorization.",
@@ -66,41 +64,22 @@ async def pause(seconds):
     await asyncio.sleep(seconds)
 
 
-def startup_token_strong(token):
-    """At least 96 bits by the token's own character frequencies, eight distinct characters and no repeating pattern.
-
-    A length and character-set check alone accepts 32 copies of one letter."""
-    counts=Counter(token)
-    bits=-sum(count*math.log2(count/len(token)) for count in counts.values())
-    periodic=any(token==(token[:k]*(len(token)//k+1))[:len(token)] for k in range(1,len(token)//2+1))
-    return len(counts)>=8 and bits>=96 and not periodic
-
-
-def create_app(data_dir=None, database_url=None, testing=False, session_token=None):
+def create_app(data_dir=None, database_url=None, testing=False, session_token=None, settings=None):
+    """The API, from the settings given or from the environment (the arguments win over it)."""
     # Every local process can reach loopback, so only the operator's startup token opens a new session.
-    fixed_token=bool(session_token or os.getenv("VIBEAUDIT_SESSION_TOKEN"))
-    session_token=session_token or os.getenv("VIBEAUDIT_SESSION_TOKEN") or secrets.token_urlsafe(32)
-    if not re.fullmatch(r"[A-Za-z0-9_-]{32,256}",session_token):
-        raise ValueError("VIBEAUDIT_SESSION_TOKEN must be 32-256 URL-safe characters (A-Z a-z 0-9 _ -)")
-    if not startup_token_strong(session_token):
-        raise ValueError("VIBEAUDIT_SESSION_TOKEN is too predictable; generate one with: python -c \"import secrets; print(secrets.token_urlsafe(32))\"")
-    data_dir=data_dir or os.getenv("VIBEAUDIT_DATA_DIR",str(ROOT/".data"))
-    database_url=database_url or os.getenv("VIBEAUDIT_DATABASE_URL")
-    store=Store(data_dir,database_url)
-    engine=Engine(store,database_url)
+    settings=settings or Settings.from_environ(data_dir=data_dir,database_url=database_url,session_token=session_token)
+    session_token,fixed_token=settings.session_token,settings.fixed_token
+    store=Store(settings.data_dir,settings.database_url)
+    engine=Engine(store,settings.database_url)
     sessions={}
     token_failures=deque()
-    default_origins={"http://127.0.0.1:8000","http://localhost:8000","http://[::1]:8000"}
-    configured={s.rstrip("/") for s in os.getenv("VIBEAUDIT_UI_ORIGINS","").split(",") if s}
-    # Configured origins (the launcher adds the port it listens on) replace the :8000 defaults, so another
-    # local service on :8000 is not a trusted origin while the console runs on a different port.
-    allowed_origins=set(configured or default_origins)
+    allowed_origins=set(settings.console_origins)
     if testing:
         allowed_origins.add("http://testserver")
     # A live target must not be any address this console answers on, the defaults included.
-    engine.console_origins=allowed_origins|default_origins
+    engine.console_origins=allowed_origins|DEFAULT_CONSOLE_ORIGINS
     allowed_hosts={s.split("://",1)[1] for s in allowed_origins}
-    source_roots=[Path(p).resolve() for p in os.getenv("VIBEAUDIT_SOURCE_ROOTS",str(ROOT/"fixtures")).split(os.pathsep) if p]
+    source_roots=list(settings.source_roots)
 
     @asynccontextmanager
     async def lifespan(app):
