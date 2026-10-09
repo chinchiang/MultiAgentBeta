@@ -263,6 +263,22 @@ ZH.update({
     "Run was cancelled before a request.": "執行在送出請求前已取消。",
     "The request budget or lease hook refused execution.": "請求預算或 lease hook 拒絕執行。",
     "Target returned a redirect; redirects are never followed.": "目標回傳轉址；系統一律不跟隨轉址。",
+    "Target answered a state-changing request with a redirect; its effect is unverified and redirects are never followed.": "目標以轉址回應會改變狀態的請求；其效果未經驗證，且系統一律不跟隨轉址。",
+    # adapters.py: responses the transport refuses to evaluate
+    "Compressed responses are unsupported; no oracle was evaluated.": "不支援壓縮的回應；未評估任何 oracle。",
+    "Response exceeds the configured byte limit.": "回應超過設定的位元組上限。",
+    "Invalid response length; no oracle was evaluated.": "回應長度無效；未評估任何 oracle。",
+    "Response was incomplete; no oracle was evaluated.": "回應不完整；未評估任何 oracle。",
+    "Only complete UTF-8 responses can be evaluated.": "只能評估完整的 UTF-8 回應。",
+    # adapters.py: execution results
+    "This adapter executes live HTTP only; synthetic demo execution belongs to the service.": "這個 adapter 只執行真實 HTTP；合成示範的執行屬於服務層。",
+    "HTTP target requests require an explicitly live run.": "對 HTTP 目標送出請求需要明確的 live 執行。",
+    "Side-effecting cases require a sandbox effect collector and cleanup runner, which are not connected.": "有副作用的案例需要沙箱副作用收集器與清理執行器，但兩者尚未接上。",
+    "The request budget/cancellation hook is required for live transport.": "live 傳輸需要請求預算／取消 hook。",
+    "A positive control did not establish its required fixture; the main request was not sent.": "positive control 未能確立其必要的 fixture；主請求沒有送出。",
+    "Execution was cancelled; dispatched requests are not automatically replayed.": "執行已取消；已送出的請求不會自動重放。",
+    "Target transport timed out; no success was inferred.": "目標傳輸逾時；不推定為成功。",
+    "Target transport failed; no success was inferred.": "目標傳輸失敗；不推定為成功。",
     # catalog.py
     "Catalog path escapes its configured root": "標準目錄路徑超出設定的根目錄",
     "Catalog file unavailable": "標準目錄檔案無法使用",
