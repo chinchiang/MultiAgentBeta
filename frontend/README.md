@@ -4,15 +4,18 @@ React + TypeScript + Vite 前端，Apache-2.0。介面使用繁體中文；所�
 
 ## 建置與使用
 
-需 Node.js 24，與專案其餘部分一致（TS fixture 以內建 type stripping 執行）；UI 建置本身使用 Vite 6，Node 18、20 或 22+ 也可建置。
+需 Node.js 24，與專案其餘部分一致（TS fixture 以內建 type stripping 執行）；UI 建置本身使用 Vite 8，Node 20.19+ 或 22.12+ 也可建置。
 
 ```powershell
 cd frontend
 npm ci
 npm run typecheck
+npm test
 npm run check:i18n
 npm run build
 ```
+
+`npm test` 以 vitest 在 happy-dom 模擬的瀏覽器裡跑 `tests/` 的單元與元件測試（語言切換、引擎訊息對照、API 用戶端、表單與畫面），不需要後端；`npm run smoke` 才會連真實後端。
 
 建置檔案在 `dist/`。正常使用時由 FastAPI 在同一個本地 origin 提供前端；啟動後端後開啟它印出的 `http://127.0.0.1:8000/#token=…`。
 
@@ -65,15 +68,18 @@ React + TypeScript + Vite frontend, Apache-2.0. The interface uses 繁體中文;
 
 ## Build and Usage
 
-Node.js 24 is required, consistent with the rest of the project (the TS fixture runs with built-in type stripping); the UI build itself uses Vite 6, and Node 18, 20, or 22+ can also build it.
+Node.js 24 is required, consistent with the rest of the project (the TS fixture runs with built-in type stripping); the UI build itself uses Vite 8, and Node 20.19+ or 22.12+ can also build it.
 
 ```powershell
 cd frontend
 npm ci
 npm run typecheck
+npm test
 npm run check:i18n
 npm run build
 ```
+
+`npm test` runs the unit and component tests in `tests/` (language switch, engine message table, API client, form and screens) with vitest in a happy-dom simulated browser and needs no backend; `npm run smoke` is the one that talks to a real backend.
 
 The built files are in `dist/`. In normal use, FastAPI serves the frontend on the same local origin; after starting the backend, open the `http://127.0.0.1:8000/#token=…` it prints.
 

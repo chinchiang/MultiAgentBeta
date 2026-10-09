@@ -14,6 +14,8 @@ if ($LASTEXITCODE -ne 0) { throw 'Lint failed.' }
 Push-Location -LiteralPath (Join-Path $projectRoot 'frontend')
 try {
     npm.cmd run typecheck
+    npm.cmd test
+    if ($LASTEXITCODE -ne 0) { throw 'Frontend unit tests failed.' }
     if ($LASTEXITCODE -ne 0) { throw 'Type check failed.' }
     npm.cmd run check:i18n
     if ($LASTEXITCODE -ne 0) { throw 'A visible Chinese string has no English counterpart.' }

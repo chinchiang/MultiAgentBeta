@@ -131,6 +131,7 @@ MultiAgentBeta/
 │   └── tokenizers/                #   離線 tiktoken 詞彙表與授權
 ├── frontend/                      # React ＋ TypeScript ＋ Vite 控制台
 │   ├── src/                       #   App.tsx、extensions.tsx、api.ts、types.ts、i18n.ts（中英切換）、messages.ts（引擎訊息中文）、樣式
+│   ├── tests/                     #   vitest 單元與元件測試（happy-dom 模擬瀏覽器，不需後端）
 │   ├── scripts/                   #   contract-smoke、browser-smoke、check-i18n、check-messages
 │   └── dist/                      #   已建置的介面，由 FastAPI 同 origin 提供
 ├── tests/                         # pytest（26 個檔案，含 test_bilingual_docs.py 文件雙語檢查與 test_properties.py 的 Hypothesis 性質測試）
@@ -331,6 +332,7 @@ MultiAgentBeta/
 │   └── tokenizers/                #   offline tiktoken vocabulary and license
 ├── frontend/                      # React + TypeScript + Vite console
 │   ├── src/                       #   App.tsx, extensions.tsx, api.ts, types.ts, i18n.ts (language switch), messages.ts (engine messages in Chinese), styles
+│   ├── tests/                     #   vitest unit and component tests (happy-dom simulated browser, no backend)
 │   ├── scripts/                   #   contract-smoke, browser-smoke, check-i18n, check-messages
 │   └── dist/                      #   built UI, served by FastAPI on the same origin
 ├── tests/                         # pytest (26 files, including test_bilingual_docs.py for bilingual docs and the Hypothesis property tests in test_properties.py)

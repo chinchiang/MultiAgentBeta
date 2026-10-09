@@ -70,6 +70,9 @@ jobs:
         working-directory: frontend
       - run: npm run typecheck
         working-directory: frontend
+      # Unit and component tests in a simulated browser (vitest + happy-dom); the contract smoke in the backend job covers the real one.
+      - run: npm test
+        working-directory: frontend
       # Every visible Chinese string in the console needs its English counterpart.
       - run: npm run check:i18n
         working-directory: frontend
