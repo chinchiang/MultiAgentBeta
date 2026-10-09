@@ -111,6 +111,7 @@ MultiAgentBeta/
 │   ├── workspace_api.py           #   專案、模型範本、標準目錄、追溯、複測、裁決、清理確認
 │   ├── service.py                 #   LangGraph 七個階段、閘門呼叫、Markdown／SARIF 報告
 │   ├── providers.py               #   LiteLLM 模型呼叫與探測、憑證 origin 綁定、無 fallback
+│   ├── messages.py                #   錯誤訊息的正體中文對照（API 的 detail_zh、run 的 error_zh）
 │   ├── staging.py / snapshot.py   #   raw 私密 staging（給掃描器）與脫敏快照（給模型）
 │   ├── sandbox.py                 #   白箱掃描器的路徑檢查、上限與結果解析
 │   ├── catalog.py                 #   標準 ID 與來源釘選
@@ -131,7 +132,7 @@ MultiAgentBeta/
 │   ├── src/                       #   App.tsx、extensions.tsx、api.ts、types.ts、i18n.ts（中英切換）、樣式
 │   ├── scripts/                   #   contract-smoke、browser-smoke、check-i18n
 │   └── dist/                      #   已建置的介面，由 FastAPI 同 origin 提供
-├── tests/                         # pytest（21 個檔案，含 test_bilingual_docs.py 文件雙語檢查）
+├── tests/                         # pytest（22 個檔案，含 test_bilingual_docs.py 文件雙語檢查）
 ├── catalogs/                      # ASVS 5.0.0、WSTG 4.2、LLM 2026、Agentic 2026 標準 JSON 與 manifest
 │   └── sources/                   #   原始標準內容與授權
 ├── fixtures/                      # 掃描器規則與設定（Semgrep、Gitleaks、OSV）
@@ -303,6 +304,7 @@ MultiAgentBeta/
 │   ├── workspace_api.py           #   projects, model templates, standards catalog, trace, retest, decisions, cleanup attestation
 │   ├── service.py                 #   the seven LangGraph stages, gate calls, Markdown/SARIF reports
 │   ├── providers.py               #   LiteLLM model calls and probes, credential origin binding, no fallback
+│   ├── messages.py                #   Traditional Chinese wording of error messages (detail_zh, error_zh)
 │   ├── staging.py / snapshot.py   #   raw private staging (for scanners) and redacted snapshot (for models)
 │   ├── sandbox.py                 #   white-box scanner path checks, bounds and result parsing
 │   ├── catalog.py                 #   standard IDs and source pins
@@ -323,7 +325,7 @@ MultiAgentBeta/
 │   ├── src/                       #   App.tsx, extensions.tsx, api.ts, types.ts, i18n.ts (language switch), styles
 │   ├── scripts/                   #   contract-smoke, browser-smoke, check-i18n
 │   └── dist/                      #   built UI, served by FastAPI on the same origin
-├── tests/                         # pytest (21 files, including test_bilingual_docs.py for bilingual docs)
+├── tests/                         # pytest (22 files, including test_bilingual_docs.py for bilingual docs)
 ├── catalogs/                      # ASVS 5.0.0, WSTG 4.2, LLM 2026, Agentic 2026 standard JSON and manifest
 │   └── sources/                   #   original standard content and licenses
 ├── fixtures/                      # scanner rules and settings (Semgrep, Gitleaks, OSV)
