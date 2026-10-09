@@ -339,7 +339,7 @@ class Supervisor:
         # Transport-generated headers are not part of the reviewed request.
         headers=dict(step.get("headers",{}))
         transport={"Content-Type":"application/json"} if raw else None
-        if transport: headers.pop("Content-Type",None)
+        if transport: headers={k:v for k,v in headers.items() if k.lower()!="content-type"}
         # This is the last trusted hop before tb-target: model-written headers are checked here against the model
         # vocabulary and the operator's per-endpoint list again, not only by the controller's case gate and the
         # untrusted worker. The supervisor's own Content-Type is transport, not a model choice.
