@@ -57,15 +57,11 @@ class Store:
         self.artifacts.mkdir(exist_ok=True, mode=0o700)
         private_dirs(self.root, self.artifacts)
         self.lock = threading.RLock()
+        self.transacting = False
         self.postgres = bool(database_url)
+        self.database_url = database_url
         if database_url:
-            import psycopg
-            self.conn = psycopg.connect(database_url, autocommit=True)
-            # A SQL_ASCII database or client encoding hands every text column back as undecoded bytes.
-            # Compare the names the server reports: asking for the Python codec raises for an encoding Python lacks.
-            if any(self.conn.info.parameter_status(name) != "UTF8" for name in ("server_encoding", "client_encoding")):
-                self.conn.close()
-                raise ValueError("The PostgreSQL database and connection must use UTF8 encoding")
+            self.conn = self._connect()
         else:
             self.conn = sqlite3.connect(str(self.root / "demo.sqlite3"), check_same_thread=False, isolation_level=None)
             self.conn.execute("PRAGMA journal_mode=WAL")
@@ -75,8 +71,29 @@ class Store:
         self._execute("CREATE TABLE IF NOT EXISTS relations (run_id TEXT NOT NULL, version TEXT NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(run_id,version))")
         self._execute("CREATE TABLE IF NOT EXISTS settings (kind TEXT NOT NULL, id TEXT NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(kind,id))")
 
+    def _connect(self):
+        import psycopg
+        conn = psycopg.connect(self.database_url, autocommit=True, connect_timeout=5)
+        # A SQL_ASCII database or client encoding hands every text column back as undecoded bytes.
+        # Compare the names the server reports: asking for the Python codec raises for an encoding Python lacks.
+        if any(conn.info.parameter_status(name) != "UTF8" for name in ("server_encoding", "client_encoding")):
+            conn.close()
+            raise ValueError("The PostgreSQL database and connection must use UTF8 encoding")
+        return conn
+
     def _execute(self, sql, args=()):
-        return self.conn.execute(sql.replace("?", "%s") if self.postgres else sql, args)
+        if not self.postgres:
+            return self.conn.execute(sql, args)
+        import psycopg
+        try:
+            return self.conn.execute(sql.replace("?", "%s"), args)
+        except psycopg.OperationalError:
+            # A database restart drops the connection. Outside a transaction the statement is repeated once on a new
+            # connection; inside one the statements before it are lost with the connection, so the error stands.
+            if self.transacting:
+                raise
+            self.conn = self._connect()
+            return self.conn.execute(sql.replace("?", "%s"), args)
 
     @contextmanager
     def transaction(self):
@@ -85,14 +102,22 @@ class Store:
             active = self.conn.info.transaction_status != 0 if self.postgres else self.conn.in_transaction
             if not active:
                 self._execute("BEGIN")
+                self.transacting = True
             try:
                 yield
                 if not active:
                     self._execute("COMMIT")
             except BaseException:
                 if not active:
-                    self._execute("ROLLBACK")
+                    try:
+                        self._execute("ROLLBACK")
+                    except Exception:
+                        # A connection the failure itself closed has nothing left to roll back.
+                        pass
                 raise
+            finally:
+                if not active:
+                    self.transacting = False
 
     def save(self, run: dict):
         run["updated_at"] = now()

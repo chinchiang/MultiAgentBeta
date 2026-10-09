@@ -16,6 +16,7 @@ import ipaddress
 import json
 import os
 from pathlib import Path
+import re
 import signal
 import socket
 import socketserver
@@ -61,6 +62,12 @@ def read_frame(stream,limit=MAX_FRAME):
     if not isinstance(value,dict):
         raise ValueError("Invalid IPC frame")
     return value
+
+
+def without_host_paths(text):
+    """Docker's own words with every absolute path replaced: a create error names the bind-mounted work directory
+    and the daemon socket, which say where this host keeps its data."""
+    return re.sub(r"(?<![\w.~-])(?:[A-Za-z]:)?[\\/](?:[\w.~-]+[\\/])*[\w.~-]+", "<path>", text)
 
 
 def clean_env(extra=None):
@@ -549,7 +556,7 @@ class Supervisor:
                 try:
                     _,create_error=created.communicate(timeout=min(45,self.spec["timeout_seconds"]))
                     if created.returncode:
-                        self.startup_diagnostic=create_error.decode("utf-8",errors="replace")[:1000]
+                        self.startup_diagnostic=without_host_paths(create_error.decode("utf-8",errors="replace")[:1000])
                         raise ValueError("Container creation failed")
                 finally:
                     if created.poll() is None: terminate_tree(created)

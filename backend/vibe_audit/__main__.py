@@ -21,7 +21,10 @@ def main():
     os.environ["VIBEAUDIT_UI_ORIGINS"]=",".join(dict.fromkeys(configured+[f"http://127.0.0.1:{args.port}",f"http://localhost:{args.port}"]))
     import uvicorn
     from .api import create_app
+    from .diagnostics import configure
     app=create_app()
+    # Failures the API reports in fixed words are explained here, on this machine only (type and location, no values).
+    configure(app.state.store.root)
     # The fragment never reaches the server or its logs; the workbench trades it for a session cookie.
     app.state.announce_token=lambda token:print(f"Vibe Audit workbench: http://127.0.0.1:{args.port}/#token={token}",flush=True)
     app.state.announce_token(app.state.session_token)

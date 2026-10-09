@@ -17,6 +17,7 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Str
 from fastapi.exceptions import StarletteHTTPException
 from pydantic import ValidationError
 
+from .diagnostics import note_failure
 from .domain import Budget, ModelProfile, RunInput, origin
 from .messages import PATTERNS, STATUS_ZH, ZH, zh
 from .policy import PolicyError
@@ -291,8 +292,9 @@ def create_app(data_dir=None, database_url=None, testing=False, session_token=No
             # load_config's messages are fixed local text: an unprovisioned profile
             # must not be reported as a generic infrastructure failure.
             runtime.update(available=False,isolation="unavailable",reason=str(exc))
-        except Exception:
+        except Exception as exc:
             # Includes an unreachable lease database: the inventory reports it instead of failing.
+            note_failure(f"capabilities of runtime profile {profile}",exc)
             runtime.update(available=False,isolation="unavailable",reason="Configure the Linux isolated worker profile")
         finally:
             if worker:

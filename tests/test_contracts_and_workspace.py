@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 
 from vibe_audit.api import create_app
 from vibe_audit.contracts import ChallengeItem, complete_requirements, verify_source_references
-from vibe_audit.domain import RunInput
+from vibe_audit.domain import RunInput, new_run
 from vibe_audit.policy import PolicyError, sealed
 from vibe_audit.service import Engine
 from vibe_audit.staging import discard_staging, stage_source, verify_staging
@@ -255,6 +255,34 @@ async def test_graph_and_job_commit_rollback_is_atomic(tmp_path,monkeypatch,back
     store.close()
 
 
+def test_postgres_store_connects_with_a_timeout_and_survives_a_dropped_connection(tmp_path,monkeypatch):
+    import psycopg
+    url=os.getenv("VIBEAUDIT_TEST_DATABASE_URL")
+    if not url:
+        pytest.skip("Provide dedicated PostgreSQL integration database")
+    connect=psycopg.connect
+    kwargs=[]
+    def recording(*args,**options):
+        kwargs.append(options)
+        return connect(*args,**options)
+    monkeypatch.setattr(psycopg,"connect",recording)
+    store=Store(tmp_path,url)
+    assert kwargs[-1]["connect_timeout"]==5 and kwargs[-1]["autocommit"] is True
+    run=new_run("run-dropped",RunInput(name="dropped connection"))
+    store.save(run)
+    # A database restart drops the connection: the next statement outside a transaction reconnects once.
+    store.conn.close()
+    assert store.get(run["id"])["name"]=="dropped connection"
+    assert len(kwargs)==2
+    # Inside a transaction the lost work is the caller's: the error propagates and nothing is retried.
+    with pytest.raises(psycopg.OperationalError):
+        with store.transaction():
+            store.conn.close()
+            store._execute("SELECT 1")
+    assert store.get(run["id"])["name"]=="dropped connection"
+    store.close()
+
+
 def test_workspace_settings_catalog_and_linked_retest(tmp_path):
     app=create_app(tmp_path,testing=True)
     with TestClient(app) as client:
@@ -357,6 +385,14 @@ def test_finding_decision_needs_independent_execution_evidence(tmp_path):
         assert decided["state"]=="refuted"
         assert [d["previous_state"] for d in decided["decisions"]]==["hypothesis","inconclusive"]
         assert [d["threat_ids"] for d in decided["decisions"]]==[["T-002"],["T-001"]]
+        # A tampered evidence file is an integrity failure (409), the same answer the evidence routes give, not a 500.
+        record=next(a for a in run["artifacts"] if a["id"]==execution["C-003"])
+        path=app.state.store.artifacts/record["filename"]
+        tampered=path.read_text(encoding="utf-8").replace('"producer": "blackbox-worker"','"producer": "tampered"',1)
+        assert tampered!=path.read_text(encoding="utf-8")
+        path.write_text(tampered,encoding="utf-8")
+        response=decide(hypothesis,"inconclusive",execution["C-003"],threats=["T-002"])
+        assert response.status_code==409 and response.json()["detail"]=="Evidence integrity check failed",response.text
 
 
 async def test_postgres_checkpoints_and_resume_do_not_duplicate_executions(tmp_path):

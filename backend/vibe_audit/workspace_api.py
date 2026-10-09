@@ -145,7 +145,10 @@ def workspace_router(store, engine, source_roots, *, session):
         executions = {e.get("evidence_id"): e for e in run["executions"]}
         if not all(tests_threats(executions.get(key, {})) for key in data.evidence_ids):
             raise PolicyError("Counterevidence must come from a case that tests the finding's threats")
-        statuses = [store.evidence(records[key], run_id)["content"]["result"]["status"] for key in data.evidence_ids]
+        try:
+            statuses = [store.evidence(records[key], run_id)["content"]["result"]["status"] for key in data.evidence_ids]
+        except (ValueError, OSError):
+            raise HTTPException(409, "Evidence integrity check failed") from None
         if data.decision == "refuted" and "pass" not in statuses:
             raise PolicyError("Refuting a finding needs an execution in which the security property held")
         if data.decision == "refuted" and any(e["status"] == "fail" for e in run["executions"] if tests_threats(e)):
