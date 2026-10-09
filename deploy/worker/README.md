@@ -1,3 +1,31 @@
+# Worker 執行環境
+
+正式執行需要 Linux、本機 Docker daemon、PostgreSQL lease，以及寫在受信任 runtime profile 裡的映像 digest。HTTP API 只接受 profile 識別碼；agent 無法送出 Docker 選項或任意主機指令。
+
+controller 會啟動一個獨立的 supervisor。supervisor 領取一次性的 capability，綁定 run、manifest、封存的案例、威脅模型、執行配方、到期時間與請求預算。每個對外請求在網路 I/O 之前，都需要 controller 新發的許可，以及已提交的 `sent` 紀錄。結果不明的請求維持終止狀態，必須在新的 run 中核對處理；恢復執行不會重播 worker 工作。
+
+Worker 以 `--network none`、唯讀根檔案系統、不具任何 Linux capability、no-new-privileges，以及明確的 CPU、記憶體與 PID 上限執行。白箱 worker 使用 UID 65532，只拿到凍結的原始碼掛載。黑箱 worker 使用 UID 65533，沒有原始碼掛載。工具只能連到 loopback 上的 HTTP relay；relay 只能把封裝好的訊息送到 supervisor 掛載進來的 Unix socket。supervisor 強制檢查精確允許的 method／path、封存的案例與身分，解析並釘選目的地 IP，拒絕重新導向，並為每個請求預留 controller 共用的預算。憑證一直留在 supervisor。JSON 登入 token 可以存進案例專屬的 session 欄位；worker 看得到的本文與觀測紀錄，會遮蔽擷取到的與設定中的 token。
+
+controller 管線關閉、取消、lease 到期或持久授權來源無法使用時，會先關閉 broker 與作用中的 socket，再終止容器。接著 supervisor 會 kill、等待並移除指定名稱的容器。無法確認清理完成時，結果是 `outcome_unknown`，絕不會當成成功。受信任的 supervisor 與本機 Docker daemon 屬於受信任運算基礎；主機遭入侵不在此邊界內。系統會檢查 Docker 是否可用，絕不會默默改在主機上直接執行。
+
+`process_test` 是供監督測試使用的明確開發模式。它沒有網路或檔案系統隔離，拒絕執行掃描器指令，並回傳 `process_unisolated_test_only`。它不是正式環境的替代方案。
+
+以驗證過的基礎映像 digest 建置最小 worker：
+
+```sh
+docker build --build-arg BASE_IMAGE=python@sha256:<verified-digest> -t vibeaudit-worker:test -f deploy/worker/Dockerfile deploy/worker
+docker image inspect vibeaudit-worker:test --format '{{.Id}}'
+```
+
+`BASE_IMAGE` 必須是單行的 `<name>@sha256:<64 hex>`，否則建置失敗；`python:3.13-slim` 這類 tag 會被拒絕。這個參照會存在 OCI 標籤 `org.opencontainers.image.base.name`，而 `scripts/provision-runtime.py` 不會記錄沒有 digest 釘選標籤的 worker 映像。這些檢查能擋下誤用 tag 或過時、沒有標籤的映像，但不是來源證明。標籤是映像自己的宣告：任何能操作 Docker daemon 的帳號都能設定它；以有標籤的 worker 為 FROM 建出的映像會直接繼承標籤，不會經過這項檢查。因此 `.images.json` 附檔裡的 `base_image_label` 只記錄這項宣告，runtime 也不會再檢查。digest 本身仍須由操作者對照官方映像確認。
+
+工具映像必須包含 `python3` 與固定版本的工具執行檔。靜態工具完全離線執行。OSV 需要另外佈建並驗證過的資料庫快照，目錄中要有 `osv-scanner/`；該目錄會以唯讀方式掛載到 `/opt/osv-db`。worker 不會下載任何資料庫。映像的安裝與拉取只在受信任的佈建階段進行。
+
+`scripts/provision-runtime.py` 會查這個 tag 並記錄它的 image ID；它寫入的 lease TTL（10 秒）就是 Docker 整合測試使用的值。也可以把 `runtime.example.json` 複製到受保護的設定路徑，填入映像 digest 與選用的 `offline_db_dir`，再設定 `VIBEAUDIT_RUNTIME_CONFIG` 與其中引用的資料庫環境變數。work root 要放在原生 Linux 檔案系統上，且只限 controller／supervisor 帳號存取（Unix socket 路徑必須在作業系統長度上限內）。HTTP 目標的測試身分只能引用明確列入允許清單的 `VIBEAUDIT_` 環境變數。
+
+設定 `VIBEAUDIT_TEST_DATABASE_URL` 與 `VIBEAUDIT_TEST_WORKER_IMAGE` 後，即可執行實際的本機整合測試。沒有這些變數時，真正的 Docker／PostgreSQL 檢查會明確 skip。不需要任何雲端模型帳號。
+
+---
 # Worker runtime
 
 Production execution requires Linux, a local Docker daemon, PostgreSQL leases,

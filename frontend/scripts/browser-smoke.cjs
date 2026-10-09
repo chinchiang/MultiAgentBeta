@@ -88,8 +88,16 @@ async function main() {
     assert.equal(retest.status,'created');
     assert.equal(retest.manifest.parent_run_id,created.id);
     await page.getByRole('button', {name: '啟動', exact: true}).waitFor();
+    // The language switch relabels the whole console and the page language, then switches back.
+    await page.getByRole('button', {name: '切換為英文介面', exact: true}).click();
+    await page.getByRole('button', {name: 'New assessment', exact: true}).first().waitFor();
+    await page.getByRole('button', {name: 'Start', exact: true}).waitFor();
+    assert.equal(await page.evaluate(() => document.documentElement.lang), 'en');
+    await page.getByRole('button', {name: 'Switch to the Chinese interface', exact: true}).click();
+    await page.getByRole('button', {name: '新建評估', exact: true}).first().waitFor();
+    assert.equal(await page.evaluate(() => document.documentElement.lang), 'zh-Hant');
     assert.deepEqual(errors, []);
-    const validation={status: 'passed', mode: 'synthetic', run_id: created.id, exports: 3, saved_project:true,trace_loaded:true,retest_created:true,retest_started:false,page_errors: 0, horizontal_overflow: false};
+    const validation={status: 'passed', mode: 'synthetic', run_id: created.id, exports: 3, saved_project:true,trace_loaded:true,retest_created:true,retest_started:false,language_switch:true,page_errors: 0, horizontal_overflow: false};
     require('fs').writeFileSync(path.join(docs,'browser-validation.json'),JSON.stringify(validation,null,2));
     console.log(JSON.stringify(validation));
   } finally {

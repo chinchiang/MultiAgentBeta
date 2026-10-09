@@ -294,7 +294,8 @@ class WorkerRuntime:
                     pass
             rows.append({"id":tool,"available":installed,"implemented":True,"image_pin":pin,
                          "status":"provisioned" if installed else "blocked_provisioning_required",
-                         "detail":"固定版本隔離工具已備妥；每次執行仍需通過案例、範圍、預算與證據檢查。" if installed else "工具 adapter 已實作；需要本地 Linux、PostgreSQL 及已下載的固定映像。"})
+                         "detail":"固定版本隔離工具已備妥；每次執行仍需通過案例、範圍、預算與證據檢查。" if installed else "工具 adapter 已實作；需要本地 Linux、PostgreSQL 及已下載的固定映像。",
+                         "detail_en":"Pinned isolated tool is ready; every run still has to pass the case, scope, budget and evidence checks." if installed else "Tool adapter implemented; needs local Linux, PostgreSQL and the downloaded pinned image."})
         return rows
 
     def _normalize(self,spec,manifest):

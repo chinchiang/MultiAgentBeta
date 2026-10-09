@@ -472,6 +472,12 @@ class ToolCapabilityTests(unittest.TestCase):
         scanners = [c for c in capabilities if c["id"] in {"semgrep", "osv", "gitleaks", "zap", "schemathesis", "playwright", "promptfoo", "pyrit"}]
         self.assertTrue(all(c["cli_detected"] and not c["available"] for c in scanners))
 
+    def test_every_capability_explains_itself_in_chinese_and_english(self):
+        # The console shows detail or detail_en depending on the language the operator chose.
+        for capability in adapters.tool_capabilities():
+            self.assertRegex(capability["detail"], "[\u4e00-\u9fff]")
+            self.assertTrue(capability["detail_en"].isascii() and capability["detail_en"].strip())
+
 
 if __name__ == "__main__":
     unittest.main()

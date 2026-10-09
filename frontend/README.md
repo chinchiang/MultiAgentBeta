@@ -21,6 +21,7 @@ npm run build
 
 ## 實際連線行為
 
+- 介面有正體中文與英文兩種語言，右上角按鈕切換，選擇記在這個瀏覽器的 localStorage；無法使用儲存空間時維持中文。每段可見文字都在使用處寫成 `t('中文','English')`（見 `src/i18n.ts`）。
 - 啟動時從網址 fragment 取出啟動權杖（只存在記憶體並自網址移除），以 `X-VibeAudit-Token` 呼叫 `/api/session` 取得 HttpOnly session cookie 與 CSRF token。cookie 不分 port，所以所有 API 請求（含 GET）都加上 `X-CSRF-Token`；token 存在此分頁的 sessionStorage，重新整理時以它向 `/api/session` 證明 session，新分頁需重新開啟啟動網址。
 - 建立評估依序呼叫 `POST /api/runs`、`POST /api/runs/{id}/start`。
 - 以 fetch 讀取 SSE（EventSource 無法帶 header）的 `progress` / `done` 更新進度，執行中每 2.5 秒再同步一次狀態。執行結束後停止更新。
@@ -54,7 +55,7 @@ npm run build
 
 後端啟動後，設定 `VIBEAUDIT_SESSION_TOKEN` 為後端的啟動權杖再執行 `npm run smoke`，或 `npm run smoke -- --base-url http://127.0.0.1:8000`。只接受數字 loopback HTTP origin，會留下明確標示的合成評估紀錄。
 
-此檢查實際建立與啟動 demo，驗證三份合成 review、`pass/fail/inconclusive` 結果、所有證據讀取、三種報告，再使用真實 Run 資料渲染 React 的五個報告分頁，並驗證不可信 HTML 以文字跳脫。這是 API 與 React SSR 整合測試；不包含瀏覽器點擊、視覺截圖、SSE 重連或真實 LLM／目標驗證。表單互動與窄螢幕仍需依上述功能驗收步驟檢查。
+此檢查實際建立與啟動 demo，驗證三份合成 review、`pass/fail/inconclusive` 結果、所有證據讀取、三種報告，再使用真實 Run 資料渲染 React 的五個報告分頁，並驗證不可信 HTML 以文字跳脫。這是 API 與 React SSR 整合測試；不包含瀏覽器點選、視覺截圖、SSE 重連或真實 LLM／目標驗證。表單互動與窄螢幕仍需依上述功能驗收步驟檢查。
 
 ---
 # Vibe Audit Local Workbench
@@ -80,6 +81,7 @@ Dev mode uses `npm run dev`, defaulting to `http://127.0.0.1:5173`, with `/api` 
 
 ## Actual Connection Behavior
 
+- The interface is in Traditional Chinese (Taiwan) or English. The button at the top right switches it, and the choice is stored in this browser's localStorage; if storage is unavailable the console stays in Chinese. Every visible string is written where it is used as `t('中文','English')` (see `src/i18n.ts`).
 - At startup, the launcher token is taken from the URL fragment (kept only in memory and removed from the URL), and `/api/session` is called with `X-VibeAudit-Token` to obtain an HttpOnly session cookie and a CSRF token. Cookies are not port-scoped, so all API requests (including GET) include `X-CSRF-Token`; the token is stored in this tab's sessionStorage, and on refresh it is used to prove the session to `/api/session`; a new tab must reopen the launcher URL.
 - Creating an evaluation calls `POST /api/runs` and then `POST /api/runs/{id}/start` in order.
 - SSE is read via fetch (EventSource cannot send headers) for `progress` / `done` updates to progress, with an extra status sync every 2.5 seconds while a run is in progress. Updates stop after the run ends.

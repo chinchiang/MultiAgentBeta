@@ -1,5 +1,46 @@
 # CLAUDE.md
 
+Vibe Audit 0.2.1：以證據把關的多模型資安測試工作台。Python 後端在 `backend/vibe_audit`，React 控制台在 `frontend/`。架構見 README 的「系統架構與流程」與 `docs/ARCHITECTURE.md`；API 與模組契約見 `IMPLEMENTATION.md`。
+
+## 常用指令
+
+一律在 repo 根目錄執行；catalogs、fixtures 與建置好的介面不在 Python 套件內。
+
+```sh
+python -m pip install --require-hashes -r requirements.lock.txt   # 固定版本並檢查雜湊
+PYTHONPATH=backend python -m pytest tests -q -rs                  # -rs：逐項看 skip 原因
+python scripts/package-release.py --manifest-only                 # 任何被追蹤的檔案變更後執行
+python scripts/package-release.py --check                         # CI 會跑
+python scripts/redact-receipts.py --check                         # docs/ 裡的收據不得含主機或帳號名稱
+cd frontend && npm ci && npm run typecheck && npm run build        # dist/ 有提交進版控
+git add -N frontend/dist && git diff --exit-code -- frontend/dist # CI：dist 必須與原始碼建置結果一致
+```
+
+## 規則
+
+- `source-manifest.sha256` 記錄每個被追蹤檔案的雜湊，只能用腳本重產，不可手改。
+- `.gitattributes` 設定 `* -text`：保留每個檔案原本的換行（`scripts/package-release.py` 等檔案是 CRLF），shell script 維持 LF。
+- README.md、docs/ARCHITECTURE.md、IMPLEMENTATION.md、docs/VALIDATION.md 等文件為中英雙語（中文段與英文段），兩段要一起改。中文使用正體中文與臺灣慣用語。
+- 控制台為中英雙語：每段可見文字都在使用處寫成 `t('中文','English')`，模組層級的對照表用 `frontend/src/i18n.ts` 的 `labels()`。
+- 權威驗證在 `domain.py`、`contracts.py`、`policy.py` 與 `docs/run-input.schema.json`；文件要與它們一致。
+- skip 不等於通過，不要在 docs/VALIDATION.md 把 skip 記成已驗證。
+- JUnit 收據放進 docs/ 前先跑 `python scripts/redact-receipts.py`，再跑 `python scripts/summarize-validation.py`。
+- `.claude/` 與本檔由 `scripts/package-release.py` 排除在發佈檔之外。
+
+## 整合測試開關
+
+未設定時，對應的測試會 skip 並寫明原因。
+
+| 變數 | 啟用的測試 |
+|---|---|
+| `VIBEAUDIT_TEST_DATABASE_URL`、`VIBEAUDIT_TEST_POSTGRES` | PostgreSQL 儲存、lease 與 checkpoint 測試 |
+| `VIBEAUDIT_TEST_NODE` | TypeScript Web fixture（需要 Node 24） |
+| `VIBEAUDIT_TEST_WORKER_IMAGE`、`VIBEAUDIT_INTEGRATION_IMAGE`、`VIBEAUDIT_FIXTURE_IMAGE`、`VIBEAUDIT_TEST_RUNTIME_CONFIG` | Docker worker、掃描器、工具與 fixture 整合（見 docs/DOCKER_INTEGRATION_TESTING.md） |
+| `VIBEAUDIT_JUNIT_XML` | `scripts/verify-linux.sh` 寫出 JUnit 收據 |
+
+---
+# CLAUDE.md
+
 Vibe Audit 0.2.1: evidence-gated multi-model security testing workbench. Python backend in `backend/vibe_audit`, React console in `frontend/`. Architecture: README "Architecture Overview" and `docs/ARCHITECTURE.md`; API and module contracts: `IMPLEMENTATION.md`.
 
 ## Commands
@@ -20,7 +61,8 @@ git add -N frontend/dist && git diff --exit-code -- frontend/dist # CI: dist mus
 
 - `source-manifest.sha256` pins every tracked file. Regenerate it with the script, never by hand.
 - `.gitattributes` sets `* -text`: keep each file's existing line endings (`scripts/package-release.py` and some others are CRLF). Shell scripts stay LF.
-- README.md, docs/ARCHITECTURE.md, IMPLEMENTATION.md, docs/VALIDATION.md and other docs are bilingual (Chinese and English halves). Change both halves together.
+- README.md, docs/ARCHITECTURE.md, IMPLEMENTATION.md, docs/VALIDATION.md and other docs are bilingual (Chinese and English halves). Change both halves together. Chinese is Traditional Chinese with Taiwanese usage.
+- The console is bilingual: write every visible string as `t('中文','English')` where it is used, and module-level label tables with `labels()` from `frontend/src/i18n.ts`.
 - Authoritative validation lives in `domain.py`, `contracts.py`, `policy.py` and `docs/run-input.schema.json`; keep docs consistent with them.
 - A skipped test is not a pass. Do not record skips as verification in docs/VALIDATION.md.
 - Run `python scripts/redact-receipts.py` before adding a JUnit receipt to docs/, then `python scripts/summarize-validation.py`.

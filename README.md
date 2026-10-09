@@ -8,7 +8,7 @@ AI Commander 負責派工；程式 Harness 強制範圍、階段、權限、預�
 
 ## 開啟控制台
 
-Windows 需 Python 3.12+ 與 Node 24。第一次安裝會下載固定依賴：
+Windows 需 Python 3.12+ 與 Node 24。第一次安裝會下載固定版本的相依套件：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/setup.ps1
@@ -17,7 +17,7 @@ powershell -ExecutionPolicy Bypass -File scripts/start-local.ps1
 
 工具需在原始碼目錄執行：catalogs、fixtures 與 UI 建置不在 Python 套件內。要用 `vibe-audit` 指令請在此目錄 `pip install -e .`；複製出去的 wheel 會拒絕啟動。
 
-開啟啟動時終端機印出的網址（`http://127.0.0.1:8000/#token=…`），先選「合成示範」。權杖只用來建立 session，同一分頁重新整理不需再帶，新分頁請重新開啟啟動網址；後端重啟會產生新權杖，可用 `VIBEAUDIT_SESSION_TOKEN`（32–256 個 URL-safe 字元）固定。控制台可保存專案/模型設定、檢視三份審查、威脅/需求/案例追溯、證據與用量，匯出 JSON/Markdown/SARIF，建立保留原始關聯的修補複測。
+開啟啟動時終端機印出的網址（`http://127.0.0.1:8000/#token=…`），先選「合成示範」。權杖只用來建立 session，同一分頁重新整理不需再帶，新分頁請重新開啟啟動網址；後端重啟會產生新權杖，可用 `VIBEAUDIT_SESSION_TOKEN`（32–256 個 URL-safe 字元）固定。控制台可保存專案/模型設定、檢視三份審查、威脅/需求/案例追溯、證據與用量，匯出 JSON/Markdown/SARIF，建立保留原始關聯的修補複測。右上角的「English／中文」按鈕可切換介面語言，選擇會記在這個瀏覽器。
 
 Windows 原生不執行 live 隔離掃描。真實工作流請在 Linux 或 WSL2 依 [Linux 操作指南](docs/LINUX_SETUP.md) 啟動，使用 PostgreSQL、Docker、已準備的模型端點與使用者提供的隔離 staging。
 
@@ -148,7 +148,7 @@ MultiAgentBeta/
 ├── .github/workflows/ci.yml       # backend（pytest + PostgreSQL）與 frontend（typecheck）
 ├── IMPLEMENTATION.md              # API 與模組契約
 ├── README.md · LICENSE · NOTICE
-├── pyproject.toml · requirements.lock.txt   # 固定依賴（hash 檢查）
+├── pyproject.toml · requirements.lock.txt   # 固定版本的相依套件（hash 檢查）
 └── source-manifest.sha256         # 來源檔案雜湊清單（scripts/package-release.py）
 ```
 
@@ -162,9 +162,9 @@ MultiAgentBeta/
 - 白箱 raw staging 與模型用脫敏快照分開。staging 副本含有機密檔案，每次執行結束（含 blocked、failed、取消）與服務啟動時都會刪除；恢復時重新複製並必須與凍結時完全相同。來源讀取有上限，脫敏及路由抽取是啟發式；略過的目錄（build、dist、node_modules、.git、symlink）、未讀檔案和未知業務規則會保留缺口。
 - 文字宣稱、HTTP 狀態碼、scanner exit 0、模型共識都不能單獨證明安全。控制或觀測失敗不能判為通過。
 - 送出後中斷標示 outcome_unknown，不自動重播。停止先撤銷網路；未確認清理仍顯示未完成。
-- loopback 單使用者 session：建立 session 需要啟動權杖（同機其他程序無法自行取得 session 再探測模型或讀取證據）。cookie 不分 port，所以每個 API 請求（含讀取）都另需只存在該分頁 sessionStorage 的 CSRF token；瀏覽器開過的其他本機服務拿到 cookie 也無法使用。另有 Host/Origin 防護，每個 /api 路由也各自檢查 session 與 CSRF，不只靠 middleware。同時最多 8 個 session，閒置 1 小時或滿 8 小時失效，可在工作台登出；API 可一次結束全部 session，此時自動產生的啟動權杖也會換新並重新印出。錯誤的啟動權杖會讓下一次錯誤回應逐次變慢（上限 5 秒），正確的權杖不受影響。自訂的 VIBEAUDIT_SESSION_TOKEN 必須夠隨機（例如 `python -c "import secrets; print(secrets.token_urlsafe(32))"`），重複字元或重複樣式會被拒絕。資料目錄（VIBEAUDIT_DATA_DIR）在 Linux 上只限擁有者存取（0700），無法設定時服務不啟動；Windows 只執行合成資料的 demo，目錄權限沿用上層目錄的 ACL。受測文字以不可信資料呈現。不要將控制台直接公開到網際網路。
+- loopback 單使用者 session：建立 session 需要啟動權杖（同機其他處理程序無法自行取得 session 再探測模型或讀取證據）。cookie 不分 port，所以每個 API 請求（含讀取）都另需只存在該分頁 sessionStorage 的 CSRF token；瀏覽器開過的其他本機服務拿到 cookie 也無法使用。另有 Host/Origin 防護，每個 /api 路由也各自檢查 session 與 CSRF，不只靠 middleware。同時最多 8 個 session，閒置 1 小時或滿 8 小時失效，可在工作台登出；API 可一次結束全部 session，此時自動產生的啟動權杖也會換新並重新印出。錯誤的啟動權杖會讓下一次錯誤回應逐次變慢（上限 5 秒），正確的權杖不受影響。自訂的 VIBEAUDIT_SESSION_TOKEN 必須夠隨機（例如 `python -c "import secrets; print(secrets.token_urlsafe(32))"`），重複字元或重複樣式會被拒絕。資料目錄（VIBEAUDIT_DATA_DIR）在 Linux 上只限擁有者存取（0700），無法設定時服務不啟動；Windows 只執行合成資料的 demo，目錄權限沿用上層目錄的 ACL。受測文字以不可信資料呈現。不要將控制台直接公開到網際網路。
 
-容器、資料庫與控制程序管理者屬信任邊界；本工具無法限制外部 staging 的全部出網，也不能保證找出所有漏洞。
+容器、資料庫與控制處理程序的管理者屬信任邊界；本工具無法限制外部 staging 的全部出網，也不能保證找出所有漏洞。
 
 ## 文件與開發
 
@@ -207,7 +207,7 @@ powershell -ExecutionPolicy Bypass -File scripts/start-local.ps1
 
 The tool must be run from the source directory: catalogs, fixtures, and the UI build are not inside the Python package. To use the `vibe-audit` command, run `pip install -e .` in this directory; a wheel copied elsewhere will refuse to start.
 
-Open the URL printed by the launcher terminal (`http://127.0.0.1:8000/#token=…`) and first pick 「合成示範」. The token is only used to establish a session; refreshing the same tab does not need to carry it again, and a new tab should reopen the launcher URL; a backend restart mints a new token, which can be pinned with `VIBEAUDIT_SESSION_TOKEN` (32–256 URL-safe characters). The console can save project/model settings, view the three reviews, threat/requirement/case traceability, evidence and usage, export JSON/Markdown/SARIF, and create remediation retests that preserve the original associations.
+Open the URL printed by the launcher terminal (`http://127.0.0.1:8000/#token=…`) and first pick 「合成示範」 (Synthetic demo in the English interface). The token is only used to establish a session; refreshing the same tab does not need to carry it again, and a new tab should reopen the launcher URL; a backend restart mints a new token, which can be pinned with `VIBEAUDIT_SESSION_TOKEN` (32–256 URL-safe characters). The console can save project/model settings, view the three reviews, threat/requirement/case traceability, evidence and usage, export JSON/Markdown/SARIF, and create remediation retests that preserve the original associations. The English／中文 button at the top right switches the interface language; the browser remembers the choice.
 
 Windows natively does not run live isolated scans. For the real workflow, start on Linux or WSL2 following the [Linux setup guide](docs/LINUX_SETUP.md), using PostgreSQL, Docker, prepared model endpoints, and user-provided isolated staging.
 

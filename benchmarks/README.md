@@ -8,7 +8,7 @@ python -m vibe_audit.benchmark --mode synthetic --output benchmarks/results-synt
 python -m vibe_audit.benchmark --mode local_tools --output benchmarks/results-local
 ```
 
-`synthetic` 排程中的每個輸出皆來自預先指定的 fixture。`local_tools` 真的對 fixture 的 Python 文字執行標準函式庫 AST 分析，不執行程式碼、HTTP、模型或 shell；它只偵測 eval／exec 呼叫，是狹窄的傳統靜態基線，不能冒稱 Semgrep 或完整 SAST。其他模型組均產生明確 blocked 紀錄。`live` 已有可執行 provider 與工具注入接口，缺少明確 profile／policy 時才 blocked；沒有使用真實金鑰驗證效果。
+`synthetic` 排程中的每個輸出皆來自預先指定的 fixture。`local_tools` 真的對 fixture 的 Python 文字執行標準函式庫 AST 分析，不執行程式碼、HTTP、模型或 shell；它只偵測 eval／exec 呼叫，是狹窄的傳統靜態基線，不能冒稱 Semgrep 或完整 SAST。其他模型組均產生明確 blocked 紀錄。`live` 已有可執行 provider 與工具注入介面，缺少明確 profile／policy 時才 blocked；沒有使用真實金鑰驗證效果。
 
 ## 比較組與預算
 
@@ -51,7 +51,7 @@ python -m vibe_audit.benchmark_matching apply --results benchmarks/results-synth
 
 精確模型、核准資料政策／預算、可重置隔離目標、相同工具能力、真實用量與費用來源、兩人審核 gold／oracle evidence。CLI 沒有設定時保留完整 blocked 排程與原因，沒有省略未測的組別。
 
-## Live runner 接口
+## Live runner 介面
 
 `run_live_benchmark(..., profiles={a:...,b:...,c:...}, model_policy={data_policy:...,allowed_model_origins:[...]}, tool_runner=..., model_runner=...)` 是 async API；同步程式使用 `run_benchmark(mode='live', ...)`。`model_runner(profile, system, payload, policy)` 預設使用現有 `providers.generate_json`，因此沿用精確端點、憑證環境變數、JSON schema、輸出與總 token 檢查及有限重試。模型設定完整保存；同模型組重複 A，異質組需要三個不同配置與模型家族；debate 最後由 A 使用匿名化的初審結果仲裁。
 

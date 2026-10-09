@@ -94,13 +94,14 @@ function compile(source, name, overrides = {}) {
   mod._compile(output.outputText, mod.filename);
   return mod.exports;
 }
-const api = compile(await readFile(resolve(root, 'src/api.ts'), 'utf8'), 'api.ts');
-const extensions = compile(await readFile(resolve(root, 'src/extensions.tsx'), 'utf8'), 'extensions.tsx', { './api': api, './extensions.css': {} });
+const i18n = compile(await readFile(resolve(root, 'src/i18n.ts'), 'utf8'), 'i18n.ts');
+const api = compile(await readFile(resolve(root, 'src/api.ts'), 'utf8'), 'api.ts', { './i18n': i18n });
+const extensions = compile(await readFile(resolve(root, 'src/extensions.tsx'), 'utf8'), 'extensions.tsx', { './api': api, './extensions.css': {}, './i18n': i18n });
 const source = await readFile(resolve(root, 'src/App.tsx'), 'utf8');
 // Vite statically replaces import.meta.env.* at build time (false for a
 // production bundle); transpileModule cannot transform import.meta, so the
 // smoke applies the same substitution before compiling.
-const components = compile(source.replace(/import\.meta\.env\.\w+/g, 'false') + '\nexport { RunDetail, CreateForm, CapabilitiesView, SafeText };', 'App.tsx', { './api': api, './extensions': extensions });
+const components = compile(source.replace(/import\.meta\.env\.\w+/g, 'false') + '\nexport { RunDetail, CreateForm, CapabilitiesView, SafeText };', 'App.tsx', { './api': api, './extensions': extensions, './i18n': i18n });
 const noop = () => {};
 const render = (component, props) => renderToStaticMarkup(React.createElement(component, props));
 const tabs = ['overview', 'trace', 'findings', 'evidence', 'activity'];
@@ -114,6 +115,21 @@ for (const tab of tabs) {
 }
 assert(render(components.CreateForm, { onCreate: async () => {}, busy: false, connected: true }).includes('合成示範'));
 assert(render(components.CapabilitiesView, { capabilities, session }).includes('已知限制'));
+assert(render(components.CapabilitiesView, { capabilities, session }).includes(capabilities.limitations_zh[0]));
+// The same components in the English interface: interface labels switch, and none of the Chinese ones remain.
+i18n.setLang('en');
+for (const tab of tabs) {
+  const html = render(components.RunDetail, { run, tab, setTab: noop, action: async () => {}, busy: '' });
+  assert(html.includes('Synthetic demo · not a real security assessment'), `Missing English synthetic banner in ${tab}`);
+  assert(html.includes('Incomplete') && !html.includes('未完整完成'), `Completion state not in English in ${tab}`);
+  assert(html.includes('Overview and models') && !html.includes('總覽與模型'), `Tabs not in English in ${tab}`);
+}
+const englishForm = render(components.CreateForm, { onCreate: async () => {}, busy: false, connected: true });
+assert(englishForm.includes('Synthetic demo') && englishForm.includes('Create and start') && !englishForm.includes('建立並開始'));
+const englishCapabilities = render(components.CapabilitiesView, { capabilities, session });
+assert(englishCapabilities.includes('Known limitations') && englishCapabilities.includes(capabilities.limitations[0]));
+assert(capabilities.tools.every(tool => englishCapabilities.includes(tool.detail_en.replace(/'/g, '&#x27;'))));
+i18n.setLang('zh-Hant');
 const hostile = '<script>alert("unsafe")</script><img src=x onerror=alert(1)>';
 const safeHtml = render(components.SafeText, { value: hostile });
 assert(!safeHtml.includes('<script>') && !safeHtml.includes('<img'));

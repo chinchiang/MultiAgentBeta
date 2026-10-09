@@ -35,7 +35,7 @@ License references: LangGraph MIT; LiteLLM non-enterprise MIT with separate ente
 | Semgrep 規則授權 | https://semgrep.dev/legal/rules-license/ ; https://github.com/semgrep/semgrep | 僅使用自訂的本機範例規則；未捆綁受限規則 |
 | ZAP | https://www.zaproxy.org/docs/desktop/addons/automation-framework/ ; https://github.com/zaproxy/zap-extensions | 以固定的請求發送器／被動掃描執行器，在隔離的 Docker 中對正／負向本機測試素材執行驗證 |
 | Schemathesis/Playwright | https://schemathesis.readthedocs.io/en/latest/guides/extending/ ; https://playwright.dev/docs/api-testing | 不宣稱能自動理解業務授權邏輯 |
-| promptfoo | https://www.promptfoo.dev/docs/red-team/troubleshooting/data-handling/ ; https://github.com/promptfoo/promptfoo | 僅限遠端的插件不會被靜默啟用 |
+| promptfoo | https://www.promptfoo.dev/docs/red-team/troubleshooting/data-handling/ ; https://github.com/promptfoo/promptfoo | 僅限遠端的外掛不會被靜默啟用 |
 | PyRIT | https://github.com/microsoft/PyRIT/blob/main/pyrit/executor/workflow/xpia.py ; https://github.com/microsoft/PyRIT/blob/main/pyrit/score/true_false/otel_tool_call_scorer.py | 呼叫本身並非已產生副作用的證據 |
 | 分詞器資產 | https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken ; installed tiktoken_ext/openai_public.py | SHA256 223921b76ee99bde995b7ff738513eef100fb51d18c93597a113bcffe865b2a7；於安裝階段下載，執行階段禁止下載 |
 
