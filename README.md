@@ -169,6 +169,8 @@ MultiAgentBeta/
 ## 文件與開發
 
 - [部署與設定](docs/LINUX_SETUP.md)
+- [Docker 整合測試](docs/DOCKER_INTEGRATION_TESTING.md)／[Worker 映像](deploy/worker/README.md)
+- [前端建置與連線行為](frontend/README.md)
 - [架構與方法](docs/ARCHITECTURE.md)
 - [API 與模組契約](IMPLEMENTATION.md)
 - [交付對照](docs/DELIVERY.md)／[驗證紀錄](docs/VALIDATION.md)
@@ -357,6 +359,8 @@ Containers, the database, and control-process administrators are trust boundarie
 ## Documentation and Development
 
 - [Deployment and configuration](docs/LINUX_SETUP.md)
+- [Docker integration testing](docs/DOCKER_INTEGRATION_TESTING.md) / [Worker images](deploy/worker/README.md)
+- [Frontend build and connection behavior](frontend/README.md)
 - [Architecture and methodology](docs/ARCHITECTURE.md)
 - [API and module contracts](IMPLEMENTATION.md)
 - [Delivery comparison](docs/DELIVERY.md) / [Validation log](docs/VALIDATION.md)
