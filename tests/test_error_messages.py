@@ -15,7 +15,7 @@ BACKEND = ROOT / "backend" / "vibe_audit"
 # next to a mutated copy of the package, where there is no checkout to scan.
 from_checkout = pytest.mark.skipif(not BACKEND.is_dir(), reason="the backend sources are not next to these tests")
 CJK = re.compile(r"[一-鿿]")
-RAISERS = {"PolicyError", "HTTPException", "problem", "AdapterBlocked", "ProviderError", "CatalogError"}
+RAISERS = {"PolicyError", "HTTPException", "problem", "AdapterBlocked", "ProviderError", "CatalogError", "LeaseError"}
 # Calls whose first message argument is shown to the operator: activity events, snapshot gaps and run gaps.
 REPORTERS = {"event": 1, "gap": 0}
 # The separate benchmark tool and the table itself report nothing to the console.

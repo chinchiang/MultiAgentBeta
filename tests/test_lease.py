@@ -144,3 +144,64 @@ def test_postgres_lease_store_refuses_a_non_utf8_database(monkeypatch,server,cli
     with pytest.raises(LeaseError,match="UTF8"):
         LeaseStore(database_url="postgresql://synthetic/db")
     assert closed==[True]
+
+
+def test_finished_result_returns_only_the_journaled_result_of_a_finished_task(leases):
+    store,_=leases;cap=issue(store);binding=cap["binding"]
+    lookup={k:binding[k] for k in ("run_id","case_hash","threat_hash","manifest_hash","operation","repetition")}
+    assert store.finished_result(**lookup) is None
+    store.claim(cap,"worker")
+    store.reserve_dispatch(cap,"worker","request-1",{"path":"/a"})
+    assert store.finished_result(**lookup) is None
+    store.finish_dispatch(cap,"worker","request-1",{"path":"/a"},{"status_code":200})
+    store.finish_task(cap,"worker",{"status":"pass","reason":"held"})
+    assert store.finished_result(**lookup)=={"status":"pass","reason":"held"}
+    # The recipe hash is not part of the task's identity: a changed recipe still finds the paid result.
+    assert store.finished_result(**lookup,spec_hash="another-recipe")=={"status":"pass","reason":"held"}
+    for key,other in [("repetition",1),("run_id","other-run"),("case_hash","other"),("threat_hash","other"),("manifest_hash","other"),("operation","ai_http")]:
+        assert store.finished_result(**{**lookup,key:other}) is None
+    with pytest.raises(LeaseError,match="Complete immutable capability bindings are required"):
+        store.finished_result(**{**lookup,"run_id":""})
+    with pytest.raises(LeaseError,match="Complete immutable capability bindings"):
+        store.finished_result(**{**lookup,"case_hash":None})
+    # Only a dict result is a usable journal entry.
+    other=issue(store,repetition=1);store.claim(other,"worker");store.finish_task(other,"worker",["not","a","result"])
+    assert store.finished_result(**{**lookup,"repetition":1}) is None
+
+
+def test_task_records_and_revocation_reasons(leases):
+    store,clock=leases;cap=issue(store)
+    assert store.task(cap["task_id"])=={"id":cap["task_id"],"key":store._idempotency_key(cap["binding"]),"lease_id":cap["id"],"state":"prepared","payload":{"binding":cap["binding"]}}
+    with pytest.raises(LeaseError,match="Worker task not found"):store.task("missing")
+    store.revoke(cap["id"])
+    assert store.task(cap["task_id"])["payload"]=={"binding":cap["binding"],"reason":"revoked"}
+    long_reason=issue(store,repetition=1);store.revoke(long_reason["id"],"x"*200)
+    assert store.task(long_reason["task_id"])["payload"]["reason"]=="x"*160
+    expiring=issue(store,repetition=2);clock[0]=200
+    assert store.expire()==[expiring["id"]]
+    assert store.task(expiring["task_id"])["payload"]["reason"]=="Lease expired; external task must be reconciled"
+    finished=issue(store,repetition=3);store.claim(finished,"worker");store.finish_task(finished,"worker",{"status":"pass"})
+    store.revoke(finished["id"],"too late")
+    assert store.task(finished["task_id"])["state"]=="finished"
+
+
+def test_lease_errors_name_their_cause(leases):
+    store,_=leases;cap=issue(store,max_requests=1)
+    with pytest.raises(LeaseError,match="Worker identity is required"):store.claim(cap,"")
+    store.claim(cap,"worker")
+    with pytest.raises(LeaseError,match="already been claimed"):store.claim(cap,"worker")
+    with pytest.raises(LeaseError,match="claimed by another worker"):store.validate(cap,"other")
+    with pytest.raises(LeaseError,match="A unique request ID is required"):store.reserve_dispatch(cap,"worker","",{"path":"/a"})
+    store.reserve_dispatch(cap,"worker","request-1",{"path":"/a"})
+    with pytest.raises(LeaseError,match="already journaled"):store.reserve_dispatch(cap,"worker","request-1",{"path":"/a"})
+    with pytest.raises(LeaseError,match="budget exhausted"):store.reserve_dispatch(cap,"worker","request-2",{"path":"/a"})
+    with pytest.raises(LeaseError,match="outcome remains unknown"):store.finish_task(cap,"worker",{"status":"pass"})
+    with pytest.raises(LeaseError,match="does not match the journaled dispatch request"):store.finish_dispatch(cap,"worker","request-1",{"path":"/b"},{})
+    with pytest.raises(LeaseError,match="does not match the journaled dispatch request"):store.finish_dispatch(cap,"worker","request-9",{"path":"/a"},{})
+    store.finish_dispatch(cap,"worker","request-1",{"path":"/a"},{"status_code":200})
+    with pytest.raises(LeaseError,match="does not match the journaled dispatch request"):store.finish_dispatch(cap,"worker","request-1",{"path":"/a"},{"status_code":200})
+    store.finish_task(cap,"worker",{"status":"pass"})
+    with pytest.raises(LeaseError,match="revoked or expired"):store.finish_task(cap,"worker",{"status":"pass"})
+    with pytest.raises(LeaseError,match="Worker lease not found"):store.revoke("missing")
+    with pytest.raises(LeaseError,match="Invalid worker lease limits"):issue(store,repetition=-1)
+    with pytest.raises(LeaseError,match="never implicitly replayed"):issue(store,run_id=cap["binding"]["run_id"])
