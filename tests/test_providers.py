@@ -63,8 +63,9 @@ async def test_local_only_denies_nonliteral_loopback(profile, policy, fake_provi
     assert not fake_provider[0]
 
 
-@pytest.mark.parametrize("endpoint", ["http://user:secret@127.0.0.1:11434/v1", "http://127.0.0.1:11434/v1?key=secret", "http://127.0.0.1:11434/v1#fragment", "http://127.0.0.1:11434\\@evil.test/"],
-                         ids=["userinfo", "query", "fragment", "backslash"])
+@pytest.mark.parametrize("endpoint", ["http://user:secret@127.0.0.1:11434/v1", "http://127.0.0.1:11434/v1?key=secret", "http://127.0.0.1:11434/v1#fragment", "http://127.0.0.1:11434\\@evil.test/",
+                                      "http://127.0.0.1:0/v1", "http://127.0.0.1:11434/v1\n", "http://127%2e0.0.1:11434/v1"],
+                         ids=["userinfo", "query", "fragment", "backslash", "port-zero", "control-character", "percent-escape"])
 @pytest.mark.asyncio
 async def test_endpoint_ambiguity_rejected(profile, policy, fake_provider, endpoint):
     profile["endpoint"] = endpoint
@@ -130,8 +131,13 @@ def test_credential_origin_bindings_and_defaults(monkeypatch):
         "VIBEAUDIT_OPENAI_API_KEY=https://gateway.example:8443,VIBEAUDIT_LOCAL_KEY=http://[::1]:8001,VIBEAUDIT_LOCAL_KEY=http://127.0.0.1:8001"})
     assert bound["VIBEAUDIT_OPENAI_API_KEY"] == {"https://gateway.example:8443"}
     assert bound["VIBEAUDIT_LOCAL_KEY"] == {"http://[::1]:8001", "http://127.0.0.1:8001"}
+    # An origin is read the way targets are read: IDNA for a non-ASCII host, the default port left out of the text.
+    assert providers.credential_origins({"VIBEAUDIT_MODEL_CREDENTIAL_ORIGINS": "VIBEAUDIT_KEY=https://模型.例子:443/"}) ["VIBEAUDIT_KEY"] == {"https://xn--xgs754b.xn--fsqu00a"}
     for raw in ["VIBEAUDIT_KEY", "OPENAI_API_KEY=https://api.openai.com", "VIBEAUDIT_KEY=https://api.example.com/v1",
-                "VIBEAUDIT_KEY=ftp://api.example.com", "VIBEAUDIT_KEY=https://user:pw@api.example.com"]:
+                "VIBEAUDIT_KEY=ftp://api.example.com", "VIBEAUDIT_KEY=https://user:pw@api.example.com", "VIBEAUDIT_KEY=https://api.example.com:0",
+                "VIBEAUDIT_KEY=https://api.example.com?x", "VIBEAUDIT_KEY=https://api.example.com#f",
+                # The tool's own settings share the prefix; a binding under one of their names is refused like a credential reference.
+                "VIBEAUDIT_DATABASE_URL=https://api.example.com", "VIBEAUDIT_SESSION_TOKEN=https://api.example.com"]:
         with pytest.raises(providers.ProviderError) as err:
             providers.credential_origins({"VIBEAUDIT_MODEL_CREDENTIAL_ORIGINS": raw})
         assert err.value.code == "invalid_credential_binding"

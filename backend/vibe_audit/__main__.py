@@ -15,14 +15,12 @@ def main():
     os.environ["LANGCHAIN_TRACING_V2"]="false"
     os.environ["LANGSMITH_TRACING"]="false"
     os.environ["DO_NOT_TRACK"]="1"
-    if args.data_dir:
-        os.environ["VIBEAUDIT_DATA_DIR"]=args.data_dir
-    configured=[s for s in os.getenv("VIBEAUDIT_UI_ORIGINS","").split(",") if s]
-    os.environ["VIBEAUDIT_UI_ORIGINS"]=",".join(dict.fromkeys(configured+[f"http://127.0.0.1:{args.port}",f"http://localhost:{args.port}"]))
     import uvicorn
     from .api import create_app
     from .diagnostics import configure
-    app=create_app()
+    from .settings import Settings
+    # The port this launcher listens on is a trusted console origin beside whatever VIBEAUDIT_UI_ORIGINS names.
+    app=create_app(settings=Settings.from_environ(data_dir=args.data_dir,console_origins_extra=[f"http://127.0.0.1:{args.port}",f"http://localhost:{args.port}"]))
     # Failures the API reports in fixed words are explained here, on this machine only (type and location, no values).
     configure(app.state.store.root)
     # The fragment never reaches the server or its logs; the workbench trades it for a session cookie.

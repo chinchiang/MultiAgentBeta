@@ -12,7 +12,7 @@ import time
 import uuid
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 import pytest
-from vibe_audit.lease import canonical_hash,LeaseStore
+from vibe_audit.lease import canonical_hash,LeaseStore,placeholders
 from vibe_audit.worker_runtime import WorkerRuntime,WorkerBlocked,docker_command
 
 
@@ -94,7 +94,7 @@ async def test_sustained_lease_outage_fails_closed_after_three_strikes(tmp_path,
         # outage under test begins once a worker exists, not before it can start.
         def fail_once_claimed(capability,*args,**kwargs):
             with rt.leases.lock:
-                row=rt.leases._sql("SELECT state FROM worker_leases WHERE id=?",(capability["id"],)).fetchone()
+                row=rt.leases._sql(placeholders("SELECT state FROM worker_leases WHERE id=?",rt.leases.postgres),(capability["id"],)).fetchone()
             if row and row[0]=="active": raise RuntimeError("lease database unavailable")
             return real(capability,*args,**kwargs)
         monkeypatch.setattr(rt.leases,"renew",fail_once_claimed)

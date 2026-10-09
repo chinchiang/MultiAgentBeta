@@ -78,6 +78,21 @@ def bound_model_credentials(environ=None):
 TARGET_CREDENTIAL_ORIGINS_ENV = "VIBEAUDIT_TARGET_CREDENTIAL_ORIGINS"
 
 
+def parse_bindings(text, parse_value, *, reserved=RESERVED_ENV):
+    """{name: {value}} of a credential-binding variable: NAME=value entries, comma-separated, a name repeating for
+    several values. A name must be a VIBEAUDIT_ credential name that is not one of this tool's own settings, and each
+    value is read by parse_value; a bad entry is a ValueError, which the caller turns into its own refusal.
+    """
+    bound = {}
+    for entry in filter(None, (item.strip() for item in text.split(","))):
+        name, _, value = entry.partition("=")
+        name = name.strip()
+        if not _CREDENTIAL_ENV.fullmatch(name) or name in reserved:
+            raise ValueError("Not a credential binding")
+        bound.setdefault(name, set()).add(parse_value(value.strip()))
+    return bound
+
+
 def target_credential_origins(environ=None):
     """The target origins each test identity credential may be sent to, as the operator's environment states them.
 
@@ -86,18 +101,10 @@ def target_credential_origins(environ=None):
     NAME=origin entries, comma-separated; a name may repeat for several origins. Nothing is bound by default.
     """
     environ = os.environ if environ is None else environ
-    bound = {}
-    for entry in filter(None, (item.strip() for item in environ.get(TARGET_CREDENTIAL_ORIGINS_ENV, "").split(","))):
-        name, _, value = entry.partition("=")
-        name = name.strip()
-        try:
-            if not _CREDENTIAL_ENV.fullmatch(name) or name in RESERVED_ENV:
-                raise AdapterBlocked("")
-            origin = _origin({"target_url": value.strip()})
-        except AdapterBlocked:
-            raise AdapterBlocked(f"{TARGET_CREDENTIAL_ORIGINS_ENV} entries must be VIBEAUDIT_NAME=scheme://host[:port]") from None
-        bound.setdefault(name, set()).add(origin)
-    return bound
+    try:
+        return parse_bindings(environ.get(TARGET_CREDENTIAL_ORIGINS_ENV, ""), parse_origin)
+    except ValueError:
+        raise AdapterBlocked(f"{TARGET_CREDENTIAL_ORIGINS_ENV} entries must be VIBEAUDIT_NAME=scheme://host[:port]") from None
 
 
 def unbound_target_credentials(manifest, environ=None):
@@ -285,24 +292,48 @@ def _cancelled(event):
     return event is not None and event.is_set()
 
 
-def _origin(manifest):
+_DEFAULT_PORTS = {"http": 80, "https": 443, "postgres": 5432, "postgresql": 5432}
+
+
+def parse_origin(value, *, allow_path=False):
+    """(scheme, host, port) of one exact HTTP(S) origin; ValueError for anything else.
+
+    The one parser for targets, model endpoints, credential bindings and run input, so every check reads an origin
+    the same way: scheme http or https; a hostname, IDNA-encoded and lowercased (an IPv6 literal without its
+    brackets); no userinfo, query, fragment, whitespace or control character, backslash, or percent-escape in the
+    authority; port 1..65535, the scheme's default when absent (":0" is a port, not a missing one). A path is refused
+    unless allow_path, which model endpoints such as .../v1 need. The supervisor loads this module on its own, so it
+    stays standard-library only.
+    """
     try:
-        raw = manifest.get("target_url", "")
-        if not isinstance(raw, str) or any(ord(c) < 33 for c in raw):
+        if not isinstance(value, str) or any(ord(c) < 33 for c in value) or "\\" in value:
             raise ValueError
-        parts = urlsplit(raw)
+        parts = urlsplit(value)
         if (parts.scheme not in {"http", "https"} or not parts.hostname
                 or parts.username is not None or parts.password is not None
-                or parts.path not in {"", "/"} or parts.query or parts.fragment
-                or "\\" in raw or "%" in parts.netloc):
+                or parts.query or parts.fragment or "%" in parts.netloc
+                or (not allow_path and parts.path not in {"", "/"})):
             raise ValueError
-        host = parts.hostname.encode("idna").decode("ascii").lower()
-        # ":0" is a port, not a missing one.
-        port = parts.port if parts.port is not None else (443 if parts.scheme == "https" else 80)
-        if not 1 <= port <= 65535:
+        host = parts.hostname.encode("idna").decode("ascii").lower()  # pragma: no mutate (codec names are case-insensitive)
+        port = parts.port if parts.port is not None else _DEFAULT_PORTS[parts.scheme]
+        if port < 1:  # urlsplit itself refuses a port above 65535
             raise ValueError
         return parts.scheme, host, port
     except (ValueError, TypeError, UnicodeError):
+        raise ValueError("Not a single exact HTTP(S) origin") from None
+
+
+def format_origin(scheme, host, port, *, omit_default_port=False):
+    """The origin text of parse_origin's parts: scheme://host[:port], an IPv6 host in brackets."""
+    suffix = "" if omit_default_port and port == _DEFAULT_PORTS[scheme] else f":{port}"
+    return f"{scheme}://{f'[{host}]' if ':' in host else host}{suffix}"
+
+
+def _origin(manifest):
+    """The run's target as (scheme, host, port), or the refusal every target check reports."""
+    try:
+        return parse_origin(manifest.get("target_url", ""))
+    except ValueError:
         raise AdapterBlocked("Target must be a single exact HTTP(S) origin without credentials, path or query.") from None
 
 
@@ -327,13 +358,12 @@ def target_ip_refused(address):
     return address.version == 4 and address.is_reserved
 
 
-_DEFAULT_PORTS = {"http": 80, "https": 443, "postgres": 5432, "postgresql": 5432}
-
-
 def control_plane_target(manifest, endpoints):
     """The console or database endpoint (host:port) the target would reach, or None.
 
-    The supervisor connects from the console's own host, so a loopback target can be the console itself.
+    The supervisor connects from the console's own host, so a loopback target can be the console itself. The
+    endpoints are the operator's own configuration (a database URL carries userinfo and a path), so they are only
+    split into host and port here, never validated as origins.
     """
     _, host, port = _origin(manifest)
     try:

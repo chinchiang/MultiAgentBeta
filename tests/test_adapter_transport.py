@@ -237,6 +237,7 @@ def test_result_shape():
 @pytest.mark.parametrize("raw,origin", [
     ("http://Example.TEST", ("http", "example.test", 80)),
     ("https://example.test/", ("https", "example.test", 443)),
+    ("http://example.test:1", ("http", "example.test", 1)),
     ("http://example.test:65535", ("http", "example.test", 65535)),
     ("https://example.test:80", ("https", "example.test", 80)),
     ("http://例子.測試", ("http", "xn--fsqu00a.xn--g6w251d", 80)),
@@ -256,6 +257,29 @@ def test_origin_refuses_anything_but_one_exact_origin(raw):
     manifest = {} if raw is None else {"target_url": raw}
     with pytest.raises(AdapterBlocked, match="^Target must be a single exact HTTP\\(S\\) origin without credentials, path or query.$"):
         _origin(manifest)
+    if raw is not None:
+        with pytest.raises(ValueError, match="^Not a single exact HTTP\\(S\\) origin$"):
+            adapters.parse_origin(raw)
+
+
+def test_parse_origin_is_the_one_reading_every_origin_check_shares():
+    """Targets refuse a path; model endpoints carry one (allow_path) and are otherwise read the same way."""
+    assert adapters.parse_origin("https://Api.Example:8443/v1/", allow_path=True) == ("https", "api.example", 8443)
+    assert adapters.parse_origin("http://[::1]:11434/v1", allow_path=True) == ("http", "::1", 11434)
+    assert adapters.parse_origin("http://例子.測試/v1", allow_path=True) == ("http", "xn--fsqu00a.xn--g6w251d", 80)
+    for raw in ["http://example.test/v1?x", "http://example.test/v1#f", "http://u@example.test/v1", "http://example.test:0/v1",
+                "http://example.test/v1 ", "http://example%2etest/v1", "ftp://example.test/v1"]:
+        with pytest.raises(ValueError):
+            adapters.parse_origin(raw, allow_path=True)
+    with pytest.raises(ValueError):
+        adapters.parse_origin("http://example.test/v1")
+    # Only the authority is held to the origin rules; a model endpoint's path may carry an escape or any printable character.
+    assert adapters.parse_origin("http://example.test/v%31", allow_path=True) == ("http", "example.test", 80)
+    assert adapters.parse_origin("http://example.test/v1!~", allow_path=True) == ("http", "example.test", 80)
+    assert adapters.format_origin("http", "example.test", 80) == "http://example.test:80"
+    assert adapters.format_origin("http", "example.test", 80, omit_default_port=True) == "http://example.test"
+    assert adapters.format_origin("https", "::1", 443, omit_default_port=True) == "https://[::1]"
+    assert adapters.format_origin("https", "::1", 8443, omit_default_port=True) == "https://[::1]:8443"
 
 
 def test_secret_forms_cover_the_escapings_a_target_may_reflect():
@@ -271,6 +295,20 @@ def test_target_credential_origins_parse_every_entry_or_none():
     for entry in ["A=http://host", "VIBEAUDIT_DATABASE_URL=http://host", "VIBEAUDIT_A=http://host/x", "VIBEAUDIT_A", "VIBEAUDIT_A=A=http://host"]:
         with pytest.raises(AdapterBlocked, match=f"^{ORIGINS} entries must be VIBEAUDIT_NAME=scheme://host\\[:port\\]$"):
             target_credential_origins({ORIGINS: entry})
+
+
+def test_parse_bindings_reads_names_once_and_values_through_the_parser_it_is_given():
+    assert adapters.parse_bindings("", str) == {} and adapters.parse_bindings(" , ,", str) == {}
+    assert adapters.parse_bindings(" VIBEAUDIT_A = x ,VIBEAUDIT_A=y, VIBEAUDIT_B=", str.upper) == {"VIBEAUDIT_A": {"X", "Y"}, "VIBEAUDIT_B": {""}}
+    # A missing "=" leaves an empty value for the value parser to judge (an origin parser refuses it); the name rules are here.
+    assert adapters.parse_bindings("VIBEAUDIT_A", str) == {"VIBEAUDIT_A": {""}}
+    for text in ["A=x", "vibeaudit_a=x", "=x", "VIBEAUDIT_DATABASE_URL=x", "VIBEAUDIT_A=x,B=y"]:
+        with pytest.raises(ValueError, match="^Not a credential binding$"):
+            adapters.parse_bindings(text, str)
+    # Another reserved set, and a value parser's own refusal, both surface as the same ValueError.
+    assert adapters.parse_bindings("VIBEAUDIT_DATABASE_URL=x", str, reserved=frozenset()) == {"VIBEAUDIT_DATABASE_URL": {"x"}}
+    with pytest.raises(ValueError, match="^bad value$"):
+        adapters.parse_bindings("VIBEAUDIT_A=x", lambda value: (_ for _ in ()).throw(ValueError("bad value")))
 
 
 def test_unbound_target_credentials_name_the_profiles_the_environment_did_not_bind():

@@ -28,11 +28,53 @@ def _secret_hash(value):
     return hashlib.sha256(value.encode()).hexdigest()
 
 
+# Every statement, written once with SQLite's "?" placeholders; a LeaseStore converts the table to its dialect at
+# construction, so no SQL is rewritten per call and tests can check the constants. Values are always bound.
+SQL = {
+    "create_leases": "CREATE TABLE IF NOT EXISTS worker_leases (id TEXT PRIMARY KEY, token_hash TEXT NOT NULL, renew_hash TEXT NOT NULL, binding TEXT NOT NULL, expires DOUBLE PRECISION NOT NULL, deadline DOUBLE PRECISION NOT NULL, max_requests INTEGER NOT NULL, used_requests INTEGER NOT NULL, worker_id TEXT, state TEXT NOT NULL)",
+    "create_tasks": "CREATE TABLE IF NOT EXISTS worker_tasks (id TEXT PRIMARY KEY, idempotency_key TEXT UNIQUE NOT NULL, lease_id TEXT NOT NULL, state TEXT NOT NULL, payload TEXT NOT NULL)",
+    "create_dispatches": "CREATE TABLE IF NOT EXISTS worker_dispatches (task_id TEXT NOT NULL, request_id TEXT NOT NULL, request_hash TEXT NOT NULL, state TEXT NOT NULL, result_hash TEXT, PRIMARY KEY(task_id,request_id))",
+    "lease": "SELECT token_hash,renew_hash,binding,expires,deadline,max_requests,used_requests,worker_id,state FROM worker_leases WHERE id=?",
+    "task_state_by_key": "SELECT state FROM worker_tasks WHERE idempotency_key=?",
+    "task_by_key": "SELECT state,payload FROM worker_tasks WHERE idempotency_key=?",
+    "insert_lease": "INSERT INTO worker_leases VALUES (?,?,?,?,?,?,?,?,?,?)",
+    "insert_task": "INSERT INTO worker_tasks VALUES (?,?,?,?,?)",
+    "claim": "UPDATE worker_leases SET worker_id=?,state='active' WHERE id=?",
+    "renew": "UPDATE worker_leases SET expires=? WHERE id=?",
+    "task_lease_state": "SELECT lease_id,state FROM worker_tasks WHERE id=?",
+    "dispatch_state": "SELECT state FROM worker_dispatches WHERE task_id=? AND request_id=?",
+    "use_request": "UPDATE worker_leases SET used_requests=used_requests+1 WHERE id=?",
+    "insert_dispatch": "INSERT INTO worker_dispatches VALUES (?,?,?,?,?)",
+    "task_sent": "UPDATE worker_tasks SET state='sent' WHERE id=?",
+    "sent_dispatch": "SELECT request_hash FROM worker_dispatches WHERE task_id=? AND request_id=? AND state='sent'",
+    "finish_dispatch": "UPDATE worker_dispatches SET state='finished',result_hash=? WHERE task_id=? AND request_id=? AND state='sent'",
+    "unfinished_dispatch": "SELECT 1 FROM worker_dispatches WHERE task_id=? AND state<>'finished'",
+    "finish_task": "UPDATE worker_tasks SET state='finished',payload=? WHERE id=? AND state IN ('prepared','sent')",
+    "lease_finished": "UPDATE worker_leases SET state='finished' WHERE id=?",
+    "lease_revoked": "UPDATE worker_leases SET state='revoked' WHERE id=?",
+    "dispatches_unknown": "UPDATE worker_dispatches SET state='outcome_unknown' WHERE task_id IN (SELECT id FROM worker_tasks WHERE lease_id=?) AND state='sent'",
+    "tasks_unknown": "UPDATE worker_tasks SET state='outcome_unknown',payload=? WHERE lease_id=? AND state IN ('prepared','sent')",
+    "expired_leases": "SELECT id FROM worker_leases WHERE state IN ('issued','active') AND (expires<=? OR deadline<=?)",
+    "task": "SELECT idempotency_key,lease_id,state,payload FROM worker_tasks WHERE id=?",
+}
+
+
+def placeholders(text, postgres):
+    """One statement written with ? placeholders, as the driver wants it: psycopg binds with %s, sqlite3 with ?."""
+    return text.replace("?", "%s") if postgres else text
+
+
+def dialect(statements, postgres):
+    """Every statement of a table in the driver's dialect."""
+    return {name: placeholders(text, postgres) for name, text in statements.items()}
+
+
 class LeaseStore:
     def __init__(self, database_path=None, *, database_url=None, clock=None):
         self.database_path = str(database_path) if database_path is not None else None
         self.database_url = database_url
         self.postgres = bool(database_url)
+        self.sql = dialect(SQL, self.postgres)
         self.clock = clock or time.time
         self.lock = threading.RLock()
         if self.postgres:
@@ -49,12 +91,12 @@ class LeaseStore:
             self.conn = sqlite3.connect(self.database_path, isolation_level=None, check_same_thread=False, timeout=10)
             self.conn.execute("PRAGMA journal_mode=WAL")
             self.conn.execute("PRAGMA synchronous=FULL")
-        self._sql("CREATE TABLE IF NOT EXISTS worker_leases (id TEXT PRIMARY KEY, token_hash TEXT NOT NULL, renew_hash TEXT NOT NULL, binding TEXT NOT NULL, expires DOUBLE PRECISION NOT NULL, deadline DOUBLE PRECISION NOT NULL, max_requests INTEGER NOT NULL, used_requests INTEGER NOT NULL, worker_id TEXT, state TEXT NOT NULL)")
-        self._sql("CREATE TABLE IF NOT EXISTS worker_tasks (id TEXT PRIMARY KEY, idempotency_key TEXT UNIQUE NOT NULL, lease_id TEXT NOT NULL, state TEXT NOT NULL, payload TEXT NOT NULL)")
-        self._sql("CREATE TABLE IF NOT EXISTS worker_dispatches (task_id TEXT NOT NULL, request_id TEXT NOT NULL, request_hash TEXT NOT NULL, state TEXT NOT NULL, result_hash TEXT, PRIMARY KEY(task_id,request_id))")
+        for name in ("create_leases", "create_tasks", "create_dispatches"):
+            self._sql(self.sql[name])
 
     def _sql(self, query, args=()):
-        return self.conn.execute(query.replace("?", "%s") if self.postgres else query, args)
+        """Run one statement from self.sql (or a bare BEGIN/COMMIT/ROLLBACK/clock read) with its bound values."""
+        return self.conn.execute(query, args)
 
     def _now(self):
         return float(self._sql("SELECT EXTRACT(EPOCH FROM clock_timestamp())").fetchone()[0]) if self.postgres else float(self.clock())
@@ -71,7 +113,7 @@ class LeaseStore:
                 raise
 
     def _row(self, lease_id, *, lock=False):
-        row = self._sql("SELECT token_hash,renew_hash,binding,expires,deadline,max_requests,used_requests,worker_id,state FROM worker_leases WHERE id=?" + (" FOR UPDATE" if lock and self.postgres else ""), (lease_id,)).fetchone()
+        row = self._sql(self.sql["lease"] + (" FOR UPDATE" if lock and self.postgres else ""), (lease_id,)).fetchone()
         if not row:
             raise LeaseError("Worker lease not found")
         return dict(zip(("token_hash", "renew_hash", "binding", "expires", "deadline", "max_requests", "used_requests", "worker_id", "state"), row))
@@ -93,10 +135,10 @@ class LeaseStore:
         with self._transaction():
             now = self._now()
             key = self._idempotency_key(binding)
-            if self._sql("SELECT state FROM worker_tasks WHERE idempotency_key=?", (key,)).fetchone():
+            if self._sql(self.sql["task_state_by_key"], (key,)).fetchone():
                 raise LeaseError("Task already exists; prepared/sent/finished/unknown tasks are never implicitly replayed")
-            self._sql("INSERT INTO worker_leases VALUES (?,?,?,?,?,?,?,?,?,?)", (lease_id,_secret_hash(token),_secret_hash(renewal),json.dumps(binding),now+ttl_seconds,now+max_seconds,max_requests,0,None,"issued"))
-            self._sql("INSERT INTO worker_tasks VALUES (?,?,?,?,?)", (task_id,key,lease_id,"prepared",json.dumps({"binding":binding})))
+            self._sql(self.sql["insert_lease"], (lease_id,_secret_hash(token),_secret_hash(renewal),json.dumps(binding),now+ttl_seconds,now+max_seconds,max_requests,0,None,"issued"))
+            self._sql(self.sql["insert_task"], (task_id,key,lease_id,"prepared",json.dumps({"binding":binding})))
         return {"id":lease_id,"task_id":task_id,"token":token,"renewal_token":renewal,"binding":binding,"ttl_seconds":ttl_seconds,"max_seconds":max_seconds,"max_requests":max_requests}
 
     def finished_result(self, *, run_id, case_hash, threat_hash, manifest_hash, operation, repetition, spec_hash=None):
@@ -111,7 +153,7 @@ class LeaseStore:
         binding = {"run_id":run_id,"case_hash":case_hash,"threat_hash":threat_hash,"manifest_hash":manifest_hash,"operation":operation,"repetition":repetition,"spec_hash":spec_hash or case_hash}
         key = self._idempotency_key(binding)
         with self.lock:
-            row = self._sql("SELECT state,payload FROM worker_tasks WHERE idempotency_key=?", (key,)).fetchone()
+            row = self._sql(self.sql["task_by_key"], (key,)).fetchone()
             if not row or row[0] != "finished":
                 return None
             result = json.loads(row[1]).get("result")
@@ -133,7 +175,7 @@ class LeaseStore:
             self._validate(row,capability["token"],capability["binding"],issued=True)
             if row["state"] != "issued" or row["worker_id"] is not None:
                 raise LeaseError("Worker capability has already been claimed")
-            self._sql("UPDATE worker_leases SET worker_id=?,state='active' WHERE id=?", (worker_id,capability["id"]))
+            self._sql(self.sql["claim"], (worker_id,capability["id"]))
 
     def validate(self, capability, worker_id):
         with self._transaction():
@@ -148,7 +190,7 @@ class LeaseStore:
             if not hmac.compare_digest(row["renew_hash"],_secret_hash(capability.get("renewal_token",""))):
                 raise LeaseError("Only the controller can renew a lease")
             expires = min(self._now()+capability["ttl_seconds"],row["deadline"])
-            self._sql("UPDATE worker_leases SET expires=? WHERE id=?", (expires,capability["id"]))
+            self._sql(self.sql["renew"], (expires,capability["id"]))
             return expires
 
     def reserve_dispatch(self, capability, worker_id, request_id, request):
@@ -158,26 +200,26 @@ class LeaseStore:
         with self._transaction():
             row = self._row(capability["id"],lock=True)
             self._validate(row,capability["token"],capability["binding"],worker_id)
-            task = self._sql("SELECT lease_id,state FROM worker_tasks WHERE id=?", (capability["task_id"],)).fetchone()
+            task = self._sql(self.sql["task_lease_state"], (capability["task_id"],)).fetchone()
             if not task or task[0] != capability["id"] or task[1] not in {"prepared","sent"}:
                 raise LeaseError("External task is terminal or has a different lease")
-            if self._sql("SELECT state FROM worker_dispatches WHERE task_id=? AND request_id=?", (capability["task_id"],request_id)).fetchone():
+            if self._sql(self.sql["dispatch_state"], (capability["task_id"],request_id)).fetchone():
                 raise LeaseError("Request ID already journaled; dispatch cannot be replayed")
             if row["used_requests"] >= row["max_requests"]:
                 raise LeaseError("Worker request budget exhausted")
-            self._sql("UPDATE worker_leases SET used_requests=used_requests+1 WHERE id=?", (capability["id"],))
-            self._sql("INSERT INTO worker_dispatches VALUES (?,?,?,?,?)", (capability["task_id"],request_id,canonical_hash(request),"sent",None))
-            self._sql("UPDATE worker_tasks SET state='sent' WHERE id=?", (capability["task_id"],))
+            self._sql(self.sql["use_request"], (capability["id"],))
+            self._sql(self.sql["insert_dispatch"], (capability["task_id"],request_id,canonical_hash(request),"sent",None))
+            self._sql(self.sql["task_sent"], (capability["task_id"],))
 
     def finish_dispatch(self, capability, worker_id, request_id, request, result):
         """Bind a recorded result to the exact journaled request it answers."""
         with self._transaction():
             row = self._row(capability["id"],lock=True)
             self._validate(row,capability["token"],capability["binding"],worker_id)
-            journaled = self._sql("SELECT request_hash FROM worker_dispatches WHERE task_id=? AND request_id=? AND state='sent'", (capability["task_id"],request_id)).fetchone()
+            journaled = self._sql(self.sql["sent_dispatch"], (capability["task_id"],request_id)).fetchone()
             if not journaled or journaled[0] != canonical_hash(request):
                 raise LeaseError("Result does not match the journaled dispatch request")
-            changed = self._sql("UPDATE worker_dispatches SET state='finished',result_hash=? WHERE task_id=? AND request_id=? AND state='sent'", (canonical_hash(result),capability["task_id"],request_id)).rowcount
+            changed = self._sql(self.sql["finish_dispatch"], (canonical_hash(result),capability["task_id"],request_id)).rowcount
             if changed != 1:
                 raise LeaseError("No pending dispatch matches this result")
 
@@ -185,33 +227,33 @@ class LeaseStore:
         with self._transaction():
             row = self._row(capability["id"],lock=True)
             self._validate(row,capability["token"],capability["binding"],worker_id)
-            if self._sql("SELECT 1 FROM worker_dispatches WHERE task_id=? AND state<>'finished'", (capability["task_id"],)).fetchone():
+            if self._sql(self.sql["unfinished_dispatch"], (capability["task_id"],)).fetchone():
                 raise LeaseError("An external dispatch outcome remains unknown")
-            changed = self._sql("UPDATE worker_tasks SET state='finished',payload=? WHERE id=? AND state IN ('prepared','sent')", (json.dumps({"binding":capability["binding"],"result":result}),capability["task_id"])).rowcount
+            changed = self._sql(self.sql["finish_task"], (json.dumps({"binding":capability["binding"],"result":result}),capability["task_id"])).rowcount
             if changed != 1:
                 raise LeaseError("Task is already terminal")
-            self._sql("UPDATE worker_leases SET state='finished' WHERE id=?", (capability["id"],))
+            self._sql(self.sql["lease_finished"], (capability["id"],))
 
     def revoke(self, lease_id, reason="revoked"):
         with self._transaction():
             row = self._row(lease_id,lock=True)
             if row["state"] == "finished":
                 return
-            self._sql("UPDATE worker_leases SET state='revoked' WHERE id=?", (lease_id,))
-            self._sql("UPDATE worker_dispatches SET state='outcome_unknown' WHERE task_id IN (SELECT id FROM worker_tasks WHERE lease_id=?) AND state='sent'", (lease_id,))
-            self._sql("UPDATE worker_tasks SET state='outcome_unknown',payload=? WHERE lease_id=? AND state IN ('prepared','sent')", (json.dumps({"binding":json.loads(row["binding"]),"reason":str(reason)[:160]}),lease_id))
+            self._sql(self.sql["lease_revoked"], (lease_id,))
+            self._sql(self.sql["dispatches_unknown"], (lease_id,))
+            self._sql(self.sql["tasks_unknown"], (json.dumps({"binding":json.loads(row["binding"]),"reason":str(reason)[:160]}),lease_id))
 
     def expire(self):
         with self.lock:
             now = self._now()
-            ids = [r[0] for r in self._sql("SELECT id FROM worker_leases WHERE state IN ('issued','active') AND (expires<=? OR deadline<=?)", (now,now)).fetchall()]
+            ids = [r[0] for r in self._sql(self.sql["expired_leases"], (now,now)).fetchall()]
         for lease_id in ids:
             self.revoke(lease_id,"Lease expired; external task must be reconciled")
         return ids
 
     def task(self, task_id):
         with self.lock:
-            row = self._sql("SELECT idempotency_key,lease_id,state,payload FROM worker_tasks WHERE id=?", (task_id,)).fetchone()
+            row = self._sql(self.sql["task"], (task_id,)).fetchone()
             if not row:
                 raise LeaseError("Worker task not found")
             return {"id":task_id,"key":row[0],"lease_id":row[1],"state":row[2],"payload":json.loads(row[3])}
