@@ -55,7 +55,12 @@ async function main() {
     assert(completed, 'Demo did not finish');
     await page.getByText('未完整完成', {exact: true}).first().waitFor();
     await page.getByRole('tab', {name: '威脅與測試', exact: true}).click();
+    // The engine's own demo text follows the console language: Chinese here, the English original after a switch.
+    await page.getByText('合成的有漏洞租戶邊界', {exact: true}).waitFor();
+    await page.getByRole('button', {name: '切換為英文介面', exact: true}).click();
     await page.getByText('Synthetic vulnerable tenant boundary', {exact: true}).waitFor();
+    await page.getByRole('button', {name: 'Switch to the Chinese interface', exact: true}).click();
+    await page.getByText('合成的有漏洞租戶邊界', {exact: true}).waitFor();
     await page.getByRole('heading', {name: '版本與關聯紀錄', exact: true}).waitFor();
     await page.locator('.trace-record').first().waitFor();
     const docs = path.resolve(__dirname, '../../docs');

@@ -12,7 +12,7 @@ PYTHONPATH=backend python -m pytest tests -q -rs                  # -rs：逐項
 python scripts/package-release.py --manifest-only                 # 任何被追蹤的檔案變更後執行
 python scripts/package-release.py --check                         # CI 會跑
 python scripts/redact-receipts.py --check                         # docs/ 裡的收據不得含主機或帳號名稱
-cd frontend && npm ci && npm run typecheck && npm run check:i18n && npm run build   # dist/ 有提交進版控；check:i18n 找出沒有英文對照的介面中文
+cd frontend && npm ci && npm run typecheck && npm run check:i18n && npm run check:messages && npm run build   # dist/ 有提交進版控；check:i18n 找出沒有英文對照的介面中文；check:messages 比對前後端讀訊息對照表的結果
 git add -N frontend/dist && git diff --exit-code -- frontend/dist # CI：dist 必須與原始碼建置結果一致
 ```
 
@@ -23,6 +23,7 @@ git add -N frontend/dist && git diff --exit-code -- frontend/dist # CI：dist �
 - README.md、docs/ARCHITECTURE.md、IMPLEMENTATION.md、docs/VALIDATION.md 等文件為中英雙語（中文段與英文段），兩段要一起改。中文使用正體中文與臺灣慣用語。
 - tests/test_bilingual_docs.py 檢查每份說明文件都是「中文段、`---`、英文段」且標題數對齊，文件標題的版本號要等於 pyproject.toml。
 - 控制台為中英雙語：每段可見文字都在使用處寫成 `t('中文','English')`，模組層級的對照表用 `frontend/src/i18n.ts` 的 `labels()`。
+- 引擎自己寫的英文訊息（錯誤、執行紀錄、缺口、判定說明、示範內容）要在 `backend/vibe_audit/messages.py` 加中文；`tests/test_error_messages.py` 會找出漏掉的，控制台以 `say()` 顯示。模型、掃描器、目標與操作者的文字不翻譯。
 - 權威驗證在 `domain.py`、`contracts.py`、`policy.py` 與 `docs/run-input.schema.json`；文件要與它們一致。
 - skip 不等於通過，不要在 docs/VALIDATION.md 把 skip 記成已驗證。
 - JUnit 收據放進 docs/ 前先跑 `python scripts/redact-receipts.py`，再跑 `python scripts/summarize-validation.py`。
@@ -55,7 +56,7 @@ PYTHONPATH=backend python -m pytest tests -q -rs                  # -rs: read ev
 python scripts/package-release.py --manifest-only                 # after changing any tracked file
 python scripts/package-release.py --check                         # CI runs this
 python scripts/redact-receipts.py --check                         # receipts in docs/ name no host or account
-cd frontend && npm ci && npm run typecheck && npm run check:i18n && npm run build   # dist/ is committed; check:i18n finds interface Chinese with no English counterpart
+cd frontend && npm ci && npm run typecheck && npm run check:i18n && npm run check:messages && npm run build   # dist/ is committed; check:i18n finds interface Chinese with no English counterpart; check:messages compares how the console and backend read the message table
 git add -N frontend/dist && git diff --exit-code -- frontend/dist # CI: dist must match the sources
 ```
 
@@ -66,6 +67,7 @@ git add -N frontend/dist && git diff --exit-code -- frontend/dist # CI: dist mus
 - README.md, docs/ARCHITECTURE.md, IMPLEMENTATION.md, docs/VALIDATION.md and other docs are bilingual (Chinese and English halves). Change both halves together. Chinese is Traditional Chinese with Taiwanese usage.
 - tests/test_bilingual_docs.py checks that every document is a Chinese half, `---`, then an English half with matching headings, and that document titles name the pyproject.toml version.
 - The console is bilingual: write every visible string as `t('中文','English')` where it is used, and module-level label tables with `labels()` from `frontend/src/i18n.ts`.
+- English text the engine writes itself (errors, activity events, gaps, verdicts, demo content) needs Chinese wording in `backend/vibe_audit/messages.py`; `tests/test_error_messages.py` finds what is missing, and the console shows it with `say()`. Model, scanner, target and operator text is never translated.
 - Authoritative validation lives in `domain.py`, `contracts.py`, `policy.py` and `docs/run-input.schema.json`; keep docs consistent with them.
 - A skipped test is not a pass. Do not record skips as verification in docs/VALIDATION.md.
 - Run `python scripts/redact-receipts.py` before adding a JUnit receipt to docs/, then `python scripts/summarize-validation.py`.

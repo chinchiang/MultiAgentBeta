@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "smoke": "node scripts/contract-smoke.mjs",
     "check:i18n": "node scripts/check-i18n.mjs",
+    "check:messages": "node scripts/check-messages.mjs",
     "preview": "vite preview --host 127.0.0.1"
   },
   "dependencies": {

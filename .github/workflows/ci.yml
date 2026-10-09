@@ -62,6 +62,9 @@ jobs:
       # Every visible Chinese string in the console needs its English counterpart.
       - run: npm run check:i18n
         working-directory: frontend
+      # The console reads engine messages in Chinese with the backend's own table, the same way.
+      - run: npm run check:messages
+        working-directory: frontend
       - run: npm run build
         working-directory: frontend
       # The committed bundle must be exactly what the committed sources build.
