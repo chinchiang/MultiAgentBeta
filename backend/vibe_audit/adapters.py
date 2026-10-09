@@ -285,24 +285,48 @@ def _cancelled(event):
     return event is not None and event.is_set()
 
 
-def _origin(manifest):
+_DEFAULT_PORTS = {"http": 80, "https": 443, "postgres": 5432, "postgresql": 5432}
+
+
+def parse_origin(value, *, allow_path=False):
+    """(scheme, host, port) of one exact HTTP(S) origin; ValueError for anything else.
+
+    The one parser for targets, model endpoints, credential bindings and run input, so every check reads an origin
+    the same way: scheme http or https; a hostname, IDNA-encoded and lowercased (an IPv6 literal without its
+    brackets); no userinfo, query, fragment, whitespace or control character, backslash, or percent-escape in the
+    authority; port 1..65535, the scheme's default when absent (":0" is a port, not a missing one). A path is refused
+    unless allow_path, which model endpoints such as .../v1 need. The supervisor loads this module on its own, so it
+    stays standard-library only.
+    """
     try:
-        raw = manifest.get("target_url", "")
-        if not isinstance(raw, str) or any(ord(c) < 33 for c in raw):
+        if not isinstance(value, str) or any(ord(c) < 33 for c in value) or "\\" in value:
             raise ValueError
-        parts = urlsplit(raw)
+        parts = urlsplit(value)
         if (parts.scheme not in {"http", "https"} or not parts.hostname
                 or parts.username is not None or parts.password is not None
-                or parts.path not in {"", "/"} or parts.query or parts.fragment
-                or "\\" in raw or "%" in parts.netloc):
+                or parts.query or parts.fragment or "%" in parts.netloc
+                or (not allow_path and parts.path not in {"", "/"})):
             raise ValueError
-        host = parts.hostname.encode("idna").decode("ascii").lower()
-        # ":0" is a port, not a missing one.
-        port = parts.port if parts.port is not None else (443 if parts.scheme == "https" else 80)
+        host = parts.hostname.encode("idna").decode("ascii").lower()  # pragma: no mutate (codec names are case-insensitive)
+        port = parts.port if parts.port is not None else _DEFAULT_PORTS[parts.scheme]
         if not 1 <= port <= 65535:
             raise ValueError
         return parts.scheme, host, port
     except (ValueError, TypeError, UnicodeError):
+        raise ValueError("Not a single exact HTTP(S) origin") from None
+
+
+def format_origin(scheme, host, port, *, omit_default_port=False):
+    """The origin text of parse_origin's parts: scheme://host[:port], an IPv6 host in brackets."""
+    suffix = "" if omit_default_port and port == _DEFAULT_PORTS[scheme] else f":{port}"
+    return f"{scheme}://{f'[{host}]' if ':' in host else host}{suffix}"
+
+
+def _origin(manifest):
+    """The run's target as (scheme, host, port), or the refusal every target check reports."""
+    try:
+        return parse_origin(manifest.get("target_url", ""))
+    except ValueError:
         raise AdapterBlocked("Target must be a single exact HTTP(S) origin without credentials, path or query.") from None
 
 
@@ -327,13 +351,12 @@ def target_ip_refused(address):
     return address.version == 4 and address.is_reserved
 
 
-_DEFAULT_PORTS = {"http": 80, "https": 443, "postgres": 5432, "postgresql": 5432}
-
-
 def control_plane_target(manifest, endpoints):
     """The console or database endpoint (host:port) the target would reach, or None.
 
-    The supervisor connects from the console's own host, so a loopback target can be the console itself.
+    The supervisor connects from the console's own host, so a loopback target can be the console itself. The
+    endpoints are the operator's own configuration (a database URL carries userinfo and a path), so they are only
+    split into host and port here, never validated as origins.
     """
     _, host, port = _origin(manifest)
     try:

@@ -6,10 +6,9 @@ import json
 import re
 from datetime import datetime, timezone
 from typing import Any, Literal
-from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-from .adapters import RESERVED_ENV, model_header_list_error, target_ip_refused
+from .adapters import RESERVED_ENV, format_origin, model_header_list_error, parse_origin, target_ip_refused
 from .contracts import OperatorCase, SecurityRequirement
 
 
@@ -22,11 +21,11 @@ def digest(value: Any) -> str:
 
 
 def origin(url: str) -> str:
-    p = urlsplit(url)
-    if p.scheme not in {"http", "https"} or not p.hostname or p.username or p.password:
-        raise ValueError("An explicit HTTP(S) origin without userinfo is required")
-    host = f"[{p.hostname}]" if ":" in p.hostname else p.hostname
-    return f"{p.scheme}://{host}:{p.port or (443 if p.scheme == 'https' else 80)}"
+    """The target's origin text, always with its port; the exact-origin rule (no path) is applied at preflight."""
+    try:
+        return format_origin(*parse_origin(url, allow_path=True))
+    except ValueError:
+        raise ValueError("An explicit HTTP(S) origin without userinfo is required") from None
 
 
 class StrictModel(BaseModel):

@@ -8,7 +8,7 @@ import pytest
 from hypothesis import given, settings, strategies as st
 
 from vibe_audit import adapters, snapshot
-from vibe_audit.adapters import AdapterBlocked, _one_of, _origin, _pinned_address, _unmapped, case_headers_allowed, secret_forms, target_ip_refused
+from vibe_audit.adapters import AdapterBlocked, _one_of, _origin, _pinned_address, _unmapped, case_headers_allowed, format_origin, parse_origin, secret_forms, target_ip_refused
 from vibe_audit.lease import canonical_hash
 from vibe_audit.messages import PATTERNS, STATUS_ZH, ZH, zh
 from vibe_audit.policy import sealed
@@ -38,6 +38,10 @@ def test_origin_round_trips_a_plain_host_and_port(parts, scheme, port):
     assert _origin({"target_url": f"{scheme}://{host.upper()}:{port}/"}) == (scheme, host, port)
     with pytest.raises(AdapterBlocked):
         _origin({"target_url": f"{scheme}://{host}:{port}/path"})
+    # A model endpoint reads the same origin through its path, and the text form reads back to the same parts.
+    assert parse_origin(f"{scheme}://{host}:{port}/v1/chat", allow_path=True) == (scheme, host, port)
+    for omit in (False, True):
+        assert parse_origin(format_origin(scheme, host, port, omit_default_port=omit)) == (scheme, host, port)
 
 
 @given(st.lists(printable, min_size=1, max_size=6, unique=True), printable)

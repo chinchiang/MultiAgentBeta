@@ -237,6 +237,7 @@ def test_result_shape():
 @pytest.mark.parametrize("raw,origin", [
     ("http://Example.TEST", ("http", "example.test", 80)),
     ("https://example.test/", ("https", "example.test", 443)),
+    ("http://example.test:1", ("http", "example.test", 1)),
     ("http://example.test:65535", ("http", "example.test", 65535)),
     ("https://example.test:80", ("https", "example.test", 80)),
     ("http://例子.測試", ("http", "xn--fsqu00a.xn--g6w251d", 80)),
@@ -256,6 +257,29 @@ def test_origin_refuses_anything_but_one_exact_origin(raw):
     manifest = {} if raw is None else {"target_url": raw}
     with pytest.raises(AdapterBlocked, match="^Target must be a single exact HTTP\\(S\\) origin without credentials, path or query.$"):
         _origin(manifest)
+    if raw is not None:
+        with pytest.raises(ValueError, match="^Not a single exact HTTP\\(S\\) origin$"):
+            adapters.parse_origin(raw)
+
+
+def test_parse_origin_is_the_one_reading_every_origin_check_shares():
+    """Targets refuse a path; model endpoints carry one (allow_path) and are otherwise read the same way."""
+    assert adapters.parse_origin("https://Api.Example:8443/v1/", allow_path=True) == ("https", "api.example", 8443)
+    assert adapters.parse_origin("http://[::1]:11434/v1", allow_path=True) == ("http", "::1", 11434)
+    assert adapters.parse_origin("http://例子.測試/v1", allow_path=True) == ("http", "xn--fsqu00a.xn--g6w251d", 80)
+    for raw in ["http://example.test/v1?x", "http://example.test/v1#f", "http://u@example.test/v1", "http://example.test:0/v1",
+                "http://example.test/v1 ", "http://example%2etest/v1", "ftp://example.test/v1"]:
+        with pytest.raises(ValueError):
+            adapters.parse_origin(raw, allow_path=True)
+    with pytest.raises(ValueError):
+        adapters.parse_origin("http://example.test/v1")
+    # Only the authority is held to the origin rules; a model endpoint's path may carry an escape or any printable character.
+    assert adapters.parse_origin("http://example.test/v%31", allow_path=True) == ("http", "example.test", 80)
+    assert adapters.parse_origin("http://example.test/v1!~", allow_path=True) == ("http", "example.test", 80)
+    assert adapters.format_origin("http", "example.test", 80) == "http://example.test:80"
+    assert adapters.format_origin("http", "example.test", 80, omit_default_port=True) == "http://example.test"
+    assert adapters.format_origin("https", "::1", 443, omit_default_port=True) == "https://[::1]"
+    assert adapters.format_origin("https", "::1", 8443, omit_default_port=True) == "https://[::1]:8443"
 
 
 def test_secret_forms_cover_the_escapings_a_target_may_reflect():
