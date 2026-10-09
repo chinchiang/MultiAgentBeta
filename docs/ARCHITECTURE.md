@@ -22,6 +22,27 @@ flowchart TB
   A --> UI
 ```
 
+### Module map
+
+Each node above maps to code in `backend/vibe_audit/` (or the named directory). The README's "Architecture Overview" draws the same system by stage.
+
+| Node | Implementation |
+|---|---|
+| Local React console | `frontend/src` (built into `frontend/dist`, served by FastAPI) |
+| FastAPI session / CSRF / scope | `api.py`, `workspace_api.py` |
+| AI Commander + LangGraph | `service.py` (`STAGES`, one graph node per stage) |
+| LiteLLM gateway / per-agent profiles | `providers.py` |
+| Deterministic gates + job ledger | `policy.py`, `contracts.py`, `domain.py`, `store.py` |
+| Read-only whitebox workers | `staging.py`, `snapshot.py`, `sandbox.py`, `worker_runtime.py` (scanner path), `deploy/scanners/` |
+| Versioned assets / flows / threats / requirements | `service.py` threat-model stage, `catalog.py` with `catalogs/`, `traceability.py` |
+| Fixed case compiler / oracle / fixture hash | `contracts.py`, `policy.py`, `adapters.py` (oracle), `fixture_protocol.py` |
+| Independent supervisor / persistent lease | `worker_runtime.py`, `lease.py` |
+| Docker blackbox worker / network none | `worker_entry.py`, `tool_runners.py`, `deploy/worker/` |
+| Unix socket relay | `worker_runtime.py` |
+| Exact approved staging interfaces | `adapters.py` (pinned transport); synthetic targets in `fixtures/` |
+| Independent effect collector / mock sink | `effect_collector.py` |
+| Run-bound evidence + trace graph | `store.py`, `traceability.py`, report export in `service.py` |
+
 The trusted control plane includes operator configuration, the model gateway, supervisor, database and evidence writer. Repository, model, target, scanner artifacts and report text are untrusted data. JSON schema validation does not establish semantic correctness. The broker is the enforcement point; model prompts are not security boundaries.
 
 The API listens on 127.0.0.1 only. A browser gets a session by sending the startup token, printed as the `#token=…` fragment of the launch URL or fixed with `VIBEAUDIT_SESSION_TOKEN`, to `/api/session` in `X-VibeAudit-Token`. It then holds an 8-hour HttpOnly, SameSite=Strict cookie, and every other `/api` request, reads included, must also carry `X-CSRF-Token`. Cookies are not isolated by port, so a staging service the operator opens in the same browser receives the cookie; the CSRF token lives only in the workbench tab's port-scoped sessionStorage, and `/api/session` never returns it to a cookie-only caller. The event stream and report exports are fetched with that header rather than through EventSource or plain links. Every request must carry an allowed Host, and an allowed Origin when it sends one.
@@ -81,6 +102,27 @@ flowchart TB
   S --> A
   A --> UI
 ```
+
+### 模組對照
+
+上圖每個節點對應 `backend/vibe_audit/`（或註明目錄）中的程式。README 的「系統架構與流程」以階段為主軸畫出同一個系統。
+
+| 節點 | 實作位置 |
+|---|---|
+| Local React console | `frontend/src`（建置到 `frontend/dist`，由 FastAPI 提供） |
+| FastAPI session / CSRF / scope | `api.py`、`workspace_api.py` |
+| AI Commander + LangGraph | `service.py`（`STAGES`，每個階段一個圖節點） |
+| LiteLLM gateway / per-agent profiles | `providers.py` |
+| Deterministic gates + job ledger | `policy.py`、`contracts.py`、`domain.py`、`store.py` |
+| Read-only whitebox workers | `staging.py`、`snapshot.py`、`sandbox.py`、`worker_runtime.py`（掃描器路徑）、`deploy/scanners/` |
+| Versioned assets / flows / threats / requirements | `service.py` 威脅模型階段、`catalog.py` 與 `catalogs/`、`traceability.py` |
+| Fixed case compiler / oracle / fixture hash | `contracts.py`、`policy.py`、`adapters.py`（oracle）、`fixture_protocol.py` |
+| Independent supervisor / persistent lease | `worker_runtime.py`、`lease.py` |
+| Docker blackbox worker / network none | `worker_entry.py`、`tool_runners.py`、`deploy/worker/` |
+| Unix socket relay | `worker_runtime.py` |
+| Exact approved staging interfaces | `adapters.py`（IP 釘選傳輸）；合成目標在 `fixtures/` |
+| Independent effect collector / mock sink | `effect_collector.py` |
+| Run-bound evidence + trace graph | `store.py`、`traceability.py`、`service.py` 的報告匯出 |
 
 受信任的控制平面包含操作者設定、模型閘道、supervisor、資料庫與證據寫入器。儲存庫、模型、目標、掃描器產物與報告文字皆屬不受信任的資料。JSON schema 驗證並不保證語意正確。broker 是強制執行點；模型 prompt 不是安全邊界。
 
