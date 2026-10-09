@@ -1,4 +1,4 @@
-# 0.2.0 本地驗證紀錄
+# 0.2.1 本地驗證紀錄
 
 驗證日期：2026-09-24；審查後續修正後於 2026-10-02 重跑 Windows 全套回歸與前端建置；2026-10-03 深入審查的修正完成後，在 WSL2/Linux 重跑全套回歸（含 PostgreSQL 整合與 Node 24 fixture）、前端型別檢查與 production build、真 API + React SSR 契約檢查，並以 Docker 29.1.3 執行含全部 Docker 整合的 Linux 全套回歸；2026-10-04 第三輪審查修正（controller 狀態回收、worker 生命週期 teardown 與期限對齊、lease 日誌 result/request 綁定與已完成任務重用、死碼清理等，PR #6）合併後，在 Linux 重跑兩份全套回歸、前端型別檢查與 production build，Docker 整合包含隔離 worker、三種離線掃描器、五種動態工具與完整 pipeline，並以現行程式碼重跑 SSR/API 契約檢查（含 fetch 版 SSE 與下載）；2026-10-05 加入盲審 matching 工具與裁定檔範例後，重跑兩份 Linux 全套回歸、Windows 全套回歸、前端型別檢查與 production build、SSR/API 契約與 Edge 真實瀏覽器檢查，並在 Windows Python 3.12.10 以 `--require-hashes` 驗證全新 venv 安裝；同日完成 reviewer 名稱正規化與 worksheet 理由只取獨立階段的安全強化後，上述全部收據再次更新。依使用者指定，本次完成工程及不需要模型憑證的本地整合。**未呼叫真實 Claude、OpenAI 或 Nemotron；未證明多模型減偏、漏洞檢出率或成本改善。**
 
@@ -101,7 +101,7 @@ verify-linux.sh 只在設定 `VIBEAUDIT_JUNIT_XML` 時寫出 JUnit 收據；放�
 
 ---
 
-# 0.2.0 Local Validation Record
+# 0.2.1 Local Validation Record
 
 Validation date: 2026-09-24; after follow-up fixes from review, the full Windows regression and the frontend build were re-run on 2026-10-02; after the fixes from the in-depth review were completed on 2026-10-03, the full regression (including PostgreSQL integration and the Node 24 fixture), the frontend type check and production build, and the real API + React SSR contract checks were re-run on WSL2/Linux, and the full Linux regression including all Docker integrations was run with Docker 29.1.3; after the third-round review fixes (controller state reclamation, worker lifecycle teardown and deadline alignment, lease log result/request binding and completed-task reuse, dead-code cleanup, etc., PR #6) were merged on 2026-10-04, both full regression suites, the frontend type check and the production build were re-run on Linux; the Docker integrations covered the isolated worker, the three offline scanners, the five dynamic tools and the full pipeline, and the SSR/API contract checks (including fetch-based SSE and download) were re-run against the current code; on 2026-10-05, after the blind-review matching tool and adjudication-file examples were added, both full Linux regressions, the full Windows regression, the frontend type check and production build, the SSR/API contract and the Edge real-browser checks were re-run, and a fresh-venv install with `--require-hashes` was verified on Windows Python 3.12.10; the same day, after hardening reviewer-name normalization and restricting worksheet rationales to independent phases, all of the above receipts were refreshed again. As specified by the user, this round completed the engineering work and the local integrations that do not require model credentials. **Real Claude, OpenAI or Nemotron were NOT called; no multi-model bias reduction, vulnerability-detection-rate or cost improvement has been demonstrated.**
 

@@ -12,7 +12,7 @@ PYTHONPATH=backend python -m pytest tests -q -rs                  # -rs：逐項
 python scripts/package-release.py --manifest-only                 # 任何被追蹤的檔案變更後執行
 python scripts/package-release.py --check                         # CI 會跑
 python scripts/redact-receipts.py --check                         # docs/ 裡的收據不得含主機或帳號名稱
-cd frontend && npm ci && npm run typecheck && npm run build        # dist/ 有提交進版控
+cd frontend && npm ci && npm run typecheck && npm run check:i18n && npm run build   # dist/ 有提交進版控；check:i18n 找出沒有英文對照的介面中文
 git add -N frontend/dist && git diff --exit-code -- frontend/dist # CI：dist 必須與原始碼建置結果一致
 ```
 
@@ -21,6 +21,7 @@ git add -N frontend/dist && git diff --exit-code -- frontend/dist # CI：dist �
 - `source-manifest.sha256` 記錄每個被追蹤檔案的雜湊，只能用腳本重產，不可手改。
 - `.gitattributes` 設定 `* -text`：保留每個檔案原本的換行（`scripts/package-release.py` 等檔案是 CRLF），shell script 維持 LF。
 - README.md、docs/ARCHITECTURE.md、IMPLEMENTATION.md、docs/VALIDATION.md 等文件為中英雙語（中文段與英文段），兩段要一起改。中文使用正體中文與臺灣慣用語。
+- tests/test_bilingual_docs.py 檢查每份說明文件都是「中文段、`---`、英文段」且標題數對齊，文件標題的版本號要等於 pyproject.toml。
 - 控制台為中英雙語：每段可見文字都在使用處寫成 `t('中文','English')`，模組層級的對照表用 `frontend/src/i18n.ts` 的 `labels()`。
 - 權威驗證在 `domain.py`、`contracts.py`、`policy.py` 與 `docs/run-input.schema.json`；文件要與它們一致。
 - skip 不等於通過，不要在 docs/VALIDATION.md 把 skip 記成已驗證。
@@ -53,7 +54,7 @@ PYTHONPATH=backend python -m pytest tests -q -rs                  # -rs: read ev
 python scripts/package-release.py --manifest-only                 # after changing any tracked file
 python scripts/package-release.py --check                         # CI runs this
 python scripts/redact-receipts.py --check                         # receipts in docs/ name no host or account
-cd frontend && npm ci && npm run typecheck && npm run build        # dist/ is committed
+cd frontend && npm ci && npm run typecheck && npm run check:i18n && npm run build   # dist/ is committed; check:i18n finds interface Chinese with no English counterpart
 git add -N frontend/dist && git diff --exit-code -- frontend/dist # CI: dist must match the sources
 ```
 
@@ -62,6 +63,7 @@ git add -N frontend/dist && git diff --exit-code -- frontend/dist # CI: dist mus
 - `source-manifest.sha256` pins every tracked file. Regenerate it with the script, never by hand.
 - `.gitattributes` sets `* -text`: keep each file's existing line endings (`scripts/package-release.py` and some others are CRLF). Shell scripts stay LF.
 - README.md, docs/ARCHITECTURE.md, IMPLEMENTATION.md, docs/VALIDATION.md and other docs are bilingual (Chinese and English halves). Change both halves together. Chinese is Traditional Chinese with Taiwanese usage.
+- tests/test_bilingual_docs.py checks that every document is a Chinese half, `---`, then an English half with matching headings, and that document titles name the pyproject.toml version.
 - The console is bilingual: write every visible string as `t('中文','English')` where it is used, and module-level label tables with `labels()` from `frontend/src/i18n.ts`.
 - Authoritative validation lives in `domain.py`, `contracts.py`, `policy.py` and `docs/run-input.schema.json`; keep docs consistent with them.
 - A skipped test is not a pass. Do not record skips as verification in docs/VALIDATION.md.

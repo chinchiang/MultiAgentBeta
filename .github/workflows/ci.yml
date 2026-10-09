@@ -59,6 +59,9 @@ jobs:
         working-directory: frontend
       - run: npm run typecheck
         working-directory: frontend
+      # Every visible Chinese string in the console needs its English counterpart.
+      - run: npm run check:i18n
+        working-directory: frontend
       - run: npm run build
         working-directory: frontend
       # The committed bundle must be exactly what the committed sources build.

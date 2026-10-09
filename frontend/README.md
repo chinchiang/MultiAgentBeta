@@ -10,6 +10,7 @@ React + TypeScript + Vite 前端，Apache-2.0。介面使用繁體中文；所�
 cd frontend
 npm ci
 npm run typecheck
+npm run check:i18n
 npm run build
 ```
 
@@ -70,6 +71,7 @@ Node.js 24 is required, consistent with the rest of the project (the TS fixture 
 cd frontend
 npm ci
 npm run typecheck
+npm run check:i18n
 npm run build
 ```
 
