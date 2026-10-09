@@ -68,7 +68,7 @@ export VIBEAUDIT_TEST_NODE="$(command -v node)"   # 必須是 Node 24
 |---|---|---|
 | promptfoo 與 PyRIT 的 4 個整合測試以 `TypeError: manifest() missing 1 required positional argument: 'monkeypatch'` 失敗 | 5fd7836（10-06）讓 tests/test_fixture_protocol.py 的 manifest() 需要 monkeypatch，這支測試沒跟著改；10-06 的主機沒有工具映像，這些案例當時為 skip | 已修正 tests/test_tool_runners.py |
 | 三個離線掃描器測試為 blocked（SandboxBlocked），完整 pipeline 停在 preflight，錯誤為 OSV offline database needs a provisioning manifest | runtime profile 的 offline_db_dir 預設 /opt/vibeaudit/osv，但主機沒有佈建離線資料 | 第 2 節已加上 provision-offline-db.py 步驟 |
-| 工具映像建置在 pip 步驟出現 CERTIFICATE_VERIFY_FAILED | 建置主機的出站 HTTPS 經過會重新終止 TLS 的代理，容器內不信任其 CA | 本機測試以衍生 Dockerfile 用 `RUN --mount=type=secret` 只在 pip 與 npm 安裝步驟掛載代理 CA，依賴仍來自 deploy/worker/locks；CA 不寫入映像，repo 的 Dockerfile 不變 |
+| 工具映像建置在 pip 步驟出現 CERTIFICATE_VERIFY_FAILED | 建置主機的出站 HTTPS 經過會重新終止 TLS 的代理，容器內不信任其 CA | 本機測試以衍生 Dockerfile 用 `RUN --mount=type=secret` 只在 pip 與 npm 安裝步驟掛載代理 CA，相依套件仍來自 deploy/worker/locks；CA 不寫入映像，repo 的 Dockerfile 不變 |
 | initdb 拒絕以 root 執行 | PostgreSQL 不允許超級使用者帳號持有資料目錄 | 以一般使用者執行第 1 節的指令 |
 
 ## 清理

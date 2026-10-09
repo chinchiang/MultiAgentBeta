@@ -1,6 +1,6 @@
 # 本地合成 Web/API 靶場
 
-這是工具包的刻意缺陷示範，只包含假資料與記憶體 session，不能當成真實後端授權驗證。固定只監聽 `127.0.0.1`，沒有外部網路、磁碟寫入或重型依賴。需要 Node.js 24，以內建 TypeScript type stripping 執行。
+這是工具包的刻意缺陷示範，只包含假資料與記憶體 session，不能當成真實後端授權驗證。固定只監聽 `127.0.0.1`，沒有外部網路、磁碟寫入或重型相依套件。需要 Node.js 24，以內建 TypeScript type stripping 執行。
 
 ```powershell
 node fixtures/web-api/server.ts --mode fixed --port 8911
@@ -33,7 +33,7 @@ $env:VIBEAUDIT_FIXTURE_B = 'fixture-web-b'
 
 登出測試以 `alice` 登入並擷取 session，先成功讀 `/orders/order-a`（含 `TENANT_A_ORDER_CANARY`），對 `/auth/logout` POST，再以同一個 session 重讀 `/orders/order-a`；vulnerable 是 200 且仍含 canary，fixed 是 401。每一步使用新 HTTP 請求，session 只由 supervisor 保存。內建的 `synthetic-web-v1` fixture profile 以原生 HTTP sequence 執行此流程（`fixture_protocol.py`）；外部工具無法使用擷取的 session，指定它們時會 blocked。
 
-`fixed` 只修正以上兩個刻意缺陷，並非全面安全的應用模板。
+`fixed` 只修正以上兩個刻意缺陷，並非全面安全的應用範本。
 
 `bola-case.json` 是核心 HTTP adapter 的案例範例。使用時在 run 中允許 `GET /orders/order-b`，auth profiles ID 必須為 `tenant-a`、`tenant-b`，且威脅模型要包含 `T-BOLA` 與 `R-TENANT-ISOLATION` 的對應需求。Compiler 會補來源／威脅版本雜湊；不要手動偽造 gate receipt。此檔本身不是已完成的測試結果。
 

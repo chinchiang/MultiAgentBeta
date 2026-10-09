@@ -2,9 +2,9 @@
 
 ## 執行需求
 
-Python 3.12+、Node 24（建置 UI／TS fixture）、PostgreSQL、支援 recursive read-only bind mount 的 Linux kernel/Docker（supervisor 直接呼叫 Docker Engine API v1.52，需要 Docker 29 以上），以及授權 staging。實際驗收版本見 VALIDATION.md。Windows 原生控制台可跑 demo；live 控制程序和 Docker workers 一起放在 Linux/WSL2。
+Python 3.12+、Node 24（建置 UI／TS fixture）、PostgreSQL、支援 recursive read-only bind mount 的 Linux kernel/Docker（supervisor 直接呼叫 Docker Engine API v1.52，需要 Docker 29 以上），以及授權 staging。實際驗收版本見 VALIDATION.md。Windows 原生控制台可跑 demo；live 控制處理程序和 Docker workers 一起放在 Linux/WSL2。
 
-模型、靶場與憑證不由安裝程序自動建立。以下下載與建置是管理者的明確 provisioning；評估期間不安裝套件、不拉取映像。
+模型、靶場與憑證不由安裝程式自動建立。以下下載與建置是管理者的明確 provisioning；評估期間不安裝套件、不拉取映像。
 
 ## 1. 安裝控制台
 
@@ -21,11 +21,11 @@ cd ..
 
 已交付 frontend/dist 可直接提供本地 UI。Linux 啟動器也允許用 VIBEAUDIT_PYTHON 指定既有受測 venv。
 
-requirements.lock.txt 為每個鎖定版本列出 PyPI 上所有發布檔的 sha256，pip 以 hash 檢查模式安裝：下載的檔案不符，或有依賴沒有鎖定，安裝都會中止，不會自動改抓其他版本。調整版本後執行 `python scripts/hash-lock.py --write` 重新產生 hash。
+requirements.lock.txt 為每個鎖定版本列出 PyPI 上所有發布檔的 sha256，pip 以 hash 檢查模式安裝：下載的檔案不符，或有相依套件沒有鎖定，安裝都會中止，不會自動改抓其他版本。調整版本後執行 `python scripts/hash-lock.py --write` 重新產生 hash。
 
 ## 2. 資料庫與工作目錄
 
-準備專用 PostgreSQL role/database，允許建立本工具的表與 LangGraph checkpoint。以 VIBEAUDIT_DATABASE_URL 保存連線資訊，勿把密碼寫進專案設定或 prompt。使用管理者預建的資料目錄，控制程序對其有權限；受測來源只放在明確准許的根目錄。
+準備專用 PostgreSQL role/database，允許建立本工具的表與 LangGraph checkpoint。以 VIBEAUDIT_DATABASE_URL 保存連線資訊，勿把密碼寫進專案設定或 prompt。使用管理者預建的資料目錄，控制處理程序對其有權限；受測來源只放在明確准許的根目錄。
 
 ```sh
 export VIBEAUDIT_DATABASE_URL='postgresql://USER:PASSWORD@127.0.0.1:5432/vibeaudit'
@@ -46,7 +46,7 @@ docker pull semgrep/semgrep:1.153.0
 docker pull ghcr.io/zaproxy/zaproxy:2.17.0
 ```
 
-worker 的 `BASE_IMAGE` 必須是單行的 `<name>@sha256:<64 hex>`，否則建置失敗；provision-runtime.py 也不記錄沒有 digest 基礎映像標籤（`org.opencontainers.image.base.name`）的 worker。這個標籤是映像自己的宣告，只用來擋下誤用 tag，不是來源證明。映像標籤只用於 provisioning。下個步驟將本地實際 image ID 寫進設定；runner 只接受 immutable SHA256。工具映像的確切 Python/npm 鎖定檔在 deploy/worker/locks；Dockerfile.tools 保留原始 provisioning 配方，Dockerfile.tools.locked 使用捕獲的完整依賴鎖定檔。固定 image ID 與驗收版本另存於 docs/runtime-images.json。跨架構或重建後必須重新跑工具契約，不能假設 image ID 相同。
+worker 的 `BASE_IMAGE` 必須是單行的 `<name>@sha256:<64 hex>`，否則建置失敗；provision-runtime.py 也不記錄沒有 digest 基礎映像標籤（`org.opencontainers.image.base.name`）的 worker。這個標籤是映像自己的宣告，只用來擋下誤用 tag，不是來源證明。映像標籤只用於 provisioning。下個步驟將本地實際 image ID 寫進設定；runner 只接受 immutable SHA256。工具映像的確切 Python/npm 鎖定檔在 deploy/worker/locks；Dockerfile.tools 保留原始 provisioning 配方，Dockerfile.tools.locked 使用捕獲的完整相依套件鎖定檔。固定 image ID 與驗收版本另存於 docs/runtime-images.json。跨架構或重建後必須重新跑工具契約，不能假設 image ID 相同。
 
 ## 4. 離線漏洞資料與 runtime profile
 
@@ -56,7 +56,7 @@ worker 的 `BASE_IMAGE` 必須是單行的 `<name>@sha256:<64 hex>`，否則建�
 export VIBEAUDIT_RUNTIME_CONFIG='/etc/vibeaudit/runtime.json'
 ```
 
-OSV provisioning 下載官方完整 PyPI/npm 生態系 archive，不外送本機依賴清單。資料日期、來源、雜湊與涵蓋範圍保存在 manifest.json；評估時再次固定該 manifest 和 archive hashes。離線模式不包含 commit-level matching，資料更新後為新的 resource version。
+OSV provisioning 下載官方完整 PyPI/npm 生態系 archive，不外送本機相依套件清單。資料日期、來源、雜湊與涵蓋範圍保存在 manifest.json；評估時再次固定該 manifest 和 archive hashes。離線模式不包含 commit-level matching，資料更新後為新的 resource version。
 
 ## 5. 啟動與配置
 

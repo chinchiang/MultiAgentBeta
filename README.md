@@ -8,7 +8,7 @@ AI Commander 負責派工；程式 Harness 強制範圍、階段、權限、預�
 
 ## 開啟控制台
 
-Windows 需 Python 3.12+ 與 Node 24。第一次安裝會下載固定依賴：
+Windows 需 Python 3.12+ 與 Node 24。第一次安裝會下載固定版本的相依套件：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/setup.ps1
@@ -148,7 +148,7 @@ MultiAgentBeta/
 ├── .github/workflows/ci.yml       # backend（pytest + PostgreSQL）與 frontend（typecheck）
 ├── IMPLEMENTATION.md              # API 與模組契約
 ├── README.md · LICENSE · NOTICE
-├── pyproject.toml · requirements.lock.txt   # 固定依賴（hash 檢查）
+├── pyproject.toml · requirements.lock.txt   # 固定版本的相依套件（hash 檢查）
 └── source-manifest.sha256         # 來源檔案雜湊清單（scripts/package-release.py）
 ```
 
@@ -162,9 +162,9 @@ MultiAgentBeta/
 - 白箱 raw staging 與模型用脫敏快照分開。staging 副本含有機密檔案，每次執行結束（含 blocked、failed、取消）與服務啟動時都會刪除；恢復時重新複製並必須與凍結時完全相同。來源讀取有上限，脫敏及路由抽取是啟發式；略過的目錄（build、dist、node_modules、.git、symlink）、未讀檔案和未知業務規則會保留缺口。
 - 文字宣稱、HTTP 狀態碼、scanner exit 0、模型共識都不能單獨證明安全。控制或觀測失敗不能判為通過。
 - 送出後中斷標示 outcome_unknown，不自動重播。停止先撤銷網路；未確認清理仍顯示未完成。
-- loopback 單使用者 session：建立 session 需要啟動權杖（同機其他程序無法自行取得 session 再探測模型或讀取證據）。cookie 不分 port，所以每個 API 請求（含讀取）都另需只存在該分頁 sessionStorage 的 CSRF token；瀏覽器開過的其他本機服務拿到 cookie 也無法使用。另有 Host/Origin 防護，每個 /api 路由也各自檢查 session 與 CSRF，不只靠 middleware。同時最多 8 個 session，閒置 1 小時或滿 8 小時失效，可在工作台登出；API 可一次結束全部 session，此時自動產生的啟動權杖也會換新並重新印出。錯誤的啟動權杖會讓下一次錯誤回應逐次變慢（上限 5 秒），正確的權杖不受影響。自訂的 VIBEAUDIT_SESSION_TOKEN 必須夠隨機（例如 `python -c "import secrets; print(secrets.token_urlsafe(32))"`），重複字元或重複樣式會被拒絕。資料目錄（VIBEAUDIT_DATA_DIR）在 Linux 上只限擁有者存取（0700），無法設定時服務不啟動；Windows 只執行合成資料的 demo，目錄權限沿用上層目錄的 ACL。受測文字以不可信資料呈現。不要將控制台直接公開到網際網路。
+- loopback 單使用者 session：建立 session 需要啟動權杖（同機其他處理程序無法自行取得 session 再探測模型或讀取證據）。cookie 不分 port，所以每個 API 請求（含讀取）都另需只存在該分頁 sessionStorage 的 CSRF token；瀏覽器開過的其他本機服務拿到 cookie 也無法使用。另有 Host/Origin 防護，每個 /api 路由也各自檢查 session 與 CSRF，不只靠 middleware。同時最多 8 個 session，閒置 1 小時或滿 8 小時失效，可在工作台登出；API 可一次結束全部 session，此時自動產生的啟動權杖也會換新並重新印出。錯誤的啟動權杖會讓下一次錯誤回應逐次變慢（上限 5 秒），正確的權杖不受影響。自訂的 VIBEAUDIT_SESSION_TOKEN 必須夠隨機（例如 `python -c "import secrets; print(secrets.token_urlsafe(32))"`），重複字元或重複樣式會被拒絕。資料目錄（VIBEAUDIT_DATA_DIR）在 Linux 上只限擁有者存取（0700），無法設定時服務不啟動；Windows 只執行合成資料的 demo，目錄權限沿用上層目錄的 ACL。受測文字以不可信資料呈現。不要將控制台直接公開到網際網路。
 
-容器、資料庫與控制程序管理者屬信任邊界；本工具無法限制外部 staging 的全部出網，也不能保證找出所有漏洞。
+容器、資料庫與控制處理程序的管理者屬信任邊界；本工具無法限制外部 staging 的全部出網，也不能保證找出所有漏洞。
 
 ## 文件與開發
 

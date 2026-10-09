@@ -19,6 +19,37 @@
 #
 # 修訂：同日依本分支的程式修正，把 t-indirect-injection、t-model-identity、t-probe-key-exfil、t-credential-crossuse、
 #   t-target-internal、t-sarif-injection 改為 mitigated（各條的「殘留」仍待人工確認）；file:line 已對應修正後的程式碼。
+#
+# ---- English ----
+# G0 threat model for MultiAgentBeta (Vibe Audit 0.2.1). Draft, not yet signed off by a person. The field values
+#   below are written in Chinese; these comments summarize them in English and leave the YAML itself unchanged.
+#
+# Format: schemas/threat-model.schema.json in chinchiang/MultiAgentDelta. VibeSec G0
+#   (scripts/g0_threat_model.py --target <this repo> in MultiAgentDelta) reads this file by default.
+# Source: drafted by AI (Claude Code, 2026-10-06) from README.md, docs/ARCHITECTURE.md, docs/LINUX_SETUP.md and the code in
+#   backend/vibe_audit/ (commit f9d9cf1, then updated for this branch's fixes); every file:line in parentheses is relative to
+#   backend/vibe_audit/.
+# Scope: the live deployment on Linux/WSL2 (PostgreSQL + Docker workers + supervisor). The Windows demo, process_test and
+#   SQLite are synthetic or test paths (ARCHITECTURE.md "Isolation and recovery") and are out of scope.
+#
+# Decided by people:
+#   - 2026-10-06 @chinchiang: c-test-designer's lethal trifecta is cut on the external_comms leg (trifecta_leg_cut); the reasons
+#     and the accepted residual are in decisions.
+#   - 2026-10-06 @chinchiang: risk_tier stays L3 (above the L2 the decision tree gives); the reason is in risk_tier_rationale.
+#   - 2026-10-06 @chinchiang: two behavior changes are kept (origin binding for model keys, model_selectable identities); see
+#     decisions.
+#   - 2026-10-06 @chinchiang: the residuals of t-redaction-gap, t-container-escape and t-supply-chain are accepted and those
+#     threats are now accepted; see decisions.
+#   - 2026-10-06 @chinchiang: after G4 review rounds 5-11, the quantified residual of t-container-escape (a few KB per scan) and
+#     the black-box container's timing-channel residual (residual (2) of t-target-response-parsing) are accepted, and the
+#     behavior change that binds test identity credentials to origins with VIBEAUDIT_TARGET_CREDENTIAL_ORIGINS is kept.
+#
+# To do: docs/01 requires one AppSec reviewer and one Red Team reviewer to sign off this model (dissent is kept as a minority
+#   opinion).
+#
+# Revision: the same day, after this branch's code fixes, t-indirect-injection, t-model-identity, t-probe-key-exfil,
+#   t-credential-crossuse, t-target-internal and t-sarif-injection became mitigated (each one's residual still awaits a
+#   person's confirmation); file:line references match the fixed code.
 
 system:
   name: multiagentbeta
@@ -45,7 +76,7 @@ assets:
   - id: a-model-keys
     name: 模型 API 金鑰（model profile 引用的 VIBEAUDIT_* 環境變數）
     sensitivity: secret
-    store: controller 程序環境（providers.py:151-153）
+    store: controller 處理程序環境（providers.py:151-153）
   - id: a-db
     name: VIBEAUDIT_DATABASE_URL 與 job／lease 帳本、LangGraph checkpoint
     sensitivity: secret
@@ -72,7 +103,7 @@ components:
   - { id: c-console,      name: FastAPI 控制台 + LangGraph controller（含 LiteLLM 模型閘道）,          kind: api,              zone: z-control }
   - { id: c-db,           name: PostgreSQL（job／lease 帳本、checkpoint、證據）,                        kind: db,               zone: z-control }
   - { id: c-supervisor,   name: 獨立 supervisor／broker（持有目標憑證、IP 釘選、dispatch 帳本、lease）, kind: worker,           zone: z-control }
-  - { id: c-collector,    name: effect collector／mock sink（在控制台程序內執行，目標以 bearer capability 送事件；effect_collector.py:188-225）,         kind: worker,           zone: z-control }
+  - { id: c-collector,    name: effect collector／mock sink（在控制台處理程序內執行，目標以 bearer capability 送事件；effect_collector.py:188-225）,         kind: worker,           zone: z-control }
   - { id: c-docker,       name: Docker Engine（supervisor 建立與清理 worker；控制台查詢 /info 與映像，worker_runtime.py:254-298）, kind: tool,             zone: z-host }
   - { id: c-wb-worker,    name: whitebox worker（semgrep、gitleaks、OSV；唯讀 /src、UID 65532、network none）, kind: worker,  zone: z-sandbox }
   - { id: c-bb-worker,    name: blackbox worker（ZAP、Schemathesis、Playwright、promptfoo、PyRIT；UID 65533、network none、Unix socket relay）, kind: worker, zone: z-sandbox }
@@ -333,7 +364,7 @@ threats:
       只監聽 loopback；前端以 history.replaceState 移除網址列的 token。同時最多 8 個 session（滿了淘汰最久未用者）、閒置 1 小時或
       滿 8 小時失效、可登出本 session 或全部 session，事件串流在 session 結束後停止（api.py:33-34、107-119、210-242、329-332）。
       登出全部 session 時，自動產生的啟動權杖一併換新並重新印出（api.py:230-237、__main__.py:26）。一分鐘內每多一次錯誤權杖，
-      下一次錯誤回應就多等 0.25 秒（上限 5 秒），正確的權杖不受影響，其他本機程序無法藉此讓操作者登不進來（api.py:37、200-207）。
+      下一次錯誤回應就多等 0.25 秒（上限 5 秒），正確的權杖不受影響，其他本機處理程序無法藉此讓操作者登不進來（api.py:37、200-207）。
       自訂的 VIBEAUDIT_SESSION_TOKEN 須至少 96 bits、8 種字元且非重複樣式（api.py:50-57）。殘留：以 VIBEAUDIT_SESSION_TOKEN
       固定的權杖要由操作者換值並重啟才會失效；錯誤權杖的延遲不限制並行請求，抗猜測靠權杖本身的熵（自動產生的權杖 256 bits）；
       自訂權杖的強度以字元頻率估算，辨識不出字典詞組成的 passphrase，README 要求以 secrets.token_urlsafe 產生。
@@ -396,8 +427,8 @@ threats:
       把 router 掛到沒有這個 middleware 的 app 時會 fail-open。
     mitigation: >-
       所有 /api 路由（/api/session 除外）與 workspace_router 都另外依賴 require_session，自行驗證 session cookie 與 CSRF token
-      （api.py:153-165、workspace_api.py:43-46）；workspace_router 不帶這個依賴就無法建立。API schema（/api/openapi.json）
-      也改由同一個 router 提供，不用 FastAPI 自己不套 router 依賴的路由（api.py:98-99、244-246）。操作者決策（反駁發現、清理證明、核准案例）
+      （api.py:153-165、workspace_api.py:43-46）；workspace_router 不帶這個相依性就無法建立。API schema（/api/openapi.json）
+      也改由同一個 router 提供，不用 FastAPI 自己不套 router 相依性的路由（api.py:98-99、244-246）。操作者決策（反駁發現、清理證明、核准案例）
       記錄做出決策的 session 指紋（api.py:162、workspace_api.py:141、150）。
     status: mitigated
     gate: G4
@@ -428,7 +459,7 @@ threats:
       核心審查問題由 harness 持有，commander 不能刪減；commander 的 focus 每項最多 300 字，放在獨立欄位並標為不受信任的模型衍生
       資料交給 reviewer（contracts.py:225-228、service.py:535-537、551）。所有模型的系統提示都把受測 repo、工具內容與其他 agent 的
       輸出標為資料、不是指示（service.py:25、providers.py:410）。三位 reviewer 須屬不同 family（policy.py:47-59）；這些 agent 沒有
-      工具，輸出不觸發動作，所以影響限於審查完整性，不打開對外通訊（見 t-indirect-injection）。retest 複製的模型案例保留 designed_by，
+      工具，輸出不觸發動作，所以影響限於審查完整性，不開啟對外通訊（見 t-indirect-injection）。retest 複製的模型案例保留 designed_by，
       照樣受 case_gate 的詞彙與身分限制，也要操作者重新核准才送出。threat_modeler 的 provided_cases 只帶追溯所需的欄位
       （id、標題、威脅與需求 ID、adapter、method、path、身分），不帶 header 值與本文，操作者寫進案例的測試帳密不會送到模型
       （service.py:636-637）。reporter 的輸出只能是發現 ID 的排列（service.py:806-807），影響限於報告順序；benchmark 的模型沒有
@@ -440,14 +471,14 @@ threats:
     category: STRIDE-E
     target: c-docker
     description: supervisor 與控制帳號能操作 Docker daemon，等同 host root；控制平面被入侵即主機淪陷。
-    mitigation: 專用控制帳號；worker 不掛 docker socket；README 將容器、資料庫與控制程序的管理者列為受信任邊界。
+    mitigation: 專用控制帳號；worker 不掛 docker socket；README 將容器、資料庫與控制處理程序的管理者列為受信任邊界。
     status: accepted
     gate: null
   - id: t-broker-token
     category: STRIDE-S
     target: c-bb-worker
     description: >-
-      broker socket 為 0666，broker token 放在工具可讀的 0444 task 檔（worker_entry.py:412-525），容器內任何程序都能向
+      broker socket 為 0666，broker token 放在工具可讀的 0444 task 檔（worker_entry.py:412-525），容器內任何處理程序都能向
       supervisor 送請求。
     mitigation: supervisor 對每個請求比對 sealed case 的 method、path、header、body 與身分，並檢查 lease 與預算；token 不是防線。
     status: mitigated
@@ -502,7 +533,7 @@ threats:
   - id: t-raw-staging-retention
     category: STRIDE-I
     target: a-target-source
-    description: raw staging 副本保留受測 repo 的機密檔；程序被強制終止後到下次啟動之間仍留在磁碟。
+    description: raw staging 副本保留受測 repo 的機密檔；處理程序被強制終止後到下次啟動之間仍留在磁碟。
     mitigation: >-
       whitebox 結束、每次 attempt 結束（finally）與啟動時都會刪除（service.py:67-92、235-277）；父目錄 0700；resume 須與凍結摘要相符。
       data_dir 與 artifacts 目錄設為 0700、evidence 檔 0600；POSIX 上無法設成只有擁有者可存取時拒絕啟動（store.py:30-45、55-58、171）。
@@ -542,10 +573,10 @@ risk_tier_rationale: >-
 
 decisions:
   - >-
-    控制台只供本機單一使用者，不提供多人或遠端存取（README「安全政策」）。這是授權不變量：run、證據與設定都沒有 owner 欄位，
+    控制台只供本機單一使用者，不提供多人或遠端存取（README「安全政策」）。這是授權不變條件：run、證據與設定都沒有 owner 欄位，
     以 run_id 查詢即可存取；若日後改為多人使用，必須先加上 owner 綁定，否則每個 run_id 端點都是 BOLA。
   - 預設 local_only；雲端模型須由操作者逐 run 明確允許並列出 origin。
-  - 主機管理者、Docker daemon、資料庫與控制程序屬受信任邊界。
+  - 主機管理者、Docker daemon、資料庫與控制處理程序屬受信任邊界。
   - 不自動重播 outcome_unknown 的請求；需人工 reconciliation／reset。
   - 模型設計的 state-changing 案例一律 blocked，除非有註冊的 reset／cleanup fixture protocol。
   - 模型設計的案例只能使用操作者標記 model_selectable 的測試身分，header 值限固定詞彙（2026-10-06，@chinchiang 確認保留此行為變更）。
