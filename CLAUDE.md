@@ -12,6 +12,8 @@ PYTHONPATH=backend python -m pytest tests -q -rs                  # -rs：逐項
 python scripts/package-release.py --manifest-only                 # 任何被追蹤的檔案變更後執行
 python scripts/package-release.py --check                         # CI 會跑
 python scripts/redact-receipts.py --check                         # docs/ 裡的收據不得含主機或帳號名稱
+python -m ruff check backend tests scripts                        # lint：未使用的名稱與匯入、語法錯誤、bugbear（規則在 pyproject.toml）
+sh scripts/contract-smoke.sh                                      # 對真實 loopback 後端跑控制台的 SSR／API 契約 smoke（CI 會跑）
 cd frontend && npm ci && npm run typecheck && npm run check:i18n && npm run check:messages && npm run build   # dist/ 有提交進版控；check:i18n 找出沒有英文對照的介面中文；check:messages 比對前後端讀訊息對照表的結果
 git add -N frontend/dist && git diff --exit-code -- frontend/dist # CI：dist 必須與原始碼建置結果一致
 python -m pip install --require-hashes -r requirements.mutation.lock.txt && python scripts/mutation-test.py   # 突變測試（Linux）：閘門與解析模組的每個突變都要被測試抓到
@@ -30,7 +32,7 @@ python -m pip install --require-hashes -r requirements.mutation.lock.txt && pyth
 - JUnit 收據放進 docs/ 前先跑 `python scripts/redact-receipts.py`，再跑 `python scripts/summarize-validation.py`。
 - `.claude/` 與本檔由 `scripts/package-release.py` 排除在發佈檔之外。
 - `docs/sample-report.md` 由 `python scripts/render-sample-report.py` 依 `docs/sample-report.json` 產生（中文報告、`---`、英文報告），不可手改；報告產生器改了就重產。
-- 改到 `pyproject.toml` 的 `[tool.mutmut]` 所列模組或它們的測試時，跑 `scripts/mutation-test.py`（只看改動的函式：`--changed origin/main`）；存活的突變要補測試，真的到不了的程式才標 `# pragma: no mutate`。兩份鎖定檔都用 `scripts/hash-lock.py` 重產（第二份加 `--lock requirements.mutation.lock.txt`）。
+- 改到 `pyproject.toml` 的 `[tool.mutmut]` 所列模組或它們的測試時，跑 `scripts/mutation-test.py`（只看改動的函式：`--changed origin/main`）；CI 的突變 workflow 預設關閉（repository variable `VIBEAUDIT_MUTATION=true` 才自動跑，手動 dispatch 一律跑），所以本機跑是唯一的把關；存活的突變要補測試，真的到不了的程式才標 `# pragma: no mutate`。兩份鎖定檔都用 `scripts/hash-lock.py` 重產（第二份加 `--lock requirements.mutation.lock.txt`）。
 
 ## 整合測試開關
 
@@ -58,6 +60,8 @@ PYTHONPATH=backend python -m pytest tests -q -rs                  # -rs: read ev
 python scripts/package-release.py --manifest-only                 # after changing any tracked file
 python scripts/package-release.py --check                         # CI runs this
 python scripts/redact-receipts.py --check                         # receipts in docs/ name no host or account
+python -m ruff check backend tests scripts                        # lint: unused names and imports, syntax errors, bugbear (rules in pyproject.toml)
+sh scripts/contract-smoke.sh                                      # the console's SSR/API contract smoke against a real loopback backend (CI runs it)
 cd frontend && npm ci && npm run typecheck && npm run check:i18n && npm run check:messages && npm run build   # dist/ is committed; check:i18n finds interface Chinese with no English counterpart; check:messages compares how the console and backend read the message table
 git add -N frontend/dist && git diff --exit-code -- frontend/dist # CI: dist must match the sources
 python -m pip install --require-hashes -r requirements.mutation.lock.txt && python scripts/mutation-test.py   # mutation testing (Linux): every mutant of the gate and parser modules must be caught
@@ -76,7 +80,7 @@ python -m pip install --require-hashes -r requirements.mutation.lock.txt && pyth
 - Run `python scripts/redact-receipts.py` before adding a JUnit receipt to docs/, then `python scripts/summarize-validation.py`.
 - `.claude/` and this file are excluded from releases by `scripts/package-release.py`.
 - `docs/sample-report.md` is rendered from `docs/sample-report.json` by `python scripts/render-sample-report.py` (Chinese report, `---`, English report). Never edit it by hand; re-render it when the report generator changes.
-- After changing a module listed under `[tool.mutmut]` in `pyproject.toml`, or its tests, run `scripts/mutation-test.py` (`--changed origin/main` for the changed functions only); a surviving mutant needs a test, and only genuinely unreachable code gets `# pragma: no mutate`. Regenerate either lock file with `scripts/hash-lock.py` (`--lock requirements.mutation.lock.txt` for the second).
+- After changing a module listed under `[tool.mutmut]` in `pyproject.toml`, or its tests, run `scripts/mutation-test.py` (`--changed origin/main` for the changed functions only); the mutation workflows in CI are off by default (they run on their own only with the repository variable `VIBEAUDIT_MUTATION=true`; a manual dispatch always runs), so the local run is the only gate; a surviving mutant needs a test, and only genuinely unreachable code gets `# pragma: no mutate`. Regenerate either lock file with `scripts/hash-lock.py` (`--lock requirements.mutation.lock.txt` for the second).
 
 ## Integration test switches
 

@@ -5,7 +5,6 @@ deadline and the shape of what it returns are checked without a fixture applicat
 """
 import hashlib
 import ipaddress
-import json
 import os
 import socket
 import threading

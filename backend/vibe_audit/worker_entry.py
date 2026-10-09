@@ -26,7 +26,6 @@ import sys
 import threading
 import time
 import uuid
-from urllib.parse import urlsplit
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0,str(HERE))
@@ -671,7 +670,6 @@ def container_worker(task):
     out=Path("/out" if task["backend"]=="docker" else str(inputs.parent/"out"))
     writable=Path("/tmp/vibeaudit-inputs" if task["backend"]=="docker" else str(inputs.parent/"prepared"))
     writable.mkdir(parents=True,exist_ok=True)
-    import shutil
     for path in inputs.rglob("*"):
         if path.is_file() and path.name!="_worker_task.json":
             destination=writable/path.relative_to(inputs);destination.parent.mkdir(parents=True,exist_ok=True)
@@ -767,7 +765,7 @@ if __name__=="__main__":
             # A failed claim, lease-store connection or spec check leaves nothing to clean up; say so, so the
             # controller does not wait for an operator attestation about a worker that never existed.
             sys.stdout.buffer.write(packed({"kind":"result","result":not_started("Supervisor could not claim its capability")}));sys.stdout.buffer.flush()
-            raise SystemExit(2)
+            raise SystemExit(2) from None
         supervisor.run()
     elif sys.argv[1]=="worker":
         container_worker(json.loads(Path(sys.argv[2]).read_text(encoding="utf-8")))

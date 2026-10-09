@@ -3,7 +3,7 @@ import { api, download, forgetStartupToken, setCSRF, streamEvents } from './api'
 import { ProjectControls, ModelPresetControls, ExecutionSettings, TraceRegister, RetestControl, ROLE_LABELS, defaultExtensions } from './extensions';
 import { getLang, labels, locale, setLang, t, useLang } from './i18n';
 import { loadMessages, say } from './messages';
-import type { AuthProfile, Budget, Capabilities, Finding, ModelProfile, Provider, Run, RunInput, RunExtensions, Session, TestCase } from './types';
+import type { AuthProfile, Budget, Capabilities, Finding, ModelProfile, Provider, Run, RunInput, RunExtensions, RunSummary, Session, TestCase } from './types';
 
 const STAGES = () => [['intake',t('接收','Intake')],['preflight',t('預檢','Preflight')],['whitebox',t('白箱審查','White-box review')],['adjudication',t('證據仲裁','Adjudication')],['threat_model',t('威脅建模','Threat modeling')],['case_design',t('測試設計','Test design')],['blackbox',t('黑箱驗證','Black-box verification')],['report',t('產出報告','Report')],['complete',t('完成','Complete')]];
 const STATUS: Record<string,string> = labels({created:['待啟動','Not started'],awaiting_approval:['待核准案例','Cases awaiting approval'],running:['執行中','Running'],cancelling:['停止中','Stopping'],cancelled:['已停止','Stopped'],completed:['已完成','Completed'],complete:['已完成','Completed'],sealed:['初審已封存','Initial review sealed'],incomplete:['未完整完成','Incomplete'],blocked:['受阻','Blocked'],failed:['執行失敗','Failed'],pass:['未觀測到違規','No violation observed'],fail:['觀測到違規','Violation observed'],inconclusive:['證據不足','Insufficient evidence'],execution_error:['執行錯誤','Execution error'],outcome_unknown:['結果不明','Outcome unknown']});
@@ -40,7 +40,7 @@ export default function App() {
   const lang = useLang();
   const [session,setSession] = useState<Session|null>(null);
   const [capabilities,setCapabilities] = useState<Capabilities|null>(null);
-  const [runs,setRuns] = useState<Run[]>([]);
+  const [runs,setRuns] = useState<RunSummary[]>([]);
   const [selected,setSelected] = useState<Run|null>(null);
   const [view,setView] = useState<'runs'|'create'|'capabilities'>('runs');
   const [tab,setTab] = useState('overview');
@@ -52,7 +52,7 @@ export default function App() {
     setConnecting(true); setError('');
     try {
       const s = await api<Session>('/session'); setCSRF(s.csrf_token); setSession(s);
-      const [caps,list] = await Promise.all([api<Capabilities>('/capabilities'),api<{runs:Run[]}>('/runs'),loadMessages()]);
+      const [caps,list] = await Promise.all([api<Capabilities>('/capabilities'),api<{runs:RunSummary[]}>('/runs'),loadMessages()]);
       setCapabilities(caps); setRuns(list.runs);
       if (list.runs.length) setSelected(await api<Run>(`/runs/${encodeURIComponent(list.runs[0].id)}`));
     } catch (e) {setError(e instanceof Error ? e.message : t('無法連線至本地服務','Cannot connect to the local service'));}
@@ -80,7 +80,7 @@ export default function App() {
     const timer = window.setInterval(refresh,2500);
     return ()=>{active=false;clearInterval(timer);stream.abort();};
   },[selected?.id,selected?.status,syncRun]);
-  async function selectRun(run:Run) {setBusy('load');setError('');try {syncRun(await api<Run>(`/runs/${encodeURIComponent(run.id)}`));setView('runs');setTab('overview');}catch(e){setError(String(e));}finally{setBusy('');}}
+  async function selectRun(run:RunSummary) {setBusy('load');setError('');try {syncRun(await api<Run>(`/runs/${encodeURIComponent(run.id)}`));setView('runs');setTab('overview');}catch(e){setError(String(e));}finally{setBusy('');}}
   async function action(kind:RunAction) {if(!selected)return;let body={};if(kind==='approve-cases'){const count=selected.cases.filter(c=>c.designed_by==='model').length;if(!window.confirm(t(`將送出 ${selected.cases.length} 個已封存案例，其中 ${count} 個由模型設計。請先在「追溯」分頁核對每個案例的方法、路徑、標頭、本文與身分；核准只適用於目前這組案例。`,`This sends ${selected.cases.length} sealed cases, ${count} of them designed by a model. First check each case's method, path, headers, body and identity on the Trace tab; the approval covers only this set of cases.`)))return;body={receipt:selected.gate_receipts?.cases??''};}if(kind==='reconcile'){const attestation=window.prompt(t('監督程式未能確認工作容器已移除。請說明你如何確認已清理或重設測試環境。這段說明會存為證據；此執行之後不能再恢復，請以新的執行繼續。','The supervisor could not confirm that the worker container was removed. Describe how you confirmed the test environment was cleaned up or reset. This statement is stored as evidence; this run cannot be resumed afterwards, so continue with a new run.'))?.trim();if(!attestation)return;body={attestation};}setBusy(kind);setError('');try {syncRun(await api<Run>(`/runs/${encodeURIComponent(selected.id)}/${kind}`,body));}catch(e){setError(e instanceof Error?e.message:String(e));}finally{setBusy('');}}
   async function createRun(input:RunInput) {
     setBusy('create');setError('');

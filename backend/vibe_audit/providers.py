@@ -165,9 +165,9 @@ def _validate_profile(profile: dict, policy: dict) -> tuple[str, str, str]:
 def _install_offline_tokenizer_loader():
     """Tiktoken's normal cache-miss behavior downloads; never permit it here.
 
-    LiteLLM 1.102.1's installed wheel lacks cl100k_base despite referencing it.
-    This application's installation must provision the pinned data file. The
-    runtime reads only verified local tokenizer assets and never installs them.
+    LiteLLM 1.102.1's installed wheel lacked cl100k_base despite referencing it;
+    1.104.2 ships it, and this package still carries its own pinned copy. Either
+    way the runtime reads only verified local tokenizer assets and never installs them.
     """
     import tiktoken.load
     spec = importlib.util.find_spec("litellm")

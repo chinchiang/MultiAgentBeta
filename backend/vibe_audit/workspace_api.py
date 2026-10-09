@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from copy import deepcopy
 import asyncio
-import re
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -114,6 +113,16 @@ def workspace_router(store, engine, source_roots, *, session):
 
     @router.post("/runs/{run_id}/findings/{finding_id}/decision")
     async def decision(run_id: str, finding_id: str, data: FindingDecision, request: Request):
+        # Read, change and save under the store's lock, on one worker thread: a second decision, or the engine's own
+        # save, waits its turn instead of overwriting this one. The lock is re-entrant for that thread, so the store's
+        # own methods still take it; the event loop never holds it while waiting on the thread, which would deadlock.
+        return await asyncio.to_thread(decide, run_id, finding_id, data, request.state.actor)
+
+    def decide(run_id: str, finding_id: str, data: FindingDecision, actor: str):
+        with store.lock:
+            return decide_locked(run_id, finding_id, data, actor)
+
+    def decide_locked(run_id: str, finding_id: str, data: FindingDecision, actor: str):
         run = store.get(run_id)
         if run["status"] in {"running", "cancelling"}:
             raise PolicyError("Cannot change a finding while its assessment is running")
@@ -153,15 +162,18 @@ def workspace_router(store, engine, source_roots, *, session):
             raise PolicyError("Refuting a finding needs an execution in which the security property held")
         if data.decision == "refuted" and any(e["status"] == "fail" for e in run["executions"] if tests_threats(e)):
             raise PolicyError("A case testing these threats observed a violation in this run; the finding cannot be refuted")
-        entry = {**data.model_dump(), "threat_ids": sorted(threats), "at": now(), "actor": request.state.actor, "previous_state": finding["state"]}
+        entry = {**data.model_dump(), "threat_ids": sorted(threats), "at": now(), "actor": actor, "previous_state": finding["state"]}
         finding.setdefault("decisions", []).append(entry)
         finding["state"] = data.decision
         finding["counterevidence"] = data.evidence_ids
-        engine.event(run, f"Operator {request.state.actor} recorded an evidence-linked decision for " + finding_id)
+        engine.event(run, f"Operator {actor} recorded an evidence-linked decision for " + finding_id)
         return run
 
     @router.post("/runs/{run_id}/reconcile")
     async def reconcile(run_id: str, data: CleanupAttestation, request: Request):
-        return engine.reconcile(run_id, data.attestation, request.state.actor)
+        def reconcile_locked():
+            with store.lock:
+                return engine.reconcile(run_id, data.attestation, request.state.actor)
+        return await asyncio.to_thread(reconcile_locked)
 
     return router

@@ -96,12 +96,16 @@ function compile(source, name, overrides = {}) {
 }
 const i18n = compile(await readFile(resolve(root, 'src/i18n.ts'), 'utf8'), 'i18n.ts');
 const api = compile(await readFile(resolve(root, 'src/api.ts'), 'utf8'), 'api.ts', { './i18n': i18n });
-const extensions = compile(await readFile(resolve(root, 'src/extensions.tsx'), 'utf8'), 'extensions.tsx', { './api': api, './extensions.css': {}, './i18n': i18n });
+// The engine's messages read in Chinese through the table the real backend serves, as in the browser.
+const messages = compile(await readFile(resolve(root, 'src/messages.ts'), 'utf8'), 'messages.ts', { './api': { api: path => request(path) }, './i18n': i18n });
+await messages.loadMessages();
+assert.equal(messages.zh('Oracle kind is not implemented.'), '尚未實作這種 oracle。', 'The console must read the backend message table.');
+const extensions = compile(await readFile(resolve(root, 'src/extensions.tsx'), 'utf8'), 'extensions.tsx', { './api': api, './extensions.css': {}, './i18n': i18n, './messages': messages });
 const source = await readFile(resolve(root, 'src/App.tsx'), 'utf8');
 // Vite statically replaces import.meta.env.* at build time (false for a
 // production bundle); transpileModule cannot transform import.meta, so the
 // smoke applies the same substitution before compiling.
-const components = compile(source.replace(/import\.meta\.env\.\w+/g, 'false') + '\nexport { RunDetail, CreateForm, CapabilitiesView, SafeText };', 'App.tsx', { './api': api, './extensions': extensions, './i18n': i18n });
+const components = compile(source.replace(/import\.meta\.env\.\w+/g, 'false') + '\nexport { RunDetail, CreateForm, CapabilitiesView, SafeText };', 'App.tsx', { './api': api, './extensions': extensions, './i18n': i18n, './messages': messages });
 const noop = () => {};
 const render = (component, props) => renderToStaticMarkup(React.createElement(component, props));
 const tabs = ['overview', 'trace', 'findings', 'evidence', 'activity'];

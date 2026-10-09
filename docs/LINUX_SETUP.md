@@ -19,7 +19,7 @@ npm run build
 cd ..
 ```
 
-已交付 frontend/dist 可直接提供本地 UI。Linux 啟動器也允許用 VIBEAUDIT_PYTHON 指定既有受測 venv。
+同樣的步驟也可以用 `sh scripts/setup.sh` 一次完成（`VIBEAUDIT_PYTHON` 可指定建立 venv 用的直譯器，需 3.12 以上）。已交付 frontend/dist 可直接提供本地 UI。Linux 啟動器也允許用 VIBEAUDIT_PYTHON 指定既有受測 venv。
 
 requirements.lock.txt 為每個鎖定版本列出 PyPI 上所有發布檔的 sha256，pip 以 hash 檢查模式安裝：下載的檔案不符，或有相依套件沒有鎖定，安裝都會中止，不會自動改抓其他版本。調整版本後執行 `python scripts/hash-lock.py --write` 重新產生 hash。
 
@@ -104,7 +104,7 @@ npm run build
 cd ..
 ```
 
-The shipped frontend/dist directly serves the local UI. The Linux launcher also allows VIBEAUDIT_PYTHON to point at an existing venv under test.
+`sh scripts/setup.sh` runs the same steps in one go (`VIBEAUDIT_PYTHON` names the interpreter the venv is created with; 3.12 or newer). The shipped frontend/dist directly serves the local UI. The Linux launcher also allows VIBEAUDIT_PYTHON to point at an existing venv under test.
 
 requirements.lock.txt lists, for each locked version, the sha256 of every release file on PyPI, and pip installs in hash-checking mode: if a downloaded file does not match, or any dependency is not locked, the install aborts — it never silently switches to another version. After adjusting versions, run `python scripts/hash-lock.py --write` to regenerate the hashes.
 

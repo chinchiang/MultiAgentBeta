@@ -42,6 +42,7 @@ export interface TestCase {
   oracle: {kind: string; forbidden_text: string[]; allowed_statuses: number[]; required_observations: string[]; expected_role: string | null};
   cleanup: unknown; side_effects: boolean; repetitions: number; observation_mode: string; source_digest: string; threat_model_hash: string; hash: string;
 }
+export type RunSummary = Pick<Run, 'id'|'name'|'mode'|'status'|'stage'|'created_at'|'updated_at'|'usage'|'usage_unknown'|'error'|'error_zh'|'workers_pending_cleanup'|'deployment_changed'>;
 export interface Run {
   id: string; name: string; mode: string; status: string; stage: string; created_at: string; updated_at: string;
   manifest: RunInput; events: AuditEvent[]; reviews: Review[]; threat_model: ThreatModel | null; cases: TestCase[];

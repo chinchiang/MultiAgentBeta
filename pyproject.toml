@@ -9,10 +9,10 @@ version = "0.2.1"
 description = "Evidence-gated multi-model security testing workbench"
 requires-python = ">=3.12"
 license = "Apache-2.0"
-dependencies = ["fastapi==0.141.1", "uvicorn==0.53.0", "httpx==0.28.1", "pydantic==2.13.5", "langgraph==1.2.12", "langgraph-checkpoint-postgres==3.1.2", "psycopg[binary,pool]==3.3.6", "litellm==1.102.1", "jsonschema==4.26.0", "openai==2.54.0", "referencing==0.37.0", "tiktoken==0.14.0"]
+dependencies = ["fastapi==0.143.0", "uvicorn==0.54.0", "httpx==0.28.1", "pydantic==2.14.0", "langgraph==1.2.14", "langgraph-checkpoint-postgres==3.1.2", "psycopg[binary,pool]==3.3.6", "litellm==1.104.2", "jsonschema==4.26.0", "openai==2.54.0", "referencing==0.37.0", "tiktoken==0.14.0"]
 
 [project.optional-dependencies]
-test = ["pytest==9.1.1", "pytest-asyncio==1.4.0", "hypothesis==6.168.3"]
+test = ["pytest==9.1.1", "pytest-asyncio==1.4.0", "hypothesis==6.168.5", "ruff==0.16.10"]
 
 [project.scripts]
 vibe-audit = "vibe_audit.__main__:main"
@@ -22,6 +22,15 @@ where = ["backend"]
 
 [tool.setuptools.package-data]
 vibe_audit = ["tokenizers/*"]
+
+[tool.ruff]
+# Lint only: the sources keep their compact style, so no formatter and no line length. F finds unused names and
+# imports, E9 syntax and I/O errors, B the bugbear mistakes. B023 is left out because every closure here runs inside
+# the iteration that defines it; B905 because the zipped pairs are built to the same length and a mismatch is a bug
+# the tests see, not one to raise at that line.
+[tool.ruff.lint]
+select = ["F", "E9", "B"]
+ignore = ["B023", "B905"]
 
 [tool.pytest.ini_options]
 pythonpath = ["backend"]

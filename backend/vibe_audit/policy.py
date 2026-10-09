@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import time
-from urllib.parse import urlsplit, unquote
 from datetime import datetime, timezone
 
 from .adapters import case_headers_allowed, model_header_vocabulary
-from .domain import digest, now
+from .domain import digest
 
 
 class PolicyError(RuntimeError):
