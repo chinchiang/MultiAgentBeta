@@ -283,16 +283,9 @@ MODEL_FINDINGS_SCHEMA = {"type": "object", "additionalProperties": False, "requi
                                         "rationale": {"type": "string", "maxLength": 30000}}}
 
 
-async def run_live_benchmark(dataset_path=DEFAULT_DATASET, output_dir=None, *, repetitions=3, seed=731, split="test", budget=None,
-                             profiles=None, model_policy=None, tool_runner=None, model_runner=None):
-    """Execute authorized real model strategies with injected, trusted async tool/model runners.
-
-    tool_runner(input_data, budget) -> BENCHMARK_OBSERVATION_SCHEMA.
-    model_runner(profile, system, payload, policy) -> providers.generate_json result.
-    Callbacks are host configuration, never imported from data or model output.
-    """
-    from .domain import ModelProfile
-    from .providers import MAX_ATTEMPTS, generate_json, ProviderError
+def _live_budget(budget):
+    """The run budget, complete and able to give every model step its schema-repair attempts."""
+    from .providers import MAX_ATTEMPTS
     # Every model step gets the same schema-repair attempts; an even split of six calls would leave debate's four steps one try each.
     longest = max(len(arm_steps(arm)) for arm in ARMS if arm != "traditional")
     budget = dict(DEFAULT_BUDGET | {"max_model_calls": MAX_ATTEMPTS * longest} if budget is None else budget)
@@ -300,124 +293,131 @@ async def run_live_benchmark(dataset_path=DEFAULT_DATASET, output_dir=None, *, r
         raise BenchmarkError("All four positive integer budget limits are required")
     if budget["max_model_calls"] < MAX_ATTEMPTS * longest:
         raise BenchmarkError(f"max_model_calls must allow {MAX_ATTEMPTS} attempts for each of the {longest} model steps")
+    return budget
+
+
+def _live_profiles(profiles):
+    """The a/b/c model profiles, validated, real providers only."""
+    from .domain import ModelProfile
     profiles = {alias: ModelProfile.model_validate(profile).model_dump() for alias, profile in (profiles or {}).items()}
     if set(profiles) - {"a", "b", "c"} or any(p["provider"] == "demo" for p in profiles.values()):
         raise BenchmarkError("Live profiles use a/b/c aliases and real providers only")
-    model_policy = dict(model_policy or {})
-    model_runner = model_runner or generate_json
-    async def builtin_runner(input_data, _budget):
-        return traditional_ast(input_data)
-    tool_runner = tool_runner or builtin_runner
-    dataset = load_dataset(dataset_path)
-    jobs = schedule(dataset, repetitions, seed, split)
-    samples = {s["id"]: s for p in dataset["projects"] for s in p["samples"]}
-    contexts, records = {}, []
-    for job in jobs:
-        sample = samples[job["sample_id"]]
-        if job["pair_id"] not in contexts:
-            tool_budget = budget | {"max_seconds": max(1, budget["max_seconds"] // 4)}
-            started = time.perf_counter()
+    return profiles
+
+
+async def _tool_context(tool_runner, sample, budget):
+    """The shared tool context of one paired sample, run once; a runner that fails its contract yields a blocked context
+    charged at its whole budget."""
+    tool_budget = budget | {"max_seconds": max(1, budget["max_seconds"] // 4)}
+    started = time.perf_counter()
+    try:
+        context = await asyncio.wait_for(tool_runner(sample["input"], tool_budget.copy()), timeout=tool_budget["max_seconds"])
+        validate(context, BENCHMARK_OBSERVATION_SCHEMA)
+        context = json.loads(json.dumps(context))
+        context["latency_seconds"] = max(context["latency_seconds"], time.perf_counter() - started)
+        for metric, cap in [("tokens", "max_tokens"), ("requests", "max_requests"), ("model_calls", "max_model_calls"), ("latency_seconds", "max_seconds")]:
+            if context[metric] > tool_budget[cap]:
+                raise BenchmarkError("Tool runner exceeded its declared budget")
+    except Exception:
+        context = _blocked("Trusted tool runner failed validation, timed out or exceeded budget; no clean tool context available")
+        context.update(tokens=tool_budget["max_tokens"], requests=tool_budget["max_requests"],
+                       model_calls=tool_budget["max_model_calls"], latency_seconds=time.perf_counter() - started)
+    return context
+
+
+async def _run_live_job(job, sample, context, budget, profiles, model_policy, model_runner):
+    """One scheduled arm on one sample: the model steps after the shared tool context, scored against the gold when eligible."""
+    from .providers import MAX_ATTEMPTS, ProviderError
+    start = time.perf_counter()
+    usage = {key: context[key] for key in ["tokens", "requests", "model_calls", "latency_seconds"]}
+    steps = [] if job["arm"] == "traditional" else arm_steps(job["arm"])
+    observations, reviews, final, issues = [], [], set(context["finding_ids"]) if not steps else set(), []
+    costs = [context["cost_usd"]]
+    if context["status"] != "completed":
+        issues.append(context.get("reason", "Shared tool context incomplete"))
+    unique_profiles = {(p["provider"], p["model_id"], p["endpoint"]) for p in profiles.values()}
+    unique_families = {p["family"].casefold() for p in profiles.values()}
+    if job["arm"] in {"heterogeneous_independent", "debate"} and (len(unique_profiles) != 3 or len(unique_families) != 3):
+        issues.append("Heterogeneous strategies require three distinct exact model configurations and declared families")
+    for index, (alias, phase) in enumerate(steps):
+        profile = profiles.get("a" if alias == "debate" else alias)
+        caps = {"max_tokens": max(0, (budget["max_tokens"] - context["tokens"]) // len(steps)),
+                "max_model_calls": max(0, (budget["max_model_calls"] - context["model_calls"]) // len(steps)),
+                "max_requests": max(0, (budget["max_requests"] - context["requests"]) // len(steps)),
+                "max_seconds": max(0, (budget["max_seconds"] - context["latency_seconds"]) / len(steps))}
+        payload = {"input": sample["input"], "tool_context": context,
+                   "peer_reviews": [{"reviewer": f"sealed-{i+1}", "finding_ids": r} for i, r in enumerate(reviews)] if phase == "debate" else []}
+        response = _blocked("Missing exact profile or explicit model policy")
+        data = None
+        step_start = time.perf_counter()
+        can_call = (not issues and profile is not None and model_policy.get("data_policy") in {"local_only", "cloud_allowed"}
+                    and caps["max_tokens"] > 0 and caps["max_model_calls"] >= MAX_ATTEMPTS and caps["max_seconds"] > 0)
+        if can_call:
+            policy = model_policy | {"max_tokens": caps["max_tokens"], "max_model_calls": caps["max_model_calls"],
+                                      "timeout_seconds": caps["max_seconds"], "response_schema": MODEL_FINDINGS_SCHEMA}
+            exact = profile | {"max_output_tokens": min(profile["max_output_tokens"], caps["max_tokens"])}
+            prompt = ("Audit the provided code and common tool evidence for security issues. Use stable issue locators from the input's issue_id_convention, "
+                      "or rule:file:line when none is supplied. Preserve uncertainty in rationale. Never claim to execute tools or reproduce vulnerabilities. "
+                      "Do not infer gold labels. " + ("Adjudicate the sealed anonymized candidate reviews against source evidence; votes alone are not proof." if phase == "debate" else "Review independently without peer opinions."))
             try:
-                context = await asyncio.wait_for(tool_runner(sample["input"], tool_budget.copy()), timeout=tool_budget["max_seconds"])
-                validate(context, BENCHMARK_OBSERVATION_SCHEMA)
-                context = json.loads(json.dumps(context))
-                context["latency_seconds"] = max(context["latency_seconds"], time.perf_counter() - started)
-                for metric, cap in [("tokens", "max_tokens"), ("requests", "max_requests"), ("model_calls", "max_model_calls"), ("latency_seconds", "max_seconds")]:
-                    if context[metric] > tool_budget[cap]:
-                        raise BenchmarkError("Tool runner exceeded its declared budget")
+                result = await asyncio.wait_for(model_runner(exact, prompt, payload, policy), timeout=caps["max_seconds"])
+                data = result["data"]
+                validate(data, MODEL_FINDINGS_SCHEMA)
+                actual = result["usage"]
+                response = {"finding_ids": data["finding_ids"], "reproduced_ids": [], "status": "completed",
+                            "tokens": actual["tokens"], "model_calls": actual["model_calls"], "requests": 0,
+                            "latency_seconds": time.perf_counter() - step_start, "cost_usd": actual.get("cost_usd"),
+                            "reason": "Provider output schema validated; reproduction not attempted by model"}
+                validate(response, BENCHMARK_OBSERVATION_SCHEMA)
+            except ProviderError as exc:
+                actual = getattr(exc, "usage", None) or {}
+                response = _blocked("Provider blocked or failed: " + str(getattr(exc, "code", "provider_error")))
+                response.update(tokens=actual.get("tokens", caps["max_tokens"]) if actual.get("tokens_known", True) else caps["max_tokens"], model_calls=actual.get("model_calls", caps["max_model_calls"]),
+                                latency_seconds=time.perf_counter() - step_start)
             except Exception:
-                context = _blocked("Trusted tool runner failed validation, timed out or exceeded budget; no clean tool context available")
-                context.update(tokens=tool_budget["max_tokens"], requests=tool_budget["max_requests"],
-                               model_calls=tool_budget["max_model_calls"], latency_seconds=time.perf_counter() - started)
-            contexts[job["pair_id"]] = context
-        context = contexts[job["pair_id"]]
-        start = time.perf_counter()
-        usage = {key: context[key] for key in ["tokens", "requests", "model_calls", "latency_seconds"]}
-        steps = [] if job["arm"] == "traditional" else arm_steps(job["arm"])
-        observations, reviews, final, issues = [], [], set(context["finding_ids"]) if not steps else set(), []
-        costs = [context["cost_usd"]]
-        if context["status"] != "completed":
-            issues.append(context.get("reason", "Shared tool context incomplete"))
-        unique_profiles = {(p["provider"], p["model_id"], p["endpoint"]) for p in profiles.values()}
-        unique_families = {p["family"].casefold() for p in profiles.values()}
-        if job["arm"] in {"heterogeneous_independent", "debate"} and (len(unique_profiles) != 3 or len(unique_families) != 3):
-            issues.append("Heterogeneous strategies require three distinct exact model configurations and declared families")
-        for index, (alias, phase) in enumerate(steps):
-            profile = profiles.get("a" if alias == "debate" else alias)
-            caps = {"max_tokens": max(0, (budget["max_tokens"] - context["tokens"]) // len(steps)),
-                    "max_model_calls": max(0, (budget["max_model_calls"] - context["model_calls"]) // len(steps)),
-                    "max_requests": max(0, (budget["max_requests"] - context["requests"]) // len(steps)),
-                    "max_seconds": max(0, (budget["max_seconds"] - context["latency_seconds"]) / len(steps))}
-            payload = {"input": sample["input"], "tool_context": context,
-                       "peer_reviews": [{"reviewer": f"sealed-{i+1}", "finding_ids": r} for i, r in enumerate(reviews)] if phase == "debate" else []}
-            response = _blocked("Missing exact profile or explicit model policy")
-            data = None
-            step_start = time.perf_counter()
-            can_call = (not issues and profile is not None and model_policy.get("data_policy") in {"local_only", "cloud_allowed"}
-                        and caps["max_tokens"] > 0 and caps["max_model_calls"] >= MAX_ATTEMPTS and caps["max_seconds"] > 0)
-            if can_call:
-                policy = model_policy | {"max_tokens": caps["max_tokens"], "max_model_calls": caps["max_model_calls"],
-                                          "timeout_seconds": caps["max_seconds"], "response_schema": MODEL_FINDINGS_SCHEMA}
-                exact = profile | {"max_output_tokens": min(profile["max_output_tokens"], caps["max_tokens"])}
-                prompt = ("Audit the provided code and common tool evidence for security issues. Use stable issue locators from the input's issue_id_convention, "
-                          "or rule:file:line when none is supplied. Preserve uncertainty in rationale. Never claim to execute tools or reproduce vulnerabilities. "
-                          "Do not infer gold labels. " + ("Adjudicate the sealed anonymized candidate reviews against source evidence; votes alone are not proof." if phase == "debate" else "Review independently without peer opinions."))
-                try:
-                    result = await asyncio.wait_for(model_runner(exact, prompt, payload, policy), timeout=caps["max_seconds"])
-                    data = result["data"]
-                    validate(data, MODEL_FINDINGS_SCHEMA)
-                    actual = result["usage"]
-                    response = {"finding_ids": data["finding_ids"], "reproduced_ids": [], "status": "completed",
-                                "tokens": actual["tokens"], "model_calls": actual["model_calls"], "requests": 0,
-                                "latency_seconds": time.perf_counter() - step_start, "cost_usd": actual.get("cost_usd"),
-                                "reason": "Provider output schema validated; reproduction not attempted by model"}
-                    validate(response, BENCHMARK_OBSERVATION_SCHEMA)
-                except ProviderError as exc:
-                    actual = getattr(exc, "usage", None) or {}
-                    response = _blocked("Provider blocked or failed: " + str(getattr(exc, "code", "provider_error")))
-                    response.update(tokens=actual.get("tokens", caps["max_tokens"]) if actual.get("tokens_known", True) else caps["max_tokens"], model_calls=actual.get("model_calls", caps["max_model_calls"]),
-                                    latency_seconds=time.perf_counter() - step_start)
-                except Exception:
-                    response = _blocked("Model call timed out or returned an invalid contract; reserved usage retained, no retry")
-                    response.update(tokens=caps["max_tokens"], model_calls=caps["max_model_calls"], latency_seconds=time.perf_counter() - step_start)
-            elif issues:
-                response = _blocked(issues[-1])
-            elif profile is not None and caps["max_model_calls"] < MAX_ATTEMPTS:
-                response = _blocked("Shared tool context left fewer model calls per step than the equal retry allowance")
-            validate(response, BENCHMARK_OBSERVATION_SCHEMA)
-            # A step that already failed keeps its own reason; a timeout always ends just past its cap.
-            if response["status"] == "completed" and (response["tokens"] > caps["max_tokens"] or response["model_calls"] > caps["max_model_calls"] or response["latency_seconds"] > caps["max_seconds"]):
-                response = response | {"status": "incomplete", "finding_ids": [], "reason": "Observed usage exceeded step budget; result withheld, usage preserved"}
-            for key in usage:
-                usage[key] += response[key]
-            costs.append(response["cost_usd"])
-            if response["status"] != "completed":
-                issues.append(response["reason"])
-            elif phase == "independent":
-                reviews.append(response["finding_ids"])
-                final.update(response["finding_ids"])
-            else:
-                final = set(response["finding_ids"])
-            observations.append({"step": index, "phase": phase, "model_alias": alias, "profile": profile,
-                                 "allocation": caps, "input_hash": _digest(payload), "sealed_output_hash": _digest(response),
-                                 "response": response, "rationale": data.get("rationale") if data else None, "simulated": False})
-        complete = not issues
-        gold = sample["gold"]
-        eligible = not gold["synthetic"] and gold["human_reviewed"] and len(set(gold["reviewers"])) >= 2 and gold["oracle_verified"] and bool(gold["oracle_evidence"])
-        reproduced = set(context["reproduced_ids"]) & final
-        computed = compute_metrics(final, reproduced, reviews, gold, complete)
-        # Static review itself cannot establish dynamic reproduction.
-        if not context["reproduced_ids"]:
-            computed["reproduce_rate"] = None
-        blocked = bool(issues) and not any(o["response"]["status"] == "completed" for o in observations)
-        records.append(job | {"status": "blocked" if blocked else "completed" if complete else "incomplete",
-                              "budget": budget.copy(), "usage": usage, "measured_wall_seconds": time.perf_counter() - start,
-                              "cost_usd": sum(costs) if all(c is not None for c in costs) else None,
-                              "tool_context_hash": _digest(context), "observations": observations, "finding_ids": sorted(final),
-                              "reproduced_ids": sorted(reproduced), "metrics": computed if eligible and complete else None,
-                              "preview_metrics": computed if not blocked else None, "gold_eligible": eligible, "simulated": False,
-                              "issues": issues, "limitation": None if eligible and complete else "Unfinished run; partial findings are not scored" if eligible
-                              else "Gold is synthetic or awaits two human reviews and oracle verification"})
+                response = _blocked("Model call timed out or returned an invalid contract; reserved usage retained, no retry")
+                response.update(tokens=caps["max_tokens"], model_calls=caps["max_model_calls"], latency_seconds=time.perf_counter() - step_start)
+        elif issues:
+            response = _blocked(issues[-1])
+        elif profile is not None and caps["max_model_calls"] < MAX_ATTEMPTS:
+            response = _blocked("Shared tool context left fewer model calls per step than the equal retry allowance")
+        validate(response, BENCHMARK_OBSERVATION_SCHEMA)
+        # A step that already failed keeps its own reason; a timeout always ends just past its cap.
+        if response["status"] == "completed" and (response["tokens"] > caps["max_tokens"] or response["model_calls"] > caps["max_model_calls"] or response["latency_seconds"] > caps["max_seconds"]):
+            response = response | {"status": "incomplete", "finding_ids": [], "reason": "Observed usage exceeded step budget; result withheld, usage preserved"}
+        for key in usage:
+            usage[key] += response[key]
+        costs.append(response["cost_usd"])
+        if response["status"] != "completed":
+            issues.append(response["reason"])
+        elif phase == "independent":
+            reviews.append(response["finding_ids"])
+            final.update(response["finding_ids"])
+        else:
+            final = set(response["finding_ids"])
+        observations.append({"step": index, "phase": phase, "model_alias": alias, "profile": profile,
+                             "allocation": caps, "input_hash": _digest(payload), "sealed_output_hash": _digest(response),
+                             "response": response, "rationale": data.get("rationale") if data else None, "simulated": False})
+    complete = not issues
+    gold = sample["gold"]
+    eligible = not gold["synthetic"] and gold["human_reviewed"] and len(set(gold["reviewers"])) >= 2 and gold["oracle_verified"] and bool(gold["oracle_evidence"])
+    reproduced = set(context["reproduced_ids"]) & final
+    computed = compute_metrics(final, reproduced, reviews, gold, complete)
+    # Static review itself cannot establish dynamic reproduction.
+    if not context["reproduced_ids"]:
+        computed["reproduce_rate"] = None
+    blocked = bool(issues) and not any(o["response"]["status"] == "completed" for o in observations)
+    return job | {"status": "blocked" if blocked else "completed" if complete else "incomplete",
+                          "budget": budget.copy(), "usage": usage, "measured_wall_seconds": time.perf_counter() - start,
+                          "cost_usd": sum(costs) if all(c is not None for c in costs) else None,
+                          "tool_context_hash": _digest(context), "observations": observations, "finding_ids": sorted(final),
+                          "reproduced_ids": sorted(reproduced), "metrics": computed if eligible and complete else None,
+                          "preview_metrics": computed if not blocked else None, "gold_eligible": eligible, "simulated": False,
+                          "issues": issues, "limitation": None if eligible and complete else "Unfinished run; partial findings are not scored" if eligible
+                          else "Gold is synthetic or awaits two human reviews and oracle verification"}
+
+
+def _live_report(dataset, jobs, records, contexts, *, seed, split, repetitions, budget, profiles, model_policy):
     report = {"schema_version": 1, "dataset_id": dataset["id"], "dataset_hash": _digest(dataset), "mode": "live",
               "seed": seed, "split": split, "repetitions": repetitions, "budget": budget, "profiles": profiles,
               "policy": {k: model_policy.get(k) for k in ["data_policy", "allowed_model_origins"]},
@@ -430,13 +430,45 @@ async def run_live_benchmark(dataset_path=DEFAULT_DATASET, output_dir=None, *, r
                               "Model outputs cannot claim dynamic reproduction. Only the trusted tool runner may provide reproduced IDs.",
                               "Per-arm resource summaries charge the common tool artifact to every arm; shared tools physically execute once per pair.",
                               "Provider errors with unknown usage conservatively reserve the full step allocation; no benchmark-layer retries."]}
-    if output_dir is not None:
-        path = Path(output_dir)
-        path.mkdir(parents=True, exist_ok=True)
-        (path / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        (path / "results.jsonl").write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in records), encoding="utf-8")
     return report
 
+
+def _write_outputs(output_dir, report, records):
+    path = Path(output_dir)
+    path.mkdir(parents=True, exist_ok=True)
+    (path / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    (path / "results.jsonl").write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in records), encoding="utf-8")
+
+
+async def run_live_benchmark(dataset_path=DEFAULT_DATASET, output_dir=None, *, repetitions=3, seed=731, split="test", budget=None,
+                             profiles=None, model_policy=None, tool_runner=None, model_runner=None):
+    """Execute authorized real model strategies with injected, trusted async tool/model runners.
+
+    tool_runner(input_data, budget) -> BENCHMARK_OBSERVATION_SCHEMA.
+    model_runner(profile, system, payload, policy) -> providers.generate_json result.
+    Callbacks are host configuration, never imported from data or model output.
+    """
+    budget = _live_budget(budget)
+    profiles = _live_profiles(profiles)
+    model_policy = dict(model_policy or {})
+    from .providers import generate_json
+    model_runner = model_runner or generate_json
+    async def builtin_runner(input_data, _budget):
+        return traditional_ast(input_data)
+    tool_runner = tool_runner or builtin_runner
+    dataset = load_dataset(dataset_path)
+    jobs = schedule(dataset, repetitions, seed, split)
+    samples = {s["id"]: s for p in dataset["projects"] for s in p["samples"]}
+    contexts, records = {}, []
+    for job in jobs:
+        sample = samples[job["sample_id"]]
+        if job["pair_id"] not in contexts:
+            contexts[job["pair_id"]] = await _tool_context(tool_runner, sample, budget)
+        records.append(await _run_live_job(job, sample, contexts[job["pair_id"]], budget, profiles, model_policy, model_runner))
+    report = _live_report(dataset, jobs, records, contexts, seed=seed, split=split, repetitions=repetitions, budget=budget, profiles=profiles, model_policy=model_policy)
+    if output_dir is not None:
+        _write_outputs(output_dir, report, records)
+    return report
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
