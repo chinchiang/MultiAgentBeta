@@ -12,5 +12,5 @@ export default defineConfig({
   preview: { host: '127.0.0.1', port: 4173 },
   // Unit and component tests (tests/*.test.ts[x]) run in a simulated browser with no backend; the SSR/API contract
   // smoke (scripts/contract-smoke.mjs) covers the real one.
-  test: { environment: 'happy-dom', include: ['tests/**/*.test.{ts,tsx}'], restoreMocks: true, unstubGlobals: true },
+  test: { environment: 'happy-dom', include: ['tests/**/*.test.{ts,tsx}'], setupFiles: ['tests/setup.ts'], restoreMocks: true, unstubGlobals: true },
 });
