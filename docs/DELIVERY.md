@@ -1,4 +1,4 @@
-# 0.2.0 交付範圍與原計畫對照
+# 0.2.1 交付範圍與原計畫對照
 
 本版接續 0.1.0，補上隔離 worker、PostgreSQL 整合、動態工具 adapter、fixture 重置、副作用收集、標準目錄及控制台工作台。使用者已指定先完成工程與本地整合，真實三模型端點尚未準備。
 
@@ -29,7 +29,7 @@
 
 ---
 
-# 0.2.0 Delivery Scope Compared with the Original Plan
+# 0.2.1 Delivery Scope Compared with the Original Plan
 
 This version continues from 0.1.0, adding the isolated worker, PostgreSQL integration, dynamic tool adapters, fixture reset, side-effect collection, the standards catalog and the console workbench. The user has specified completing the engineering and local integration first; the real three-model endpoints are not yet prepared.
 
