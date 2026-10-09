@@ -15,7 +15,11 @@ leave none. Lower a ceiling by adding tests, then --update-baseline; it never go
 working copy and results in mutants/ (ignored by git); delete it to start afresh.
 
 mutmut maps src/<package>/<module>.py to the module <package>.<module> that the tests import, so the run links
-src -> backend and removes the link afterwards.
+src -> backend and removes the link afterwards. mutmut remembers which tests reach each function
+(mutants/mutmut-stats.json) and, between runs, re-maps only tests that are new; a function that is new, or newly
+called from one the tests already reached, would keep an empty map and its mutants would face only the new tests.
+A --changed run therefore drops that map first, at the cost of one plain test run, so every mutant meets every test
+that reaches it.
 """
 import ast
 import json
@@ -29,6 +33,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 LINK = ROOT / "src"
 BASELINE = ROOT / "tests" / "mutation-baseline.json"
+TEST_MAP = ROOT / "mutants" / "mutmut-stats.json"
 ESCAPED = ("survived", "no tests")
 HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", re.M)
 
@@ -147,6 +152,8 @@ def main(argv):
             print(f"No function of the mutated modules changed against {ref}; nothing to mutate")
             return 0
         print("Changed functions: " + ", ".join(name.removesuffix("__mutmut_*") for name in mutant_names))
+        # The remembered test map does not learn which existing tests reach a changed function (see the module docstring).
+        TEST_MAP.unlink(missing_ok=True)
     if (code := with_link(lambda: mutmut("run", *mutant_names))) != 0:
         return code
     if mutant_names and ref is None:
