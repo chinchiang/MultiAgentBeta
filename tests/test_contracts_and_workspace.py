@@ -334,6 +334,35 @@ def test_workspace_settings_catalog_and_linked_retest(tmp_path):
         assert client.post(f"/api/runs/{run['id']}/retest",json=body,headers=headers).status_code==201
 
 
+def test_run_inventory_carries_summaries_and_concurrent_decisions_both_persist(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    app=create_app(tmp_path,testing=True)
+    with TestClient(app) as client:
+        csrf=client.get("/api/session",headers={"X-VibeAudit-Token":app.state.session_token}).json()["csrf_token"]
+        client.headers["X-CSRF-Token"]=csrf
+        _,run=client.portal.call(demo,app.state.store)
+        listed=client.get("/api/runs").json()["runs"]
+        assert [entry["id"] for entry in listed]==[run["id"]]
+        # The inventory names and sizes a run; its events, findings and evidence come with the run itself.
+        from vibe_audit.store import SUMMARY_FIELDS
+        assert {"id","name","mode","status","stage","created_at","updated_at","usage"}<=set(listed[0])<=set(SUMMARY_FIELDS)
+        assert listed[0]["name"]==run["name"] and listed[0]["status"]==run["status"] and listed[0]["usage"]==run["usage"]
+        whole=client.get(f"/api/runs/{run['id']}").json()
+        assert {"events","findings","artifacts"}<=set(whole) and all(whole.get(key)==value for key,value in listed[0].items())
+        execution={x["case_id"]:x["evidence_id"] for x in run["executions"]}
+        hypotheses=[f for f in run["findings"] if f["state"]=="hypothesis"][:2]
+        assert len(hypotheses)==2
+        def decide(finding):
+            body={"decision":"inconclusive","rationale":"Operator retest","evidence_ids":[execution["C-003"]],"threat_ids":["T-002"]}
+            return client.post(f"/api/runs/{run['id']}/findings/{finding['id']}/decision",json=body).status_code
+        # Two decisions at once read, change and save the same run; each must keep the other's change.
+        with ThreadPoolExecutor(2) as pool:
+            assert list(pool.map(decide,hypotheses))==[200,200]
+        stored=app.state.store.get(run["id"])
+        assert [f["state"] for f in stored["findings"] if f["id"] in {h["id"] for h in hypotheses}]==["inconclusive","inconclusive"]
+        assert sum("recorded an evidence-linked decision" in e["message"] for e in stored["events"])==2
+
+
 def test_finding_decision_needs_independent_execution_evidence(tmp_path):
     app=create_app(tmp_path,testing=True)
     with TestClient(app) as client:
