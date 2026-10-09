@@ -68,7 +68,8 @@ jobs:
           docker build -f deploy/scanners/Dockerfile.gitleaks -t vibeaudit-gitleaks:8.30.1 deploy/scanners
           docker build -f deploy/scanners/Dockerfile.osv -t vibeaudit-osv:2.3.5 deploy/scanners
           docker build -f deploy/worker/Dockerfile.tools.locked -t vibeaudit-tools:integration deploy/worker
-          docker pull semgrep/semgrep:1.153.0
+          # Docker Hub answers shared runners slowly or with 429 at times; the one pull that must come from it gets a few tries.
+          for attempt in 1 2 3 4 5 6; do docker pull semgrep/semgrep:1.153.0 && break; [ "$attempt" = 6 ] && exit 1; sleep $((attempt * 30)); done
           docker pull ghcr.io/zaproxy/zaproxy:2.17.0
       - name: Provision the offline OSV data and a runtime profile (docs/DOCKER_INTEGRATION_TESTING.md section 2)
         run: |
