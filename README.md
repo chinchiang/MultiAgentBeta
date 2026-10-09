@@ -132,7 +132,7 @@ MultiAgentBeta/
 │   ├── src/                       #   App.tsx、extensions.tsx、api.ts、types.ts、i18n.ts（中英切換）、messages.ts（引擎訊息中文）、樣式
 │   ├── scripts/                   #   contract-smoke、browser-smoke、check-i18n、check-messages
 │   └── dist/                      #   已建置的介面，由 FastAPI 同 origin 提供
-├── tests/                         # pytest（23 個檔案，含 test_bilingual_docs.py 文件雙語檢查）
+├── tests/                         # pytest（26 個檔案，含 test_bilingual_docs.py 文件雙語檢查與 test_properties.py 的 Hypothesis 性質測試）
 ├── catalogs/                      # ASVS 5.0.0、WSTG 4.2、LLM 2026、Agentic 2026 標準 JSON 與 manifest
 │   └── sources/                   #   原始標準內容與授權
 ├── fixtures/                      # 掃描器規則與設定（Semgrep、Gitleaks、OSV）
@@ -145,10 +145,12 @@ MultiAgentBeta/
 ├── docs/                          # ARCHITECTURE、LINUX_SETUP、DOCKER_INTEGRATION_TESTING、VALIDATION、DELIVERY、SOURCES、
 │                                  #   VIBESEC_ADVISORIES、threat-model.yaml、run-input.schema.json、驗證收據、截圖、history/
 ├── scripts/                       # setup／start-local、verify、provision-runtime／offline-db、package-release、hash-lock、
-│                                  #   redact-receipts、summarize-validation、refresh-catalog、render-sample-report、mutation-test
+│                                  #   redact-receipts、summarize-validation、refresh-catalog、render-sample-report、mutation-test、dependency-drift
 ├── .github/workflows/ci.yml       # backend（pytest ＋ PostgreSQL）與 frontend（typecheck、check:i18n、check:messages、建置一致性、清單）
 ├── .github/workflows/integration.yml  # 以 deploy/ 建置的映像跑 Docker worker、掃描器、工具、fixture 與完整 pipeline 整合測試
 ├── .github/workflows/mutation.yml     # mutmut 突變測試：閘門與解析模組的每個突變都要被測試抓到（scripts/mutation-test.py）
+├── .github/workflows/mutation-pr.yml  # pull request 只對改動的函式做突變測試（scripts/mutation-test.py --changed）
+├── .github/workflows/dependency-drift.yml  # 每週列出落後登錄站的固定版本與 OSV 公告（scripts/dependency-drift.py）
 ├── .claude/                       # 雲端 session 的 SessionStart hook（不進發佈檔）
 ├── CLAUDE.md                      # 開發指引（不進發佈檔）
 ├── IMPLEMENTATION.md              # API 與模組契約
@@ -192,7 +194,7 @@ npm.cmd run build
 
 沒有 Linux/PostgreSQL/固定映像的測試環境，對應整合測試會明確 skip。不能將 skipped 當作驗證通過。
 
-突變測試（Linux，離線）：`python -m pip install --require-hashes -r requirements.mutation.lock.txt` 後執行 `python scripts/mutation-test.py`。mutmut 會逐一改壞 `policy.py`、`adapters.py`、`catalog.py`、`lease.py`、`snapshot.py` 與 `messages.py` 的運算子、常數與分支，再跑涵蓋該函式的單元測試（端對端測試套件因執行時間不在其中，仍由 ci.yml 執行）；測試仍通過或沒有測試涵蓋的改動就是盲點，腳本會列出，而任一模組的數量超過 `tests/mutation-baseline.json` 記錄的上限就以非零結束。`.github/workflows/mutation.yml` 在這些檔案或測試變動時與每週執行同一件事。核心 Apache-2.0；外部工具、規則、模型與標準內容各保留原授權。
+突變測試（Linux，離線）：`python -m pip install --require-hashes -r requirements.mutation.lock.txt` 後執行 `python scripts/mutation-test.py`。mutmut 會逐一改壞 `policy.py`、`adapters.py`、`catalog.py`、`lease.py`、`snapshot.py` 與 `messages.py` 的運算子、常數與分支，再跑涵蓋該函式的單元測試（端對端測試套件因執行時間不在其中，仍由 ci.yml 執行）；測試仍通過或沒有測試涵蓋的改動就是盲點，腳本會列出，而任一模組的數量超過 `tests/mutation-baseline.json` 記錄的上限就以非零結束。`tests/test_properties.py` 以 Hypothesis 對純函式（redaction、origin 解析、雜湊、IP 判定、訊息對照、路由擷取、header 檢查）產生輸入驗證性質，同樣離線。lease 測試在 SQLite 與 PostgreSQL 各跑一次（設定 `VIBEAUDIT_TEST_DATABASE_URL` 時；每個測試用自己的資料庫），所以只在 PostgreSQL 上才有差別的鎖定與時鐘改動也抓得到。`.github/workflows/mutation.yml` 每週執行同一件事；pull request 則由 `.github/workflows/mutation-pr.yml` 執行 `python scripts/mutation-test.py --changed origin/main`，只改壞 diff 碰到的函式，每個函式的逃脫數不得超過基準為它記錄的數字（新函式不得有逃脫），幾分鐘內就有結果。相依套件漂移（需要網路）：`python scripts/dependency-drift.py` 讀兩份 Python 鎖定檔與 `frontend/package-lock.json`，向 PyPI、npm registry 查最新版本、向 OSV 查固定版本的安全公告，印出 Markdown 報告（`--all` 列出全部、`--json` 輸出資料）；有公告才以非零結束，不會自動升級。`.github/workflows/dependency-drift.yml` 每週把報告寫進 job summary。核心 Apache-2.0；外部工具、規則、模型與標準內容各保留原授權。
 
 ---
 # Vibe Audit 0.2.1
@@ -329,7 +331,7 @@ MultiAgentBeta/
 │   ├── src/                       #   App.tsx, extensions.tsx, api.ts, types.ts, i18n.ts (language switch), messages.ts (engine messages in Chinese), styles
 │   ├── scripts/                   #   contract-smoke, browser-smoke, check-i18n, check-messages
 │   └── dist/                      #   built UI, served by FastAPI on the same origin
-├── tests/                         # pytest (23 files, including test_bilingual_docs.py for bilingual docs)
+├── tests/                         # pytest (26 files, including test_bilingual_docs.py for bilingual docs and the Hypothesis property tests in test_properties.py)
 ├── catalogs/                      # ASVS 5.0.0, WSTG 4.2, LLM 2026, Agentic 2026 standard JSON and manifest
 │   └── sources/                   #   original standard content and licenses
 ├── fixtures/                      # scanner rules and settings (Semgrep, Gitleaks, OSV)
@@ -342,10 +344,12 @@ MultiAgentBeta/
 ├── docs/                          # ARCHITECTURE, LINUX_SETUP, DOCKER_INTEGRATION_TESTING, VALIDATION, DELIVERY, SOURCES,
 │                                  #   VIBESEC_ADVISORIES, threat-model.yaml, run-input.schema.json, receipts, screenshots, history/
 ├── scripts/                       # setup/start-local, verify, provision-runtime/offline-db, package-release, hash-lock,
-│                                  #   redact-receipts, summarize-validation, refresh-catalog, render-sample-report, mutation-test
+│                                  #   redact-receipts, summarize-validation, refresh-catalog, render-sample-report, mutation-test, dependency-drift
 ├── .github/workflows/ci.yml       # backend (pytest + PostgreSQL) and frontend (typecheck, check:i18n, check:messages, build parity, manifest)
 ├── .github/workflows/integration.yml  # Docker worker, scanner, tool, fixture and full-pipeline integration tests on images built from deploy/
 ├── .github/workflows/mutation.yml     # mutmut mutation testing: every mutant of the gate and parser modules must be caught (scripts/mutation-test.py)
+├── .github/workflows/mutation-pr.yml  # a pull request mutates only the functions it changed (scripts/mutation-test.py --changed)
+├── .github/workflows/dependency-drift.yml  # weekly: pins behind their registries and OSV advisories (scripts/dependency-drift.py)
 ├── .claude/                       # SessionStart hook for cloud sessions (excluded from releases)
 ├── CLAUDE.md                      # development guide (excluded from releases)
 ├── IMPLEMENTATION.md              # API and module contracts
@@ -389,4 +393,4 @@ npm.cmd run build
 
 Without a test environment with Linux/PostgreSQL/pinned images, the corresponding integration tests explicitly skip. Skipped must not be treated as verification passed.
 
-Mutation testing (Linux, offline): `python -m pip install --require-hashes -r requirements.mutation.lock.txt`, then `python scripts/mutation-test.py`. mutmut changes one operator, constant or branch of `policy.py`, `adapters.py`, `catalog.py`, `lease.py`, `snapshot.py` and `messages.py` at a time and runs the unit tests that cover that function (the end-to-end suites are left out for run time; ci.yml still runs them); a change the tests still pass, or that no test reaches, is a blind spot: the script lists them and exits non-zero when any module exceeds the ceiling recorded in `tests/mutation-baseline.json`. `.github/workflows/mutation.yml` does the same when those files or the tests change, and weekly. The core is Apache-2.0; external tools, rules, models, and standard content retain their original licenses.
+Mutation testing (Linux, offline): `python -m pip install --require-hashes -r requirements.mutation.lock.txt`, then `python scripts/mutation-test.py`. mutmut changes one operator, constant or branch of `policy.py`, `adapters.py`, `catalog.py`, `lease.py`, `snapshot.py` and `messages.py` at a time and runs the unit tests that cover that function (the end-to-end suites are left out for run time; ci.yml still runs them); a change the tests still pass, or that no test reaches, is a blind spot: the script lists them and exits non-zero when any module exceeds the ceiling recorded in `tests/mutation-baseline.json`. `tests/test_properties.py` checks properties of the pure functions (redaction, origin parsing, hashes, IP rules, message table, route extraction, header checks) over inputs Hypothesis generates, offline as well. The lease tests run once on SQLite and once on PostgreSQL (when `VIBEAUDIT_TEST_DATABASE_URL` is set; each test gets its own database), so a lock or clock change that only shows on PostgreSQL is caught too. `.github/workflows/mutation.yml` does the same weekly; on a pull request `.github/workflows/mutation-pr.yml` runs `python scripts/mutation-test.py --changed origin/main`, which mutates only the functions the diff touched and lets none of them exceed the count the baseline records for it (a new function must let none), so the answer arrives in minutes. Dependency drift (needs the network): `python scripts/dependency-drift.py` reads both Python lock files and `frontend/package-lock.json`, asks PyPI and the npm registry for the latest release and OSV for advisories against the pinned versions, and prints a Markdown report (`--all` lists every pin, `--json` the data); it exits non-zero only for an advisory and upgrades nothing. `.github/workflows/dependency-drift.yml` writes the report to the job summary weekly. The core is Apache-2.0; external tools, rules, models, and standard content retain their original licenses.

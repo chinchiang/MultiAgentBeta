@@ -297,7 +297,8 @@ def _origin(manifest):
                 or "\\" in raw or "%" in parts.netloc):
             raise ValueError
         host = parts.hostname.encode("idna").decode("ascii").lower()
-        port = parts.port or (443 if parts.scheme == "https" else 80)
+        # ":0" is a port, not a missing one.
+        port = parts.port if parts.port is not None else (443 if parts.scheme == "https" else 80)
         if not 1 <= port <= 65535:
             raise ValueError
         return parts.scheme, host, port
@@ -504,10 +505,12 @@ def _request(scheme, host, port, pinned_ip, method, path, headers, body, timeout
     conn = connection_type(host, port, pinned_ip=pinned_ip, timeout=timeout)
     deadline = time.monotonic() + timeout
     watchdog = None
+    expired = threading.Event()
     try:
         conn.connect()
         transport_socket = conn.sock
         def end_transport():
+            expired.set()
             try:
                 transport_socket.shutdown(socket.SHUT_RDWR)
             except OSError:
@@ -519,6 +522,9 @@ def _request(scheme, host, port, pinned_ip, method, path, headers, body, timeout
         watchdog.start()
         conn.request(method, path, body=body, headers=headers)
         response = conn.getresponse()
+        # A closed socket ends the status line, the headers and the body quietly: it is a timeout, not a response.
+        if expired.is_set():
+            raise TimeoutError
         if 300 <= response.status < 400:
             return {"status_code": response.status, "body": "", "complete": False, "redirect_blocked": True}
         encoding = response.getheader("Content-Encoding", "identity").lower()
@@ -527,10 +533,11 @@ def _request(scheme, host, port, pinned_ip, method, path, headers, body, timeout
         length = response.getheader("Content-Length")
         if length is not None:
             try:
-                if int(length) < 0 or int(length) > MAX_RESPONSE_BYTES:
-                    raise ResponseLimitError("Response exceeds the configured byte limit.")
+                length = int(length)
             except ValueError:
                 raise ResponseLimitError("Invalid response length; no oracle was evaluated.") from None
+            if length < 0 or length > MAX_RESPONSE_BYTES:
+                raise ResponseLimitError("Response exceeds the configured byte limit.")
         chunks = []
         size = 0
         while True:
@@ -552,13 +559,20 @@ def _request(scheme, host, port, pinned_ip, method, path, headers, body, timeout
             if size > MAX_RESPONSE_BYTES:
                 raise ResponseLimitError("Response exceeds the configured byte limit.")
         raw = b"".join(chunks)
-        if length is not None and len(raw) != int(length):
+        if expired.is_set():
+            raise TimeoutError
+        if length is not None and len(raw) != length:
             raise ResponseLimitError("Response was incomplete; no oracle was evaluated.")
         try:
             text = raw.decode("utf-8", errors="strict")
         except UnicodeError:
             raise ResponseLimitError("Only complete UTF-8 responses can be evaluated.") from None
         return {"status_code": response.status, "body": text, "complete": True, "bytes": size}
+    except Exception:
+        # Whatever the cut socket made http.client raise, the deadline is what ended the exchange.
+        if expired.is_set():
+            raise TimeoutError from None
+        raise
     finally:
         if watchdog is not None:
             watchdog.cancel()
