@@ -24,7 +24,7 @@ from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
 from referencing import Registry
 
-from .adapters import CREDENTIAL_ORIGINS_ENV, DEFAULT_CREDENTIAL_ORIGINS, credential_env_allowed, format_origin, parse_origin
+from .adapters import CREDENTIAL_ORIGINS_ENV, DEFAULT_CREDENTIAL_ORIGINS, credential_env_allowed, format_origin, parse_bindings, parse_origin
 
 MAX_ATTEMPTS = 2
 MAX_RESPONSE_BYTES = 512 * 1024
@@ -86,16 +86,10 @@ def credential_origins(environ=None) -> dict[str, set[str]]:
     """
     environ = os.environ if environ is None else environ
     bound = {name: {origin} for name, origin in DEFAULT_CREDENTIAL_ORIGINS.items()}
-    rebound = {}
-    for entry in filter(None, (item.strip() for item in environ.get(CREDENTIAL_ORIGINS_ENV, "").split(","))):
-        name, _, value = entry.partition("=")
-        try:
-            if not re.fullmatch(r"VIBEAUDIT_[A-Z0-9_]+", name.strip()):
-                raise ValueError
-            origin = format_origin(*parse_origin(value.strip()), omit_default_port=True)
-        except ValueError:
-            raise ProviderError(f"{CREDENTIAL_ORIGINS_ENV} entries must be VIBEAUDIT_NAME=scheme://host[:port]", code="invalid_credential_binding") from None
-        rebound.setdefault(name.strip(), set()).add(origin)
+    try:
+        rebound = parse_bindings(environ.get(CREDENTIAL_ORIGINS_ENV, ""), lambda value: format_origin(*parse_origin(value), omit_default_port=True))
+    except ValueError:
+        raise ProviderError(f"{CREDENTIAL_ORIGINS_ENV} entries must be VIBEAUDIT_NAME=scheme://host[:port]", code="invalid_credential_binding") from None
     return {**bound, **rebound}
 
 

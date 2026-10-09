@@ -135,7 +135,9 @@ def test_credential_origin_bindings_and_defaults(monkeypatch):
     assert providers.credential_origins({"VIBEAUDIT_MODEL_CREDENTIAL_ORIGINS": "VIBEAUDIT_KEY=https://模型.例子:443/"}) ["VIBEAUDIT_KEY"] == {"https://xn--xgs754b.xn--fsqu00a"}
     for raw in ["VIBEAUDIT_KEY", "OPENAI_API_KEY=https://api.openai.com", "VIBEAUDIT_KEY=https://api.example.com/v1",
                 "VIBEAUDIT_KEY=ftp://api.example.com", "VIBEAUDIT_KEY=https://user:pw@api.example.com", "VIBEAUDIT_KEY=https://api.example.com:0",
-                "VIBEAUDIT_KEY=https://api.example.com?x", "VIBEAUDIT_KEY=https://api.example.com#f"]:
+                "VIBEAUDIT_KEY=https://api.example.com?x", "VIBEAUDIT_KEY=https://api.example.com#f",
+                # The tool's own settings share the prefix; a binding under one of their names is refused like a credential reference.
+                "VIBEAUDIT_DATABASE_URL=https://api.example.com", "VIBEAUDIT_SESSION_TOKEN=https://api.example.com"]:
         with pytest.raises(providers.ProviderError) as err:
             providers.credential_origins({"VIBEAUDIT_MODEL_CREDENTIAL_ORIGINS": raw})
         assert err.value.code == "invalid_credential_binding"

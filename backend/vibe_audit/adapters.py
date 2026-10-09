@@ -78,6 +78,21 @@ def bound_model_credentials(environ=None):
 TARGET_CREDENTIAL_ORIGINS_ENV = "VIBEAUDIT_TARGET_CREDENTIAL_ORIGINS"
 
 
+def parse_bindings(text, parse_value, *, reserved=RESERVED_ENV):
+    """{name: {value}} of a credential-binding variable: NAME=value entries, comma-separated, a name repeating for
+    several values. A name must be a VIBEAUDIT_ credential name that is not one of this tool's own settings, and each
+    value is read by parse_value; a bad entry is a ValueError, which the caller turns into its own refusal.
+    """
+    bound = {}
+    for entry in filter(None, (item.strip() for item in text.split(","))):
+        name, _, value = entry.partition("=")
+        name = name.strip()
+        if not _CREDENTIAL_ENV.fullmatch(name) or name in reserved:
+            raise ValueError("Not a credential binding")
+        bound.setdefault(name, set()).add(parse_value(value.strip()))
+    return bound
+
+
 def target_credential_origins(environ=None):
     """The target origins each test identity credential may be sent to, as the operator's environment states them.
 
@@ -86,18 +101,10 @@ def target_credential_origins(environ=None):
     NAME=origin entries, comma-separated; a name may repeat for several origins. Nothing is bound by default.
     """
     environ = os.environ if environ is None else environ
-    bound = {}
-    for entry in filter(None, (item.strip() for item in environ.get(TARGET_CREDENTIAL_ORIGINS_ENV, "").split(","))):
-        name, _, value = entry.partition("=")
-        name = name.strip()
-        try:
-            if not _CREDENTIAL_ENV.fullmatch(name) or name in RESERVED_ENV:
-                raise AdapterBlocked("")
-            origin = _origin({"target_url": value.strip()})
-        except AdapterBlocked:
-            raise AdapterBlocked(f"{TARGET_CREDENTIAL_ORIGINS_ENV} entries must be VIBEAUDIT_NAME=scheme://host[:port]") from None
-        bound.setdefault(name, set()).add(origin)
-    return bound
+    try:
+        return parse_bindings(environ.get(TARGET_CREDENTIAL_ORIGINS_ENV, ""), parse_origin)
+    except ValueError:
+        raise AdapterBlocked(f"{TARGET_CREDENTIAL_ORIGINS_ENV} entries must be VIBEAUDIT_NAME=scheme://host[:port]") from None
 
 
 def unbound_target_credentials(manifest, environ=None):
@@ -309,7 +316,7 @@ def parse_origin(value, *, allow_path=False):
             raise ValueError
         host = parts.hostname.encode("idna").decode("ascii").lower()  # pragma: no mutate (codec names are case-insensitive)
         port = parts.port if parts.port is not None else _DEFAULT_PORTS[parts.scheme]
-        if not 1 <= port <= 65535:
+        if port < 1:  # urlsplit itself refuses a port above 65535
             raise ValueError
         return parts.scheme, host, port
     except (ValueError, TypeError, UnicodeError):

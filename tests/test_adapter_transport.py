@@ -297,6 +297,20 @@ def test_target_credential_origins_parse_every_entry_or_none():
             target_credential_origins({ORIGINS: entry})
 
 
+def test_parse_bindings_reads_names_once_and_values_through_the_parser_it_is_given():
+    assert adapters.parse_bindings("", str) == {} and adapters.parse_bindings(" , ,", str) == {}
+    assert adapters.parse_bindings(" VIBEAUDIT_A = x ,VIBEAUDIT_A=y, VIBEAUDIT_B=", str.upper) == {"VIBEAUDIT_A": {"X", "Y"}, "VIBEAUDIT_B": {""}}
+    # A missing "=" leaves an empty value for the value parser to judge (an origin parser refuses it); the name rules are here.
+    assert adapters.parse_bindings("VIBEAUDIT_A", str) == {"VIBEAUDIT_A": {""}}
+    for text in ["A=x", "vibeaudit_a=x", "=x", "VIBEAUDIT_DATABASE_URL=x", "VIBEAUDIT_A=x,B=y"]:
+        with pytest.raises(ValueError, match="^Not a credential binding$"):
+            adapters.parse_bindings(text, str)
+    # Another reserved set, and a value parser's own refusal, both surface as the same ValueError.
+    assert adapters.parse_bindings("VIBEAUDIT_DATABASE_URL=x", str, reserved=frozenset()) == {"VIBEAUDIT_DATABASE_URL": {"x"}}
+    with pytest.raises(ValueError, match="^bad value$"):
+        adapters.parse_bindings("VIBEAUDIT_A=x", lambda value: (_ for _ in ()).throw(ValueError("bad value")))
+
+
 def test_unbound_target_credentials_name_the_profiles_the_environment_did_not_bind():
     assert unbound_target_credentials({}) == [] and unbound_target_credentials({"auth_profiles": []}) == []
     manifest = {"target_url": "http://127.0.0.1:8", "auth_profiles": [{"id": "a", "credential_env": "VIBEAUDIT_A"},
