@@ -1,8 +1,10 @@
 # Mutation testing of the deterministic gates and parsers (scripts/mutation-test.py): no module may let more
 # mutants escape its tests than tests/mutation-baseline.json allows. A full run takes hours (every surviving
-# mutant runs all the tests that cover its function), so this runs weekly and on request, not per pull
-# request; run it locally after changing a listed module or its tests. No model credentials, Docker images or
-# targets are used.
+# mutant runs all the tests that cover its function), so this never runs per pull request; run it locally after
+# changing a listed module or its tests. No model credentials, Docker images or targets are used.
+#
+# Off by default: the weekly run happens only when the repository variable VIBEAUDIT_MUTATION is "true"
+# (Settings > Secrets and variables > Actions > Variables); a manual dispatch always runs.
 name: mutation
 
 on:
@@ -19,6 +21,7 @@ concurrency:
 
 jobs:
   mutmut:
+    if: github.event_name == 'workflow_dispatch' || vars.VIBEAUDIT_MUTATION == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 330
     services:
