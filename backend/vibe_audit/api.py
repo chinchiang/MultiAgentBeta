@@ -18,7 +18,7 @@ from fastapi.exceptions import StarletteHTTPException
 from pydantic import ValidationError
 
 from .diagnostics import note_failure
-from .domain import Budget, ModelProfile, RunInput, origin
+from .domain import Budget, ModelProfile, RunInput
 from .messages import PATTERNS, STATUS_ZH, ZH, zh
 from .policy import PolicyError
 from .service import REPORT_LANGUAGES, Engine, report_markdown, report_sarif
