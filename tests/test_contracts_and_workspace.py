@@ -1,5 +1,6 @@
 import asyncio
 import copy
+import json
 import os
 from pathlib import Path
 import uuid
@@ -13,7 +14,7 @@ from vibe_audit.domain import RunInput, new_run
 from vibe_audit.policy import PolicyError, sealed
 from vibe_audit.service import Engine
 from vibe_audit.staging import discard_staging, stage_source, verify_staging
-from vibe_audit.store import Store, placeholders
+from vibe_audit.store import RunNotFound, Store, placeholders
 
 
 @pytest.fixture(autouse=True)
@@ -474,6 +475,50 @@ def test_limitations_come_in_chinese_and_english_in_the_same_order():
     assert len(LIMITATIONS)==len(LIMITATIONS_ZH)
     assert all(text.isascii() for text in LIMITATIONS)
     assert all(any("一"<=c<="鿿" for c in text) for text in LIMITATIONS_ZH)
+
+
+@pytest.mark.parametrize("backend",["sqlite","postgres"])
+def test_events_are_appended_once_and_never_rewritten_with_the_run(tmp_path,backend):
+    """Each save writes the run's body and only the events not yet stored; reads put them back in sequence."""
+    url=os.getenv("VIBEAUDIT_TEST_DATABASE_URL") if backend=="postgres" else None
+    if backend=="postgres" and not url:
+        pytest.skip("Provide dedicated PostgreSQL integration database")
+    store=Store(tmp_path,url)
+    try:
+        run_id="run-"+uuid.uuid4().hex
+        event=lambda seq:{"seq":seq,"at":f"2026-10-09T00:00:0{seq}Z","stage":"intake","message":f"Event {seq}","level":"info","agent_id":None}
+        run={"id":run_id,"name":"events","mode":"demo","status":"running","stage":"intake","created_at":"2026-10-09T00:00:00Z","updated_at":"",
+             "manifest":{"name":"events","mode":"demo","parent_run_id":None},"events":[event(1),event(2),event(3)],"usage":{"requests":0},"error":None}
+        store.save(run)
+        count=lambda:store._execute(placeholders("SELECT count(*) FROM events WHERE run_id=?",store.postgres),(run_id,)).fetchone()[0]
+        body=lambda:json.loads(store._execute(placeholders("SELECT payload FROM runs WHERE id=?",store.postgres),(run_id,)).fetchone()[0])
+        assert count()==3 and "events" not in body()
+        # A later save with two more events inserts those two; the stored three are not written again.
+        run["events"]+=[event(4),event(5)]
+        writes=[]
+        execute=store._execute
+        store._execute=lambda sql,args=():(writes.append(sql) if sql==store.sql["insert_event"] else None) or execute(sql,args)
+        store.save(run)
+        assert len(writes)==2 and count()==5
+        assert [e["seq"] for e in store.get(run_id)["events"]]==[1,2,3,4,5]
+        assert [e["seq"] for e in store.events_after(run_id,3)]==[4,5] and store.events_after(run_id,5)==[]
+        assert store.summary(run_id)["status"]=="running" and "events" not in store.summary(run_id)
+        assert all("events" not in entry for entry in store.summaries())
+        assert [e["seq"] for e in next(r for r in store.list() if r["id"]==run_id)["events"]]==[1,2,3,4,5]
+        with pytest.raises(RunNotFound):
+            store.events_after("missing",0)
+        # A row written before events had their own table carries them in its body: read as they are, moved on the next save.
+        legacy_id="run-"+uuid.uuid4().hex
+        legacy={**run,"id":legacy_id,"events":[event(1),event(2)]}
+        execute(store.sql["upsert_run"],(legacy_id,json.dumps(legacy),"2026-10-09T00:00:00Z"))
+        assert [e["seq"] for e in store.get(legacy_id)["events"]]==[1,2] and store.events_after(legacy_id,0)==[]
+        stored=store.get(legacy_id)
+        stored["events"].append(event(3))
+        store.save(stored)
+        assert [e["seq"] for e in store.get(legacy_id)["events"]]==[1,2,3] and [e["seq"] for e in store.events_after(legacy_id,0)]==[1,2,3]
+        assert "events" not in json.loads(execute(store.sql["run"],(legacy_id,)).fetchone()[0])
+    finally:
+        store.close()
 
 
 def test_store_sql_table_holds_only_bound_placeholders_and_differs_by_dialect_alone(tmp_path):

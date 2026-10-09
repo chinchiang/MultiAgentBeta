@@ -57,16 +57,19 @@ jobs:
           docker version
       - name: PostgreSQL 18.6 (the same digest as ci.yml)
         run: |
-          docker run -d --name va-postgres -p 127.0.0.1:5432:5432 -e POSTGRES_USER=vibeaudit_test -e POSTGRES_PASSWORD=ci-only-throwaway -e POSTGRES_DB=vibeaudit_test postgres@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722
+          docker run -d --name va-postgres -p 127.0.0.1:5432:5432 -e POSTGRES_USER=vibeaudit_test -e POSTGRES_PASSWORD=ci-only-throwaway -e POSTGRES_DB=vibeaudit_test public.ecr.aws/docker/library/postgres@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722
           for _ in $(seq 60); do docker exec va-postgres pg_isready -U vibeaudit_test -d vibeaudit_test -h 127.0.0.1 && exit 0; sleep 2; done
           docker logs va-postgres; exit 1
+      # The python and node bases come from the ECR Public mirror of the Docker official images (the same digests),
+      # which has no anonymous pull rate limit; semgrep is published on Docker Hub only, so that one pull stays there.
       - name: Build and pull the worker, scanner and tool images (docs/LINUX_SETUP.md section 3)
         run: |
-          docker build --build-arg BASE_IMAGE=python@sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b94cd8ebbe06a9 -t vibeaudit-worker:test deploy/worker
+          docker build --build-arg BASE_IMAGE=public.ecr.aws/docker/library/python@sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b94cd8ebbe06a9 -t vibeaudit-worker:test deploy/worker
           docker build -f deploy/scanners/Dockerfile.gitleaks -t vibeaudit-gitleaks:8.30.1 deploy/scanners
           docker build -f deploy/scanners/Dockerfile.osv -t vibeaudit-osv:2.3.5 deploy/scanners
           docker build -f deploy/worker/Dockerfile.tools.locked -t vibeaudit-tools:integration deploy/worker
-          docker pull semgrep/semgrep:1.153.0
+          # Docker Hub answers shared runners slowly or with 429 at times; the one pull that must come from it gets a few tries.
+          for attempt in 1 2 3 4 5 6; do docker pull semgrep/semgrep:1.153.0 && break; [ "$attempt" = 6 ] && exit 1; sleep $((attempt * 30)); done
           docker pull ghcr.io/zaproxy/zaproxy:2.17.0
       - name: Provision the offline OSV data and a runtime profile (docs/DOCKER_INTEGRATION_TESTING.md section 2)
         run: |

@@ -327,11 +327,13 @@ def _run_routes(api,console):
                 if console.current_session(request) is None:
                     yield "event: expired\ndata: {}\n\n"
                     return
-                run=await asyncio.to_thread(console.store.get,run_id)
-                for event in run["events"]:
-                    if event["seq"]>cursor:
-                        cursor=event["seq"]
-                        yield f"id: {cursor}\nevent: progress\ndata: {json.dumps(event,ensure_ascii=False)}\n\n"
+                # Only the events after the cursor are read: the run's body is not loaded whole every half second.
+                def poll():
+                    return console.store.events_after(run_id,cursor),console.store.summary(run_id)
+                events,run=await asyncio.to_thread(poll)
+                for event in events:
+                    cursor=event["seq"]
+                    yield f"id: {cursor}\nevent: progress\ndata: {json.dumps(event,ensure_ascii=False)}\n\n"
                 # A cancelling run with no task left only changes through an operator reconcile.
                 if run["status"] not in {"running","cancelling","created"} or run["status"]=="cancelling" and not console.engine.executing(run_id):
                     yield "event: done\ndata: {}\n\n"

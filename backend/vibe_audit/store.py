@@ -55,6 +55,12 @@ SQL = {
     "create_entity_versions": "CREATE TABLE IF NOT EXISTS entity_versions (run_id TEXT NOT NULL, kind TEXT NOT NULL, entity_id TEXT NOT NULL, version TEXT NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(run_id,kind,entity_id,version))",
     "create_relations": "CREATE TABLE IF NOT EXISTS relations (run_id TEXT NOT NULL, version TEXT NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(run_id,version))",
     "create_settings": "CREATE TABLE IF NOT EXISTS settings (kind TEXT NOT NULL, id TEXT NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(kind,id))",
+    "create_events": "CREATE TABLE IF NOT EXISTS events (run_id TEXT NOT NULL, seq INTEGER NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(run_id,seq))",
+    "last_event": "SELECT max(seq) FROM events WHERE run_id=?",
+    "insert_event": "INSERT INTO events VALUES (?,?,?) ON CONFLICT DO NOTHING",
+    "events": "SELECT payload FROM events WHERE run_id=? ORDER BY seq",
+    "events_after": "SELECT payload FROM events WHERE run_id=? AND seq>? ORDER BY seq",
+    "all_events": "SELECT run_id,payload FROM events ORDER BY run_id,seq",
     "upsert_run": "INSERT INTO runs (id,payload,updated) VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,updated=excluded.updated",
     "insert_entity": "INSERT INTO entity_versions VALUES (?,?,?,?,?) ON CONFLICT DO NOTHING",
     "insert_relation": "INSERT INTO relations VALUES (?,?,?) ON CONFLICT DO NOTHING",
@@ -103,7 +109,7 @@ class Store:
         else:
             self.conn = sqlite3.connect(str(self.root / "demo.sqlite3"), check_same_thread=False, isolation_level=None)
             self.conn.execute("PRAGMA journal_mode=WAL")
-        for name in ("create_runs", "create_jobs", "create_entity_versions", "create_relations", "create_settings"):
+        for name in ("create_runs", "create_jobs", "create_entity_versions", "create_relations", "create_settings", "create_events"):
             self._execute(self.sql[name])
 
     def _connect(self):
@@ -156,6 +162,8 @@ class Store:
                     self.transacting = False
 
     def save(self, run: dict):
+        """Write the run; its events are appended to their own table, so a run with thousands of them is not rewritten
+        whole on every event, and an event once stored is never rewritten."""
         run["updated_at"] = now()
         payload = json.dumps(run, ensure_ascii=False)
         if _SURROGATE.search(payload):
@@ -163,9 +171,13 @@ class Store:
             clean = scrub(run)
             run.clear()
             run.update(clean)
-            payload = json.dumps(run, ensure_ascii=False)
+        events = run.get("events") or []
+        payload = json.dumps({key: value for key, value in run.items() if key != "events"}, ensure_ascii=False)
         with self.transaction():
             self._execute(self.sql["upsert_run"], (run["id"], payload, run["updated_at"]))
+            stored = self._execute(self.sql["last_event"], (run["id"],)).fetchone()[0] or 0
+            for event in events[stored:]:
+                self._execute(self.sql["insert_event"], (run["id"], event["seq"], json.dumps(event, ensure_ascii=False)))
             from .traceability import entities_and_links
             entities, links = entities_and_links(run)
             for item in entities:
@@ -191,20 +203,54 @@ class Store:
         with self.lock:
             return [json.loads(r[0]) for r in self._execute(self.sql["settings"],(kind,)).fetchall()]
 
+    @staticmethod
+    def _assemble(run: dict, events: list[dict]) -> dict:
+        """A run as its callers know it: the stored body with its events in sequence. A row written before events had
+        their own table still carries them in its body; those are read until the next save moves them."""
+        if events or "events" not in run:
+            run["events"] = events
+        return run
+
     def get(self, run_id: str) -> dict:
+        with self.lock:
+            row = self._execute(self.sql["run"], (run_id,)).fetchone()
+            if not row:
+                raise RunNotFound(run_id)
+            events = [json.loads(r[0]) for r in self._execute(self.sql["events"], (run_id,)).fetchall()]
+        return self._assemble(json.loads(row[0]), events)
+
+    def events_after(self, run_id: str, seq: int) -> list[dict]:
+        """The run's events with a sequence number above seq, in order: what a progress stream still has to send."""
+        with self.lock:
+            if not self._execute(self.sql["run"], (run_id,)).fetchone():
+                raise RunNotFound(run_id)
+            rows = self._execute(self.sql["events_after"], (run_id, seq)).fetchall()
+        return [json.loads(r[0]) for r in rows]
+
+    def list(self) -> list[dict]:
+        """Every run, whole; the engine's startup recovery saves them back, so their events come along."""
+        with self.lock:
+            rows = self._execute(self.sql["runs"]).fetchall()
+            events = {}
+            for run_id, payload in self._execute(self.sql["all_events"]).fetchall():
+                events.setdefault(run_id, []).append(json.loads(payload))
+        runs = [json.loads(r[0]) for r in rows]
+        return [self._assemble(run, events.get(run["id"], [])) for run in runs]
+
+    def summary(self, run_id: str) -> dict:
+        """One run's inventory entry: its status and sizes, without its events or records."""
         with self.lock:
             row = self._execute(self.sql["run"], (run_id,)).fetchone()
         if not row:
             raise RunNotFound(run_id)
-        return json.loads(row[0])
-
-    def list(self) -> list[dict]:
-        with self.lock:
-            return [json.loads(r[0]) for r in self._execute(self.sql["runs"]).fetchall()]
+        run = json.loads(row[0])
+        return {key: run.get(key) for key in SUMMARY_FIELDS}
 
     def summaries(self) -> list[dict]:
         """The inventory of runs: what a list shows, without events, findings, cases or evidence records."""
-        return [{key: run.get(key) for key in SUMMARY_FIELDS} for run in self.list()]
+        with self.lock:
+            rows = self._execute(self.sql["runs"]).fetchall()
+        return [{key: run.get(key) for key in SUMMARY_FIELDS} for run in (json.loads(r[0]) for r in rows)]
 
     def job(self, run_id: str, case: dict) -> str:
         job_id = str(uuid.uuid4())

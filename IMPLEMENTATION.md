@@ -41,7 +41,7 @@ Execution（執行）狀態：pass/fail/inconclusive/blocked/execution_error/out
 - tool_runners：固定的 input／argv 編譯 → 隔離執行 → 有界的 artifact 收集 → 正規化的 observations → 以 broker 證據為本的 oracle。不允許任意的 shell／腳本。
 - fixture_protocol：經審查且具雜湊的 reset/setup/cleanup、session 擷取、由管理員註冊的通用 profile；內建者皆為合成。
 - effect_collector：獨立排序的事件與 sink 收執，以僅在 collector 驗證期間存在的 per-call 金鑰進行 HMAC 綁定（儲存的 bundle 是證據記錄，而非可重新驗證的簽章）；目標的 JSON 無法賦予來源證明（provenance）。
-- store/traceability：正式環境用 PostgreSQL、示範用 SQLite、atomic 的 job/run 提交、版本化的實體／證據連結。
+- store/traceability：正式環境用 PostgreSQL、示範用 SQLite、atomic 的 job/run 提交、版本化的實體／證據連結；事件存在自己的 append 表（每次存檔只寫入尚未儲存的事件，run 本體不含事件），進度串流只讀游標之後的事件，`/runs` 清單只讀摘要。
 - catalog：釘選的標準 ID、版本／來源檢查；類別歸屬不等於測試涵蓋或認證。
 - settings：後端程序的 VIBEAUDIT_* 設定在同一處讀取並檢查（啟動權杖的格式與強度、資料目錄、資料庫 URL、控制台 origins 正規化為瀏覽器送出的形式、來源根目錄、目錄與設定檔路徑）；憑證 reference 不是設定，仍由 adapters／providers／supervisor 依 run 或 profile 給的名稱各自讀取。
 - benchmark：七個比較臂（arm）、共用的預算／工具證據、獨立的 ground truth 與不完整項目的計量。合成 run 僅驗證管線本身。
@@ -100,7 +100,7 @@ Execution state: pass/fail/inconclusive/blocked/execution_error/outcome_unknown.
 - tool_runners: fixed input/argv compilation → isolated execution → bounded artifact collection → normalized observations → oracle over broker evidence. No arbitrary shell/scripts.
 - fixture_protocol: hashed reviewed reset/setup/cleanup, session capture, administrator-registered generic profiles; built-ins are synthetic.
 - effect_collector: independent sequenced events and sink receipts, HMAC-bound under a per-call key that exists only while the collector verifies them (stored bundles are evidence records, not re-verifiable signatures); target JSON cannot confer provenance.
-- store/traceability: PostgreSQL production, SQLite demo, atomic job/run commits, versioned entities/evidence links.
+- store/traceability: PostgreSQL production, SQLite demo, atomic job/run commits, versioned entities/evidence links; events live in their own append-only table (a save writes only the events not yet stored and the run body carries none), the progress stream reads only the events after its cursor, and the `/runs` inventory reads summaries alone.
 - catalog: pinned canonical IDs, version/source checks; category membership is not test coverage or certification.
 - settings: the backend process's VIBEAUDIT_* settings, read and checked in one place (startup token format and strength, data directory, database URL, console origins normalised to the form a browser sends, source roots, catalog and configuration paths); credential references are not settings and stay with adapters/providers/the supervisor, read by the names a run or profile gives.
 - benchmark: seven comparative arms, common budgets/tool evidence, independent ground truth and incomplete accounting. Synthetic runs verify plumbing only.

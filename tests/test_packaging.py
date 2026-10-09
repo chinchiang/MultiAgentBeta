@@ -132,7 +132,7 @@ def test_worker_dockerfile_refuses_a_base_image_that_is_not_digest_pinned():
         pytest.skip("sh/grep is not available")
     # 直接執行 Dockerfile 中的檢查本身（而不是另寫一份規則），BASE_IMAGE 以環境變數提供
     accepts = lambda value: subprocess.run(["sh", "-c", guard], env={"PATH": "/usr/bin:/bin", "BASE_IMAGE": value}).returncode == 0
-    assert accepts(DIGEST)
+    assert accepts(DIGEST) and accepts("public.ecr.aws/docker/library/" + DIGEST)
     assert not any(accepts(value) for value in NOT_PINNED)
 
 
