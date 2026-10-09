@@ -145,7 +145,7 @@ MultiAgentBeta/
 ├── docs/                          # ARCHITECTURE、LINUX_SETUP、DOCKER_INTEGRATION_TESTING、VALIDATION、DELIVERY、SOURCES、
 │                                  #   VIBESEC_ADVISORIES、threat-model.yaml、run-input.schema.json、驗證收據、截圖、history/
 ├── scripts/                       # setup／start-local、verify、provision-runtime／offline-db、package-release、hash-lock、
-│                                  #   redact-receipts、summarize-validation、refresh-catalog
+│                                  #   redact-receipts、summarize-validation、refresh-catalog、render-sample-report
 ├── .github/workflows/ci.yml       # backend（pytest ＋ PostgreSQL）與 frontend（typecheck、check:i18n、建置一致性、清單）
 ├── .claude/                       # 雲端 session 的 SessionStart hook（不進發佈檔）
 ├── CLAUDE.md                      # 開發指引（不進發佈檔）
@@ -179,7 +179,7 @@ MultiAgentBeta/
 - [交付對照](docs/DELIVERY.md)／[驗證紀錄](docs/VALIDATION.md)
 - [模型減偏比較設計](benchmarks/README.md)
 - [來源與授權](docs/SOURCES.md)／[NOTICE](NOTICE)
-- [合成範例報告](docs/sample-report.md)
+- [合成範例報告（中英雙語）](docs/sample-report.md)
 
 ```powershell
 $env:PYTHONPATH = 'backend'
@@ -338,7 +338,7 @@ MultiAgentBeta/
 ├── docs/                          # ARCHITECTURE, LINUX_SETUP, DOCKER_INTEGRATION_TESTING, VALIDATION, DELIVERY, SOURCES,
 │                                  #   VIBESEC_ADVISORIES, threat-model.yaml, run-input.schema.json, receipts, screenshots, history/
 ├── scripts/                       # setup/start-local, verify, provision-runtime/offline-db, package-release, hash-lock,
-│                                  #   redact-receipts, summarize-validation, refresh-catalog
+│                                  #   redact-receipts, summarize-validation, refresh-catalog, render-sample-report
 ├── .github/workflows/ci.yml       # backend (pytest + PostgreSQL) and frontend (typecheck, check:i18n, build parity, manifest)
 ├── .claude/                       # SessionStart hook for cloud sessions (excluded from releases)
 ├── CLAUDE.md                      # development guide (excluded from releases)
@@ -372,7 +372,7 @@ Containers, the database, and control-process administrators are trust boundarie
 - [Delivery comparison](docs/DELIVERY.md) / [Validation log](docs/VALIDATION.md)
 - [Bias-reduction comparison design](benchmarks/README.md)
 - [Sources and license](docs/SOURCES.md) / [NOTICE](NOTICE)
-- [Synthetic sample report](docs/sample-report.md)
+- [Synthetic sample report (Chinese and English)](docs/sample-report.md)
 
 ```powershell
 $env:PYTHONPATH = 'backend'
