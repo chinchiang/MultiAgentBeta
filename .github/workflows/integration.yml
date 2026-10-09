@@ -21,18 +21,6 @@ jobs:
   docker:
     runs-on: ubuntu-24.04
     timeout-minutes: 75
-    services:
-      postgres:
-        # postgres:18.6, the same digest as ci.yml.
-        image: postgres@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722
-        env:
-          POSTGRES_USER: vibeaudit_test
-          POSTGRES_PASSWORD: ci-only-throwaway
-          POSTGRES_DB: vibeaudit_test
-        ports: ["5432:5432"]
-        options: >-
-          --health-cmd "pg_isready -U vibeaudit_test -d vibeaudit_test"
-          --health-interval 5s --health-timeout 3s --health-retries 20
     env:
       PYTHONPATH: backend
       VIBEAUDIT_TEST_DATABASE_URL: postgresql://vibeaudit_test:ci-only-throwaway@127.0.0.1:5432/vibeaudit_test
@@ -52,6 +40,26 @@ jobs:
         with:
           node-version: "24"
       - run: python -m pip install --require-hashes -r requirements.lock.txt
+      # The supervisor calls the Docker Engine API at the fixed version v1.52 (docs/LINUX_SETUP.md), which the
+      # runner's preinstalled Docker may predate. Upgrading restarts the daemon, so PostgreSQL starts afterwards.
+      - name: Docker Engine API 1.52 or newer
+        run: |
+          api="$(docker version --format '{{.Server.APIVersion}}')"
+          echo "Docker Engine API $api"
+          if [ "$(printf '%s\n' 1.52 "$api" | sort -V | head -n1)" != 1.52 ]; then
+            sudo install -m 0755 -d /etc/apt/keyrings
+            sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+            echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | sudo tee /etc/apt/sources.list.d/docker.list
+            sudo apt-get update
+            sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin
+            sudo systemctl restart docker
+          fi
+          docker version
+      - name: PostgreSQL 18.6 (the same digest as ci.yml)
+        run: |
+          docker run -d --name va-postgres -p 127.0.0.1:5432:5432 -e POSTGRES_USER=vibeaudit_test -e POSTGRES_PASSWORD=ci-only-throwaway -e POSTGRES_DB=vibeaudit_test postgres@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722
+          for _ in $(seq 60); do docker exec va-postgres pg_isready -U vibeaudit_test -d vibeaudit_test -h 127.0.0.1 && exit 0; sleep 2; done
+          docker logs va-postgres; exit 1
       - name: Build and pull the worker, scanner and tool images (docs/LINUX_SETUP.md section 3)
         run: |
           docker build --build-arg BASE_IMAGE=python@sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b94cd8ebbe06a9 -t vibeaudit-worker:test deploy/worker
