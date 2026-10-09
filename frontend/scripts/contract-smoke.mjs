@@ -101,11 +101,20 @@ const messages = compile(await readFile(resolve(root, 'src/messages.ts'), 'utf8'
 await messages.loadMessages();
 assert.equal(messages.zh('Oracle kind is not implemented.'), '尚未實作這種 oracle。', 'The console must read the backend message table.');
 const extensions = compile(await readFile(resolve(root, 'src/extensions.tsx'), 'utf8'), 'extensions.tsx', { './api': api, './extensions.css': {}, './i18n': i18n, './messages': messages });
+// The screens, each compiled with the modules it imports, as the bundle links them.
+const ui = compile(await readFile(resolve(root, 'src/ui.tsx'), 'utf8'), 'ui.tsx', { './i18n': i18n });
+const screens = { './api': api, './extensions': extensions, './i18n': i18n, './messages': messages, './ui': ui };
+const runDetail = compile(await readFile(resolve(root, 'src/run-detail.tsx'), 'utf8'), 'run-detail.tsx', screens);
+const createForm = compile(await readFile(resolve(root, 'src/create-form.tsx'), 'utf8'), 'create-form.tsx', screens);
+const capabilitiesView = compile(await readFile(resolve(root, 'src/capabilities.tsx'), 'utf8'), 'capabilities.tsx', screens);
+const components = { ...ui, ...runDetail, ...createForm, ...capabilitiesView };
 const source = await readFile(resolve(root, 'src/App.tsx'), 'utf8');
 // Vite statically replaces import.meta.env.* at build time (false for a
 // production bundle); transpileModule cannot transform import.meta, so the
-// smoke applies the same substitution before compiling.
-const components = compile(source.replace(/import\.meta\.env\.\w+/g, 'false') + '\nexport { RunDetail, CreateForm, CapabilitiesView, SafeText };', 'App.tsx', { './api': api, './extensions': extensions, './i18n': i18n, './messages': messages });
+// smoke applies the same substitution before compiling. The shell is compiled
+// so that a broken import there fails the smoke too.
+const app = compile(source.replace(/import\.meta\.env\.\w+/g, 'false'), 'App.tsx', { ...screens, './capabilities': capabilitiesView, './create-form': createForm, './run-detail': runDetail });
+assert.equal(typeof app.default, 'function', 'App.tsx must export the shell component.');
 const noop = () => {};
 const render = (component, props) => renderToStaticMarkup(React.createElement(component, props));
 const tabs = ['overview', 'trace', 'findings', 'evidence', 'activity'];

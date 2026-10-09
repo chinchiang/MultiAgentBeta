@@ -1,11 +1,12 @@
 /** Every Chinese string the console shows must be the Chinese half of t('中文','English') or of a labels() pair. */
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const FILES = ['src/App.tsx', 'src/extensions.tsx', 'src/api.ts', 'src/i18n.ts', 'src/main.tsx', 'src/messages.ts', 'src/types.ts'];
+// Every source module of the console; a new screen is checked as soon as it exists.
+const FILES = (await readdir(resolve(root, 'src'))).filter(name => /\.tsx?$/.test(name)).sort().map(name => `src/${name}`);
 const CJK = /[一-鿿]/;
 // Chinese punctuation (for example the full-width parenthesis in t('）',')')) also marks the Chinese half.
 const CHINESE = /[一-鿿　-〿＀-￯]/;
