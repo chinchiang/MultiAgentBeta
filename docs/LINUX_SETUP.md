@@ -38,7 +38,7 @@ export VIBEAUDIT_SOURCE_ROOTS='/srv/authorized-test-sources'
 ## 3. 預建 worker 與工具
 
 ```sh
-docker build --build-arg BASE_IMAGE=python@sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b94cd8ebbe06a9 -t vibeaudit-worker:test deploy/worker
+docker build --build-arg BASE_IMAGE=public.ecr.aws/docker/library/python@sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b94cd8ebbe06a9 -t vibeaudit-worker:test deploy/worker
 docker build -f deploy/scanners/Dockerfile.gitleaks -t vibeaudit-gitleaks:8.30.1 deploy/scanners
 docker build -f deploy/scanners/Dockerfile.osv -t vibeaudit-osv:2.3.5 deploy/scanners
 docker build -f deploy/worker/Dockerfile.tools.locked -t vibeaudit-tools:integration deploy/worker
@@ -46,7 +46,7 @@ docker pull semgrep/semgrep:1.153.0
 docker pull ghcr.io/zaproxy/zaproxy:2.17.0
 ```
 
-worker 的 `BASE_IMAGE` 必須是單行的 `<name>@sha256:<64 hex>`，否則建置失敗；provision-runtime.py 也不記錄沒有 digest 基礎映像標籤（`org.opencontainers.image.base.name`）的 worker。這個標籤是映像自己的宣告，只用來擋下誤用 tag，不是來源證明。映像標籤只用於 provisioning。下個步驟將本地實際 image ID 寫進設定；runner 只接受 immutable SHA256。工具映像的確切 Python/npm 鎖定檔在 deploy/worker/locks；Dockerfile.tools 保留原始 provisioning 配方，Dockerfile.tools.locked 使用捕獲的完整相依套件鎖定檔。固定 image ID 與驗收版本另存於 docs/runtime-images.json。跨架構或重建後必須重新跑工具契約，不能假設 image ID 相同。
+基底映像以 `public.ecr.aws/docker/library/` 這個 Docker 官方映像的 ECR Public 鏡像指定（digest 與 Docker Hub 相同，但沒有匿名 pull 速率限制）；只有 semgrep 只在 Docker Hub 發佈。worker 的 `BASE_IMAGE` 必須是單行的 `<name>@sha256:<64 hex>`，否則建置失敗；provision-runtime.py 也不記錄沒有 digest 基礎映像標籤（`org.opencontainers.image.base.name`）的 worker。這個標籤是映像自己的宣告，只用來擋下誤用 tag，不是來源證明。映像標籤只用於 provisioning。下個步驟將本地實際 image ID 寫進設定；runner 只接受 immutable SHA256。工具映像的確切 Python/npm 鎖定檔在 deploy/worker/locks；Dockerfile.tools 保留原始 provisioning 配方，Dockerfile.tools.locked 使用捕獲的完整相依套件鎖定檔。固定 image ID 與驗收版本另存於 docs/runtime-images.json。跨架構或重建後必須重新跑工具契約，不能假設 image ID 相同。
 
 ## 4. 離線漏洞資料與 runtime profile
 
@@ -123,7 +123,7 @@ The USER/PASSWORD above are placeholders. Validation uses a local peer role in W
 ## 3. Pre-build the worker and tools
 
 ```sh
-docker build --build-arg BASE_IMAGE=python@sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b94cd8ebbe06a9 -t vibeaudit-worker:test deploy/worker
+docker build --build-arg BASE_IMAGE=public.ecr.aws/docker/library/python@sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b94cd8ebbe06a9 -t vibeaudit-worker:test deploy/worker
 docker build -f deploy/scanners/Dockerfile.gitleaks -t vibeaudit-gitleaks:8.30.1 deploy/scanners
 docker build -f deploy/scanners/Dockerfile.osv -t vibeaudit-osv:2.3.5 deploy/scanners
 docker build -f deploy/worker/Dockerfile.tools.locked -t vibeaudit-tools:integration deploy/worker
@@ -131,7 +131,7 @@ docker pull semgrep/semgrep:1.153.0
 docker pull ghcr.io/zaproxy/zaproxy:2.17.0
 ```
 
-The worker's `BASE_IMAGE` must be a single-line `<name>@sha256:<64 hex>` or the build fails; provision-runtime.py also refuses a worker without a digest base-image label (`org.opencontainers.image.base.name`). The label is the image's own claim; it catches an accidental tag and is not proof of provenance. Image tags are used for provisioning only. The next step writes the actual local image IDs into the configuration; the runner accepts only immutable SHA256 values. The exact Python/npm lockfiles for the tool images are in deploy/worker/locks; Dockerfile.tools keeps the original provisioning recipe, while Dockerfile.tools.locked uses the captured full dependency lockfiles. The pinned image IDs and validated versions are also stored in docs/runtime-images.json. After a cross-architecture build or any rebuild you must re-run the tool contracts; never assume the image IDs are unchanged.
+Base images are named through `public.ecr.aws/docker/library/`, the ECR Public mirror of the Docker official images (the same digests as Docker Hub, without its anonymous pull rate limit); only semgrep is published on Docker Hub alone. The worker's `BASE_IMAGE` must be a single-line `<name>@sha256:<64 hex>` or the build fails; provision-runtime.py also refuses a worker without a digest base-image label (`org.opencontainers.image.base.name`). The label is the image's own claim; it catches an accidental tag and is not proof of provenance. Image tags are used for provisioning only. The next step writes the actual local image IDs into the configuration; the runner accepts only immutable SHA256 values. The exact Python/npm lockfiles for the tool images are in deploy/worker/locks; Dockerfile.tools keeps the original provisioning recipe, while Dockerfile.tools.locked uses the captured full dependency lockfiles. The pinned image IDs and validated versions are also stored in docs/runtime-images.json. After a cross-architecture build or any rebuild you must re-run the tool contracts; never assume the image IDs are unchanged.
 
 ## 4. Offline vulnerability data and the runtime profile
 
