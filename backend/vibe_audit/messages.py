@@ -415,8 +415,8 @@ def zh(text):
         if match:
             # A group that is itself a known message or status (for example a wrapped reason) is shown in Chinese too.
             return template.format(*(_part(group) for group in match.groups()))
-    # "<label>: <message>": a known label or a known message on either side of the first colon.
+    # "<label>: <message>": a known label, or a known message or status, on either side of the first colon.
     label, colon, rest = text.partition(": ")
-    if colon and (label in ZH or rest in ZH or rest in STATUS_ZH or zh(rest) is not None):
+    if colon and (label in ZH or rest in STATUS_ZH or zh(rest) is not None):
         return f"{ZH.get(label, label)}：{_part(rest)}"
     return None

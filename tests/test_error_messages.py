@@ -127,6 +127,14 @@ def test_dynamic_messages_keep_their_values():
     assert zh("A message from a target") is None and zh(None) is None
 
 
+def test_label_and_message_joins_read_each_side_on_its_own():
+    # The label, the status and the message each decide on their own; the split is at the first colon.
+    assert zh("C-1: pass") == "C-1：未觀測到違規"
+    assert zh("Note: Model refused the request") == "Note：模型拒絕了請求"
+    assert zh("Excluded directory: x: y") == "排除的目錄：x: y"
+    assert zh("Note: whatever") is None and zh("pass") is None
+
+
 def test_api_errors_carry_chinese_detail(tmp_path):
     client = TestClient(create_app(data_dir=tmp_path, testing=True))
     blocked = client.get("/api/runs")

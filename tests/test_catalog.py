@@ -62,3 +62,13 @@ def test_manifest_records_pins_attribution_and_two_source_checks():
         assert collection["verification"]
         assert any(len(source.get("commit") or "") == 40 for source in collection["sources"])
         assert all(len(source["sha256"]) == 64 for source in collection["sources"])
+
+
+def test_entries_filter_by_standard_and_are_copies():
+    registry = load_catalogs()
+    counts = {c["standard"]: c["count"] for c in registry.manifest()["collections"]}
+    llm = registry.entries("LLM")
+    assert len(llm) == counts["LLM"] and {entry["standard"] for entry in llm} == {"LLM"}
+    assert len(registry.entries()) == sum(counts.values())
+    llm[0]["title"] = "corrupted"
+    assert next(e for e in registry.entries("LLM") if e["id"] == llm[0]["id"])["title"] != "corrupted"

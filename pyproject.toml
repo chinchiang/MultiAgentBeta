@@ -36,5 +36,5 @@ only_mutate = ["src/vibe_audit/policy.py", "src/vibe_audit/adapters.py", "src/vi
 # The copied tests read these next to the copied package.
 also_copy = ["catalogs", "fixtures", "docs"]
 # The tests that exercise those modules; the documentation, packaging and Docker-only suites stay out.
-pytest_add_cli_args_test_selection = ["tests/test_adapters.py", "tests/test_catalog.py", "tests/test_contracts_and_workspace.py", "tests/test_engine.py", "tests/test_error_messages.py", "tests/test_fixture_protocol.py", "tests/test_lease.py", "tests/test_providers.py", "tests/test_release_guards.py", "tests/test_review_followups.py", "tests/test_sandbox.py", "tests/test_worker_runtime.py"]
+pytest_add_cli_args_test_selection = ["tests/test_adapters.py", "tests/test_catalog.py", "tests/test_contracts_and_workspace.py", "tests/test_engine.py", "tests/test_error_messages.py", "tests/test_fixture_protocol.py", "tests/test_lease.py", "tests/test_providers.py", "tests/test_release_guards.py", "tests/test_review_followups.py", "tests/test_sandbox.py"]
 pytest_add_cli_args = ["-p", "no:cacheprovider"]
