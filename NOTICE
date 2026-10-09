@@ -1,4 +1,29 @@
 Vibe Audit 0.2.0
+核心原始碼係依 Apache License 2.0 提供。
+
+本散布版本整合了 requirements.lock.txt 與 frontend/package-lock.json 所列的
+第三方相依套件。各相依套件自身的授權條款仍持續適用。隨編譯後瀏覽器 bundle
+一併納入之前端執行階段／建置程式碼，其授權詳見 frontend/THIRD-PARTY-NOTICES.txt。
+本專案未捆綁 Semgrep 維護的受限規則包、CodeQL 二進位檔、模型權重，
+亦未捆綁以 AGPL 授權的 Shannon 原始碼。範例規則為本專案原有的測試素材。
+
+cl100k_base 分詞器資料重新散布時已標示出處 OpenAI/tiktoken。
+來源：https://github.com/openai/tiktoken (MIT)。
+資產：https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken
+tiktoken 授權條款見 backend/vibe_audit/tokenizers/LICENSE.tiktoken。
+
+OWASP 名稱與參照編號僅用於識別外部標準，不代表背書、認證，
+亦不代表對該標準的完整涵蓋。捆綁的標準目錄與來源快照保留其自身授權
+（包括適用時的 CC BY-SA）；詳見 catalogs/manifest.json 及 catalogs/sources
+內的授權檔案。轉換後的 JSON 保留了出處歸屬、來源雜湊與來源沿革資訊。
+這些素材並未改以核心 Apache 授權重新授權。
+
+外部工具映像另行供應，並未捆綁於原始碼封存檔中。擷取的相依鎖定檔位於
+deploy/worker/locks；各相依套件保留其自身授權。Semgrep/Gitleaks/OSV/ZAP/
+Schemathesis/Playwright/promptfoo/PyRIT 的版本與映像 ID 記錄於
+docs/runtime-images.json。
+---
+Vibe Audit 0.2.0
 Core source is provided under Apache License 2.0.
 
 This distribution integrates third-party dependencies listed in requirements.lock.txt
@@ -23,28 +48,3 @@ External tool images are provisioned separately and are not bundled in the sourc
 archive. Captured dependency locks are in deploy/worker/locks; each dependency
 retains its own license. Semgrep/Gitleaks/OSV/ZAP/Schemathesis/Playwright/promptfoo/
 PyRIT versions and image IDs are recorded in docs/runtime-images.json.
----
-Vibe Audit 0.2.0
-核心原始碼係依 Apache License 2.0 提供。
-
-本散布版本整合了 requirements.lock.txt 與 frontend/package-lock.json 所列的
-第三方相依套件。各相依套件自身的授權條款仍持續適用。隨編譯後瀏覽器 bundle
-一併納入之前端執行階段／建置程式碼，其授權詳見 frontend/THIRD-PARTY-NOTICES.txt。
-本專案未捆綁 Semgrep 維護的受限規則包、CodeQL 二進位檔、模型權重，
-亦未捆綁以 AGPL 授權的 Shannon 原始碼。範例規則為本專案原有的測試素材。
-
-cl100k_base 分詞器資料重新散布時已標示出處 OpenAI/tiktoken。
-來源：https://github.com/openai/tiktoken (MIT)。
-資產：https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken
-tiktoken 授權條款見 backend/vibe_audit/tokenizers/LICENSE.tiktoken。
-
-OWASP 名稱與參照編號僅用於識別外部標準，不代表背書、認證，
-亦不代表對該標準的完整涵蓋。捆綁的標準目錄與來源快照保留其自身授權
-（包括適用時的 CC BY-SA）；詳見 catalogs/manifest.json 及 catalogs/sources
-內的授權檔案。轉換後的 JSON 保留了出處歸屬、來源雜湊與來源沿革資訊。
-這些素材並未改以核心 Apache 授權重新授權。
-
-外部工具映像另行供應，並未捆綁於原始碼封存檔中。擷取的相依鎖定檔位於
-deploy/worker/locks；各相依套件保留其自身授權。Semgrep/Gitleaks/OSV/ZAP/
-Schemathesis/Playwright/promptfoo/PyRIT 的版本與映像 ID 記錄於
-docs/runtime-images.json。
