@@ -27,3 +27,14 @@ vibe_audit = ["tokenizers/*"]
 pythonpath = ["backend"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+[tool.mutmut]
+# Mutation testing of the deterministic gates and parsers (scripts/mutation-test.py, Linux only). The script links
+# src -> backend for the run: mutmut maps src/<package>/<module>.py to the <package>.<module> the tests import.
+source_paths = ["src/vibe_audit"]
+only_mutate = ["src/vibe_audit/policy.py", "src/vibe_audit/adapters.py", "src/vibe_audit/catalog.py", "src/vibe_audit/lease.py", "src/vibe_audit/snapshot.py", "src/vibe_audit/messages.py"]
+# The copied tests read these next to the copied package.
+also_copy = ["catalogs", "fixtures", "docs"]
+# The tests that exercise those modules; the documentation, packaging and Docker-only suites stay out.
+pytest_add_cli_args_test_selection = ["tests/test_adapters.py", "tests/test_catalog.py", "tests/test_contracts_and_workspace.py", "tests/test_engine.py", "tests/test_error_messages.py", "tests/test_fixture_protocol.py", "tests/test_lease.py", "tests/test_providers.py", "tests/test_release_guards.py", "tests/test_review_followups.py", "tests/test_sandbox.py", "tests/test_worker_runtime.py"]
+pytest_add_cli_args = ["-p", "no:cacheprovider"]
