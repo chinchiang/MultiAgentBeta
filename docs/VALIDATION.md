@@ -22,7 +22,7 @@
 | Schemathesis header 修正 | 2 passed、25 deselected | schemathesis-header-regression.xml |
 | 三種離線掃描器的已知問題偵測 | 3 passed | scanner-integration-release.xml |
 | 前端型別檢查及 production build（2026-10-05） | 通過，32 modules；以鎖定依賴重建，產物與 frontend/dist 逐位元組相同 | frontend/dist |
-| Edge 真實瀏覽器（2026-10-05，現行程式碼） | Edge 154 headless：三種匯出、保存專案、追溯、建立複測；0 page errors、無水平溢位 | browser-validation.json |
+| Chromium 真實瀏覽器（2026-10-09，現行程式碼） | Playwright 1.49.1 驅動 Chromium 141 headless：三種匯出、保存專案、追溯、建立複測、中英介面切換；0 page errors、無水平溢位。取代 2026-10-05 的 Edge 154 收據（保留在 git 歷史） | browser-validation.json |
 | 真 FastAPI + React SSR/API | 三份合成審查、fail/pass/inconclusive、七份證據、五分頁、三種匯出及 HTML 跳脫；2026-10-05 以現行程式碼重跑通過（含證據裁決控制台），另確認只帶 session cookie 時 /api/session 與 /api/runs 拒絕且不洩漏 CSRF token，並以 Node 驗證 fetch 版 SSE 與下載 | api-ssr-validation.json |
 | Python 相依一致性 | pip check 通過；鎖定檔附 hash 後（2026-10-03；2026-10-04 重跑），以 `--require-hashes` 在全新 venv 安裝通過：Linux Python 3.14.4、Windows Python 3.13.15 與 Windows Python 3.12.10（2026-10-05）實際裝上的套件與鎖定檔逐項相同，Linux 那個 venv 不含 Docker 的測試為 350 passed、21 skipped | requirements.lock.txt |
 
@@ -125,7 +125,7 @@ The test groups overlap one another; **do not add the rows together and treat th
 | Schemathesis header fix | 2 passed, 25 deselected | schemathesis-header-regression.xml |
 | Known-issue detection by the three offline scanners | 3 passed | scanner-integration-release.xml |
 | Frontend type check and production build (2026-10-05) | Passed, 32 modules; rebuilt with the locked dependencies, the artifacts are byte-identical to frontend/dist | frontend/dist |
-| Edge real browser (2026-10-05, current code) | Edge 154 headless: three export types, saving a project, traceability, creating a retest; 0 page errors, no horizontal overflow | browser-validation.json |
+| Chromium real browser (2026-10-09, current code) | Playwright 1.49.1 driving Chromium 141 headless: three export types, saving a project, traceability, creating a retest, switching the interface between Chinese and English; 0 page errors, no horizontal overflow. Replaces the 2026-10-05 Edge 154 receipt (kept in git history) | browser-validation.json |
 | Real FastAPI + React SSR/API | Three synthetic reviews, fail/pass/inconclusive, seven pieces of evidence, five tabs, three export types and HTML escaping; re-run and passed on 2026-10-05 against the current code (including the evidence adjudication console), also confirming that with only a session cookie /api/session and /api/runs are rejected without leaking the CSRF token, and fetch-based SSE and download were verified with Node | api-ssr-validation.json |
 | Python dependency consistency | pip check passed; after the lockfile carried hashes (2026-10-03; re-run 2026-10-04), installation with `--require-hashes` into fresh venvs passed: the packages actually installed on Linux Python 3.14.4, Windows Python 3.13.15 and Windows Python 3.12.10 (2026-10-05) match the lockfile item by item, and that Linux venv, excluding Docker, tested 350 passed, 21 skipped | requirements.lock.txt |
 

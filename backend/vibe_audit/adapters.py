@@ -761,8 +761,11 @@ async def execute_case(manifest: dict, case: dict, *, cancel_event, request_hook
 def tool_capabilities() -> list[dict]:
     tools = ["semgrep", "osv", "gitleaks", "zap", "schemathesis", "playwright", "promptfoo", "pyrit"]
     return [{"id": name, "available": False, "status": "implemented_requires_runtime", "implemented": True, "cli_detected": bool(shutil.which(name)),
-             "detail": "Adapter 已實作；尚未配置可驗證的 Linux 隔離執行環境與固定工具映像。"} for name in tools] + [
+             "detail": "Adapter 已實作；尚未配置可驗證的 Linux 隔離執行環境與固定工具映像。",
+             "detail_en": "Adapter implemented; no verifiable isolated Linux runtime or pinned tool image is configured yet."} for name in tools] + [
         {"id": "synthetic_demo", "available": True, "status": "synthetic_only", "implemented": True,
-         "detail": "可執行本地合成流程；不會呼叫真實模型或驗證其偵測品質。"},
+         "detail": "可執行本地合成流程；不會呼叫真實模型或驗證其偵測品質。",
+         "detail_en": "Runs the local synthetic flow; it calls no real model and does not verify detection quality."},
         {"id": "tool_effect_collector", "available": False, "status": "target_binding_required", "implemented": True,
-         "detail": "獨立事件及副作用收集器已實作；實際目標必須配置可信 binding，無觀測時不判定通過。"}]
+         "detail": "獨立事件及副作用收集器已實作；實際目標必須配置可信 binding，無觀測時不判定通過。",
+         "detail_en": "Independent event and side-effect collector implemented; a real target needs a trusted binding, and nothing passes without an observation."}]

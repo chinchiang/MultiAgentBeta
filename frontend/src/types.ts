@@ -49,5 +49,5 @@ export interface Run {
   artifacts: unknown[]; error: unknown; workers_pending_cleanup?: boolean; usage_unknown?: boolean; deployment_changed?: boolean;
   gate_receipts?: Record<string,string>; case_approval?: {receipt:string; actor:string; approved_at:string; evidence_id:string};
 }
-export interface Capabilities { tools: {id:string;available:boolean;status:string;detail:string}[]; runtime: Record<string,unknown>; limitations: string[] }
-export interface Session { csrf_token: string; mode: string; limitations: string[] }
+export interface Capabilities { tools: {id:string;available:boolean;status:string;detail:string;detail_en?:string}[]; runtime: Record<string,unknown>; limitations: string[]; limitations_zh?: string[] }
+export interface Session { csrf_token: string; mode: string; limitations: string[]; limitations_zh?: string[] }

@@ -387,3 +387,11 @@ def test_store_refuses_a_non_utf8_postgres_database(tmp_path,monkeypatch,server,
     with pytest.raises(ValueError,match="UTF8"):
         Store(tmp_path/"data","postgresql://synthetic/db")
     assert closed==[True]
+
+
+def test_limitations_come_in_chinese_and_english_in_the_same_order():
+    # The console shows limitations_zh in its Chinese interface and limitations in English, matched by position.
+    from vibe_audit.api import LIMITATIONS, LIMITATIONS_ZH
+    assert len(LIMITATIONS)==len(LIMITATIONS_ZH)
+    assert all(text.isascii() for text in LIMITATIONS)
+    assert all(any("一"<=c<="鿿" for c in text) for text in LIMITATIONS_ZH)

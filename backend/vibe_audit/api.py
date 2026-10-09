@@ -29,6 +29,14 @@ LIMITATIONS=[
     "Only observable executed cases are assessed; missing fixtures, identity proof or effect collectors are inconclusive.",
     "Local-only model mode currently requires loopback IP endpoints; a local proxy's upstream behavior is outside this process's control.",
 ]
+# The same limitations in Traditional Chinese, in the same order, for the console's Chinese interface.
+LIMITATIONS_ZH=[
+    "示範使用合成審查員與 fixture，並非真實模型或目標的驗證。",
+    "實際評估需要 PostgreSQL、三個已設定的模型，以及明確授權的目標 IP。",
+    "外部掃描器整合需要已佈建的隔離 worker；缺少的工具絕不算作通過。",
+    "只評估可觀測且已執行的案例；缺少 fixture、身分證明或副作用收集器時判為證據不足。",
+    "僅本地模型模式目前要求 loopback IP 端點；本地代理對上游的行為不在此程序的控制範圍內。",
+]
 SESSION_SECONDS=28800
 SESSION_IDLE_SECONDS=3600
 MAX_SESSIONS=8
@@ -196,7 +204,7 @@ def create_app(data_dir=None, database_url=None, testing=False, session_token=No
             session=current_session(request)
             if session and csrf_matches(request,session):
                 session["last_seen"]=clock()
-                return {"csrf_token":session["csrf"],"mode":"local","limitations":LIMITATIONS}
+                return {"csrf_token":session["csrf"],"mode":"local","limitations":LIMITATIONS,"limitations_zh":LIMITATIONS_ZH}
         moment=clock()
         while token_failures and token_failures[0]<moment-TOKEN_FAILURE_WINDOW:
             token_failures.popleft()
@@ -214,7 +222,7 @@ def create_app(data_dir=None, database_url=None, testing=False, session_token=No
         sid=secrets.token_urlsafe(32)
         sessions[sid]={"csrf":secrets.token_urlsafe(32),"expires":moment+SESSION_SECONDS,"last_seen":moment,
                        "fingerprint":hashlib.sha256(sid.encode()).hexdigest()[:12]}
-        response=JSONResponse({"csrf_token":sessions[sid]["csrf"],"mode":"local","limitations":LIMITATIONS})
+        response=JSONResponse({"csrf_token":sessions[sid]["csrf"],"mode":"local","limitations":LIMITATIONS,"limitations_zh":LIMITATIONS_ZH})
         response.set_cookie("vibeaudit_session",sid,httponly=True,samesite="strict",max_age=SESSION_SECONDS)
         return response
 
@@ -270,7 +278,7 @@ def create_app(data_dir=None, database_url=None, testing=False, session_token=No
         finally:
             if worker:
                 worker.leases.close()
-        return {"tools":tools,"runtime":runtime,"limitations":LIMITATIONS}
+        return {"tools":tools,"runtime":runtime,"limitations":LIMITATIONS,"limitations_zh":LIMITATIONS_ZH}
 
     @api.get("/runs")
     async def list_runs():
