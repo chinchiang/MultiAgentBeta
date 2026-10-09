@@ -6,12 +6,19 @@ if (-not $PythonExecutable) { $PythonExecutable = Join-Path $projectRoot '.venv\
 $env:PYTHONPATH = Join-Path $projectRoot 'backend'
 & $PythonExecutable -m pip check
 if ($LASTEXITCODE -ne 0) { throw 'Dependency consistency failed.' }
-& $PythonExecutable -m pytest tests -q
+& $PythonExecutable -m pytest tests -q -rs
 if ($LASTEXITCODE -ne 0) { throw 'Security regression suite failed.' }
+# Lint: unused names and imports, syntax errors and the bugbear mistakes (rules in pyproject.toml).
+& $PythonExecutable -m ruff check backend tests scripts
+if ($LASTEXITCODE -ne 0) { throw 'Lint failed.' }
 Push-Location -LiteralPath (Join-Path $projectRoot 'frontend')
 try {
     npm.cmd run typecheck
     if ($LASTEXITCODE -ne 0) { throw 'Type check failed.' }
+    npm.cmd run check:i18n
+    if ($LASTEXITCODE -ne 0) { throw 'A visible Chinese string has no English counterpart.' }
+    npm.cmd run check:messages
+    if ($LASTEXITCODE -ne 0) { throw 'The console reads an engine message differently from the backend.' }
     npm.cmd run build
     if ($LASTEXITCODE -ne 0) { throw 'Frontend build failed.' }
 } finally { Pop-Location }
