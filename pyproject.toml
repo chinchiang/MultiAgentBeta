@@ -38,5 +38,5 @@ also_copy = ["catalogs", "fixtures", "docs"]
 # The unit suites that exercise those modules. The end-to-end suites (test_engine.py, test_fixture_protocol.py) cover
 # the same functions through whole runs and would make every surviving mutant cost minutes; the documentation,
 # packaging and Docker-only suites stay out too. ci.yml still runs them all.
-pytest_add_cli_args_test_selection = ["tests/test_adapters.py", "tests/test_catalog.py", "tests/test_contracts_and_workspace.py", "tests/test_error_messages.py", "tests/test_lease.py", "tests/test_providers.py", "tests/test_release_guards.py", "tests/test_review_followups.py", "tests/test_sandbox.py"]
+pytest_add_cli_args_test_selection = ["tests/test_adapters.py", "tests/test_catalog.py", "tests/test_contracts_and_workspace.py", "tests/test_error_messages.py", "tests/test_lease.py", "tests/test_policy_gates.py", "tests/test_providers.py", "tests/test_release_guards.py", "tests/test_review_followups.py", "tests/test_sandbox.py"]
 pytest_add_cli_args = ["-p", "no:cacheprovider"]
