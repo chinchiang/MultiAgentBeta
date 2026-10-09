@@ -207,7 +207,8 @@ def test_default_catalog_root_is_the_environment_or_the_checkout(monkeypatch):
     monkeypatch.delenv("VIBEAUDIT_CATALOG_ROOT")
     root = default_catalog_root()
     assert root.name == "catalogs" and (root / "manifest.json").is_file()
-    assert (root.parent / "backend" / "vibe_audit" / "catalog.py").is_file()
+    # The checkout keeps the package in backend/; a mutation run copies it to src/ beside a copy of the catalogs.
+    assert any((root.parent / package / "vibe_audit" / "catalog.py").is_file() for package in ("backend", "src"))
 
 
 class Catalogs:
