@@ -13,7 +13,7 @@ from vibe_audit.domain import RunInput, new_run
 from vibe_audit.policy import PolicyError, sealed
 from vibe_audit.service import Engine
 from vibe_audit.staging import discard_staging, stage_source, verify_staging
-from vibe_audit.store import Store
+from vibe_audit.store import Store, placeholders
 
 
 @pytest.fixture(autouse=True)
@@ -435,7 +435,7 @@ async def test_postgres_checkpoints_and_resume_do_not_duplicate_executions(tmp_p
     original=store.get(run["id"])
     assert original["stage"]=="complete",original.get("error")
     assert len(original["executions"])==3
-    checkpoints=store._execute("SELECT count(*) FROM checkpoints WHERE thread_id=?",(run["id"],)).fetchone()[0]
+    checkpoints=store._execute(placeholders("SELECT count(*) FROM checkpoints WHERE thread_id=?",store.postgres),(run["id"],)).fetchone()[0]
     assert checkpoints>0
     restarted=Engine(store,url)
     restarted.start(run["id"],resume=True)
@@ -474,3 +474,19 @@ def test_limitations_come_in_chinese_and_english_in_the_same_order():
     assert len(LIMITATIONS)==len(LIMITATIONS_ZH)
     assert all(text.isascii() for text in LIMITATIONS)
     assert all(any("一"<=c<="鿿" for c in text) for text in LIMITATIONS_ZH)
+
+
+def test_store_sql_table_holds_only_bound_placeholders_and_differs_by_dialect_alone(tmp_path):
+    """Every statement is a constant: values are bound, never spliced, so a ? is always a placeholder and % never appears."""
+    import re
+    from vibe_audit import store as store_module
+    for name, text in store_module.SQL.items():
+        assert "%" not in text, name
+        assert "?" not in "".join(re.findall(r"'[^']*'", text)), f"{name}: a ? inside quotes would be rewritten on PostgreSQL"
+    for_sqlite, for_postgres = store_module.dialect(store_module.SQL, False), store_module.dialect(store_module.SQL, True)
+    assert for_sqlite == store_module.SQL and for_sqlite is not store_module.SQL
+    assert set(for_postgres) == set(store_module.SQL)
+    assert all("?" not in text and text.count("%s") == store_module.SQL[name].count("?") for name, text in for_postgres.items())
+    sqlite_store = Store(tmp_path / "data")
+    assert sqlite_store.sql == store_module.SQL and not sqlite_store.postgres
+    sqlite_store.close()

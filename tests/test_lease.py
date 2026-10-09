@@ -7,7 +7,7 @@ import time
 from urllib.parse import urlsplit, urlunsplit
 import uuid
 import pytest
-from vibe_audit.lease import LeaseStore,LeaseError
+from vibe_audit.lease import LeaseStore,LeaseError,placeholders
 
 
 class Backend:
@@ -64,7 +64,7 @@ def test_bound_capability_is_single_claim_and_secrets_not_persisted(leases):
     store.claim(cap,"worker")
     with pytest.raises(LeaseError):store.claim(cap,"worker")
     with pytest.raises(LeaseError):store.validate(cap,"other")
-    stored=str(store._sql("SELECT * FROM worker_leases WHERE id=?",(cap["id"],)).fetchall())
+    stored=str(store._sql(placeholders("SELECT * FROM worker_leases WHERE id=?",store.postgres),(cap["id"],)).fetchall())
     assert cap["token"] not in stored and cap["renewal_token"] not in stored
 
 
@@ -116,7 +116,7 @@ def test_finish_dispatch_must_match_the_journaled_request(leases):
     # A result may only be journaled for the exact request that was reserved.
     with pytest.raises(LeaseError):store.finish_dispatch(cap,"worker","request-1",{"path":"/b","method":"GET"},{"status_code":200})
     with pytest.raises(LeaseError):store.finish_dispatch(cap,"worker","request-1",{"path":"/a","method":"POST"},{"status_code":200})
-    dispatch=lambda:store._sql("SELECT state,result_hash FROM worker_dispatches WHERE task_id=?",(cap["task_id"],)).fetchone()
+    dispatch=lambda:store._sql(placeholders("SELECT state,result_hash FROM worker_dispatches WHERE task_id=?",store.postgres),(cap["task_id"],)).fetchone()
     assert dispatch()==("sent",None)
     store.finish_dispatch(cap,"worker","request-1",{"path":"/a","method":"GET"},{"status_code":200})
     assert dispatch()[0]=="finished" and dispatch()[1]
@@ -135,7 +135,7 @@ def test_revoke_persists_unknown_dispatch_across_connections(leases):
     second=db.open()
     try:
         assert second.task(cap["task_id"])["state"]=="outcome_unknown"
-        assert second._sql("SELECT state FROM worker_dispatches WHERE task_id=?",(cap["task_id"],)).fetchone()[0]=="outcome_unknown"
+        assert second._sql(placeholders("SELECT state FROM worker_dispatches WHERE task_id=?",second.postgres),(cap["task_id"],)).fetchone()[0]=="outcome_unknown"
         with pytest.raises(LeaseError):second.claim(cap,"replacement")
     finally:second.close()
 
@@ -239,3 +239,28 @@ def test_lease_errors_name_their_cause(leases):
     with pytest.raises(LeaseError,match="Worker lease not found"):store.revoke("missing")
     with pytest.raises(LeaseError,match="Invalid worker lease limits"):issue(store,repetition=-1)
     with pytest.raises(LeaseError,match="never implicitly replayed"):issue(store,run_id=cap["binding"]["run_id"])
+
+
+def test_sql_table_holds_only_bound_placeholders_and_differs_by_dialect_alone():
+    """Every statement is a constant: values are bound, never spliced, so a ? is always a placeholder and % never appears."""
+    import re
+    from vibe_audit import lease
+    for name, text in lease.SQL.items():
+        assert "%" not in text, name
+        assert "?" not in "".join(re.findall(r"'[^']*'", text)), f"{name}: a ? inside quotes would be rewritten on PostgreSQL"
+    for_sqlite, for_postgres = lease.dialect(lease.SQL, False), lease.dialect(lease.SQL, True)
+    assert for_sqlite == lease.SQL and for_sqlite is not lease.SQL
+    assert set(for_postgres) == set(lease.SQL)
+    assert all("?" not in text and text.count("%s") == lease.SQL[name].count("?") for name, text in for_postgres.items())
+    assert placeholders("UPDATE t SET a=? WHERE b=?", True) == "UPDATE t SET a=%s WHERE b=%s"
+    assert placeholders("UPDATE t SET a=? WHERE b=?", False) == "UPDATE t SET a=? WHERE b=?"
+
+
+def test_lease_store_keeps_the_statements_of_its_own_dialect(leases):
+    """A store converts the table once, for the backend it was given, and keeps where it connected."""
+    from vibe_audit import lease
+    store,backend=leases
+    assert store.postgres is (backend.kind=="postgres")
+    assert store.sql==lease.dialect(lease.SQL,store.postgres)
+    assert (store.database_url,store.database_path)==((backend.url,None) if store.postgres else (None,str(backend.path)))
+    assert all(store.sql[name].count("%s" if store.postgres else "?")==lease.SQL[name].count("?") for name in lease.SQL)
