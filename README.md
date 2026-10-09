@@ -131,7 +131,7 @@ MultiAgentBeta/
 │   ├── src/                       #   App.tsx、extensions.tsx、api.ts、types.ts、i18n.ts（中英切換）、樣式
 │   ├── scripts/                   #   contract-smoke、browser-smoke、check-i18n
 │   └── dist/                      #   已建置的介面，由 FastAPI 同 origin 提供
-├── tests/                         # pytest（20 個檔案，含 test_bilingual_docs.py 文件雙語檢查）
+├── tests/                         # pytest（21 個檔案，含 test_bilingual_docs.py 文件雙語檢查）
 ├── catalogs/                      # ASVS 5.0.0、WSTG 4.2、LLM 2026、Agentic 2026 標準 JSON 與 manifest
 │   └── sources/                   #   原始標準內容與授權
 ├── fixtures/                      # 掃描器規則與設定（Semgrep、Gitleaks、OSV）
@@ -323,7 +323,7 @@ MultiAgentBeta/
 │   ├── src/                       #   App.tsx, extensions.tsx, api.ts, types.ts, i18n.ts (language switch), styles
 │   ├── scripts/                   #   contract-smoke, browser-smoke, check-i18n
 │   └── dist/                      #   built UI, served by FastAPI on the same origin
-├── tests/                         # pytest (20 files, including test_bilingual_docs.py for bilingual docs)
+├── tests/                         # pytest (21 files, including test_bilingual_docs.py for bilingual docs)
 ├── catalogs/                      # ASVS 5.0.0, WSTG 4.2, LLM 2026, Agentic 2026 standard JSON and manifest
 │   └── sources/                   #   original standard content and licenses
 ├── fixtures/                      # scanner rules and settings (Semgrep, Gitleaks, OSV)
