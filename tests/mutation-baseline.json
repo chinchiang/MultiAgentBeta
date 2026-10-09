@@ -1,8 +1,11 @@
 {
-  "src/vibe_audit/policy.py": 169,
-  "src/vibe_audit/adapters.py": 687,
-  "src/vibe_audit/catalog.py": 58,
-  "src/vibe_audit/lease.py": 224,
-  "src/vibe_audit/snapshot.py": 163,
-  "src/vibe_audit/messages.py": 0
+  "modules": {
+    "src/vibe_audit/policy.py": 169,
+    "src/vibe_audit/adapters.py": 687,
+    "src/vibe_audit/catalog.py": 58,
+    "src/vibe_audit/lease.py": 224,
+    "src/vibe_audit/snapshot.py": 163,
+    "src/vibe_audit/messages.py": 0
+  },
+  "functions": {}
 }

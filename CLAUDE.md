@@ -30,7 +30,7 @@ python -m pip install --require-hashes -r requirements.mutation.lock.txt && pyth
 - JUnit 收據放進 docs/ 前先跑 `python scripts/redact-receipts.py`，再跑 `python scripts/summarize-validation.py`。
 - `.claude/` 與本檔由 `scripts/package-release.py` 排除在發佈檔之外。
 - `docs/sample-report.md` 由 `python scripts/render-sample-report.py` 依 `docs/sample-report.json` 產生（中文報告、`---`、英文報告），不可手改；報告產生器改了就重產。
-- 改到 `pyproject.toml` 的 `[tool.mutmut]` 所列模組或它們的測試時，跑 `scripts/mutation-test.py`；存活的突變要補測試，真的到不了的程式才標 `# pragma: no mutate`。兩份鎖定檔都用 `scripts/hash-lock.py` 重產（第二份加 `--lock requirements.mutation.lock.txt`）。
+- 改到 `pyproject.toml` 的 `[tool.mutmut]` 所列模組或它們的測試時，跑 `scripts/mutation-test.py`（只看改動的函式：`--changed origin/main`）；存活的突變要補測試，真的到不了的程式才標 `# pragma: no mutate`。兩份鎖定檔都用 `scripts/hash-lock.py` 重產（第二份加 `--lock requirements.mutation.lock.txt`）。
 
 ## 整合測試開關
 
@@ -76,7 +76,7 @@ python -m pip install --require-hashes -r requirements.mutation.lock.txt && pyth
 - Run `python scripts/redact-receipts.py` before adding a JUnit receipt to docs/, then `python scripts/summarize-validation.py`.
 - `.claude/` and this file are excluded from releases by `scripts/package-release.py`.
 - `docs/sample-report.md` is rendered from `docs/sample-report.json` by `python scripts/render-sample-report.py` (Chinese report, `---`, English report). Never edit it by hand; re-render it when the report generator changes.
-- After changing a module listed under `[tool.mutmut]` in `pyproject.toml`, or its tests, run `scripts/mutation-test.py`; a surviving mutant needs a test, and only genuinely unreachable code gets `# pragma: no mutate`. Regenerate either lock file with `scripts/hash-lock.py` (`--lock requirements.mutation.lock.txt` for the second).
+- After changing a module listed under `[tool.mutmut]` in `pyproject.toml`, or its tests, run `scripts/mutation-test.py` (`--changed origin/main` for the changed functions only); a surviving mutant needs a test, and only genuinely unreachable code gets `# pragma: no mutate`. Regenerate either lock file with `scripts/hash-lock.py` (`--lock requirements.mutation.lock.txt` for the second).
 
 ## Integration test switches
 
