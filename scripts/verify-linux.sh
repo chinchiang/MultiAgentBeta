@@ -16,7 +16,7 @@ fi
 # Like verify.ps1: the committed UI must build from the committed sources, and every visible string and engine
 # message must read in both languages.
 if [ -d frontend/node_modules ]; then
-  (cd frontend && npm run typecheck && npm run check:i18n && npm run check:messages && npm run build)
+  (cd frontend && npm run typecheck && npm test && npm run check:i18n && npm run check:messages && npm run build)
 else
   printf '%s\n' 'frontend/node_modules missing: run npm ci in frontend to type-check and rebuild the UI; the manifest check below still compares frontend/dist.' >&2
 fi

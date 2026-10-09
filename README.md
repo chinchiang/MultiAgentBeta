@@ -130,7 +130,8 @@ MultiAgentBeta/
 │   ├── benchmark.py / benchmark_matching.py  # 獨立的比較評估工具（不在評估流程中）
 │   └── tokenizers/                #   離線 tiktoken 詞彙表與授權
 ├── frontend/                      # React ＋ TypeScript ＋ Vite 控制台
-│   ├── src/                       #   App.tsx、extensions.tsx、api.ts、types.ts、i18n.ts（中英切換）、messages.ts（引擎訊息中文）、樣式
+│   ├── src/                       #   App.tsx（外殼）、run-detail.tsx、create-form.tsx、capabilities.tsx（三個畫面）、ui.tsx（共用元件與標籤）、extensions.tsx、api.ts、types.ts、i18n.ts（中英切換）、messages.ts（引擎訊息中文）、樣式
+│   ├── tests/                     #   vitest 單元與元件測試（happy-dom 模擬瀏覽器，不需後端）
 │   ├── scripts/                   #   contract-smoke、browser-smoke、check-i18n、check-messages
 │   └── dist/                      #   已建置的介面，由 FastAPI 同 origin 提供
 ├── tests/                         # pytest（26 個檔案，含 test_bilingual_docs.py 文件雙語檢查與 test_properties.py 的 Hypothesis 性質測試）
@@ -330,7 +331,8 @@ MultiAgentBeta/
 │   ├── benchmark.py / benchmark_matching.py  # separate comparative-evaluation tool (not part of an assessment)
 │   └── tokenizers/                #   offline tiktoken vocabulary and license
 ├── frontend/                      # React + TypeScript + Vite console
-│   ├── src/                       #   App.tsx, extensions.tsx, api.ts, types.ts, i18n.ts (language switch), messages.ts (engine messages in Chinese), styles
+│   ├── src/                       #   App.tsx (shell), run-detail.tsx, create-form.tsx, capabilities.tsx (the three screens), ui.tsx (shared pieces and labels), extensions.tsx, api.ts, types.ts, i18n.ts (language switch), messages.ts (engine messages in Chinese), styles
+│   ├── tests/                     #   vitest unit and component tests (happy-dom simulated browser, no backend)
 │   ├── scripts/                   #   contract-smoke, browser-smoke, check-i18n, check-messages
 │   └── dist/                      #   built UI, served by FastAPI on the same origin
 ├── tests/                         # pytest (26 files, including test_bilingual_docs.py for bilingual docs and the Hypothesis property tests in test_properties.py)
