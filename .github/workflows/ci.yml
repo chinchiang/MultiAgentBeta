@@ -1,5 +1,5 @@
-# Checks that need no model credentials, Docker images or a target. Integration tests that
-# require them stay skipped here; docs/VALIDATION.md records where those were last run.
+# Checks that need no model credentials, Docker images or a target. The Docker integrations stay
+# skipped here and run in integration.yml; docs/VALIDATION.md records where they were last run.
 name: ci
 
 on:

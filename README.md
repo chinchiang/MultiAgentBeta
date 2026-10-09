@@ -147,6 +147,7 @@ MultiAgentBeta/
 ├── scripts/                       # setup／start-local、verify、provision-runtime／offline-db、package-release、hash-lock、
 │                                  #   redact-receipts、summarize-validation、refresh-catalog、render-sample-report
 ├── .github/workflows/ci.yml       # backend（pytest ＋ PostgreSQL）與 frontend（typecheck、check:i18n、check:messages、建置一致性、清單）
+├── .github/workflows/integration.yml  # 以 deploy/ 建置的映像跑 Docker worker、掃描器、工具、fixture 與完整 pipeline 整合測試
 ├── .claude/                       # 雲端 session 的 SessionStart hook（不進發佈檔）
 ├── CLAUDE.md                      # 開發指引（不進發佈檔）
 ├── IMPLEMENTATION.md              # API 與模組契約
@@ -340,6 +341,7 @@ MultiAgentBeta/
 ├── scripts/                       # setup/start-local, verify, provision-runtime/offline-db, package-release, hash-lock,
 │                                  #   redact-receipts, summarize-validation, refresh-catalog, render-sample-report
 ├── .github/workflows/ci.yml       # backend (pytest + PostgreSQL) and frontend (typecheck, check:i18n, check:messages, build parity, manifest)
+├── .github/workflows/integration.yml  # Docker worker, scanner, tool, fixture and full-pipeline integration tests on images built from deploy/
 ├── .claude/                       # SessionStart hook for cloud sessions (excluded from releases)
 ├── CLAUDE.md                      # development guide (excluded from releases)
 ├── IMPLEMENTATION.md              # API and module contracts

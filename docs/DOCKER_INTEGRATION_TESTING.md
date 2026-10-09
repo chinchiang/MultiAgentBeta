@@ -1,6 +1,6 @@
 # Linux 完整 Docker 整合測試
 
-VALIDATION.md 的「重跑」只示範 tests/test_tool_runners.py。本文記錄以一般使用者帳號、Docker 與暫存 PostgreSQL 執行整個 tests/ 的步驟，以及 2026-10-03 實際遇到的設定問題。映像須先依 LINUX_SETUP.md 第 3 節 provision；能操作 Docker daemon 的帳號屬高權限信任邊界。
+.github/workflows/integration.yml 在 GitHub Actions 上以同樣的步驟跑整套測試（映像由 deploy/ 建置、PostgreSQL 為 service container），每個 PR 與 main 的 push 都會執行。VALIDATION.md 的「重跑」只示範 tests/test_tool_runners.py。本文記錄以一般使用者帳號、Docker 與暫存 PostgreSQL 執行整個 tests/ 的步驟，以及 2026-10-03 實際遇到的設定問題。映像須先依 LINUX_SETUP.md 第 3 節 provision；能操作 Docker daemon 的帳號屬高權限信任邊界。
 
 ## 1. 暫存 PostgreSQL
 
@@ -82,7 +82,7 @@ export VIBEAUDIT_TEST_NODE="$(command -v node)"   # 必須是 Node 24
 ---
 # Full Docker integration testing on Linux
 
-The "re-run" in VALIDATION.md only demonstrates tests/test_tool_runners.py. This document records the steps for running the whole tests/ suite with a regular user account, Docker, and a throwaway PostgreSQL, as well as the configuration problems actually encountered on 2026-10-03. The images must first be provisioned as in section 3 of LINUX_SETUP.md; an account that can operate the Docker daemon is a high-privilege trust boundary.
+.github/workflows/integration.yml runs the whole suite the same way on GitHub Actions (images built from deploy/, PostgreSQL as a service container) for every pull request and every push to main. The "re-run" in VALIDATION.md only demonstrates tests/test_tool_runners.py. This document records the steps for running the whole tests/ suite with a regular user account, Docker, and a throwaway PostgreSQL, as well as the configuration problems actually encountered on 2026-10-03. The images must first be provisioned as in section 3 of LINUX_SETUP.md; an account that can operate the Docker daemon is a high-privilege trust boundary.
 
 ## 1. Throwaway PostgreSQL
 
