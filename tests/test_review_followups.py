@@ -158,6 +158,30 @@ def test_supervisor_rechecks_the_model_vocabulary_before_tb_target(monkeypatch):
     model_supervisor(monkeypatch, designed_by=None, headers=tampered).allowed_request(request)
 
 
+
+def _named(headers, name):
+    return [(k, v) for k, v in headers.items() if k.lower() == name.lower()]
+
+
+def test_operator_header_names_replace_defaults_and_transport_whatever_their_letter_case():
+    # HTTP names ignore letter case: an operator's "accept" takes the default Accept's place, and the JSON body the
+    # adapter serializes keeps one Content-Type, so the target never sees two conflicting values.
+    case = {"method": "POST", "path": "/orders", "headers": {"accept": "text/html", "content-type": "application/xml"},
+            "body": {"a": 1}}
+    _, _, headers, body, _ = _prepare_request({}, case)
+    assert _named(headers, "Accept") == [("accept", "text/html")] and list(headers)[0] == "accept"
+    assert _named(headers, "Content-Type") == [("Content-Type", "application/json")] and body == b'{"a": 1}'
+    # Two spellings of one name in an operator's own map are a repeat with two values: refuse rather than pick one.
+    with pytest.raises(AdapterBlocked, match="letter case"):
+        _prepare_request({}, {"method": "GET", "path": "/a", "headers": {"X-Trace": "1", "x-trace": "2"}})
+
+
+def test_supervisor_sends_one_content_type_for_an_operator_step_in_any_letter_case(monkeypatch):
+    sealed = {"content-type": "application/xml"}
+    supervisor = model_supervisor(monkeypatch, designed_by=None, headers=sealed)
+    headers = supervisor.allowed_request(chat_request(sealed))[4]
+    assert _named(headers, "Content-Type") == [("Content-Type", "application/json")]
+
 @pytest.mark.parametrize("environ,shared", [
     # A key bound to a model origin is a model credential even when this run's models do not use it.
     ({"VIBEAUDIT_OPENAI_API_KEY": "k1"}, ["VIBEAUDIT_OPENAI_API_KEY"]),

@@ -420,6 +420,14 @@ class _PinnedHTTPSConnection(_PinnedHTTPConnection):
             raise
 
 
+def _put_header(headers, name, value):
+    """Set one header, replacing a name that differs only in letter case and keeping its place in the wire order."""
+    lower = name.lower()
+    if not any(key.lower() == lower for key in headers):
+        return {**headers, name: value}
+    return {(name if key.lower() == lower else key): (value if key.lower() == lower else old) for key, old in headers.items()}
+
+
 def _prepare_request(manifest, case, *, transport_headers=None):
     """transport_headers are added by trusted transport code (the supervisor's Content-Type for a body it forwards):
     they are not a model's choice, so they skip the per-endpoint model vocabulary but keep the same wire order."""
@@ -441,13 +449,18 @@ def _prepare_request(manifest, case, *, transport_headers=None):
     if not case_headers_allowed(supplied, model_designed=model_designed, relay=manifest.get("relay") is True,
                                 vocabulary=vocabulary):
         raise AdapterBlocked("Case contains an unsupported, routing or credential-bearing request header.")
+    # HTTP names ignore letter case, so two spellings in one map would put two values for one header on the wire.
+    if len({name.lower() for name in supplied}) != len(supplied):
+        raise AdapterBlocked("Case repeats a request header name in another letter case.")
     if transport_headers:
-        supplied = {**supplied, **transport_headers}
+        for name, value in transport_headers.items():
+            supplied = _put_header(supplied, name, value)
         if model_designed:
             supplied = dict(sorted(supplied.items()))
     # A supplied Accept takes the default's place, so an explicit application/json and none at all look the same on the
     # wire; a model's other names follow in sorted order (case_headers_allowed), never in an order the model chose.
-    headers.update(supplied)
+    for name, value in supplied.items():
+        headers = _put_header(headers, name, value)
     secrets = []
     identity = case.get("identity")
     if identity is not None:
@@ -482,7 +495,7 @@ def _prepare_request(manifest, case, *, transport_headers=None):
             raise AdapterBlocked("Request body must be finite JSON data.") from None
         if len(body) > MAX_REQUEST_BYTES:
             raise AdapterBlocked("Request body exceeds the configured byte limit.")
-        headers["Content-Type"] = "application/json"
+        headers = _put_header(headers, "Content-Type", "application/json")
     return method, path, headers, body, secrets
 
 

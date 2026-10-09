@@ -39,7 +39,8 @@ class LeaseStore:
             import psycopg
             self.conn = psycopg.connect(database_url, autocommit=True, connect_timeout=3, options="-c statement_timeout=2000 -c lock_timeout=1000")
             # A SQL_ASCII database or client encoding hands every text column back as undecoded bytes, so token checks would fail obscurely.
-            if self.conn.info.parameter_status("server_encoding") != "UTF8" or self.conn.info.encoding != "utf-8":
+            # Compare the names the server reports: asking for the Python codec raises for an encoding Python lacks.
+            if any(self.conn.info.parameter_status(name) != "UTF8" for name in ("server_encoding", "client_encoding")):
                 self.conn.close()
                 raise LeaseError("The PostgreSQL lease database and connection must use UTF8 encoding")
         else:

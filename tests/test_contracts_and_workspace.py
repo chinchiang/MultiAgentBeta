@@ -367,14 +367,18 @@ async def test_postgres_checkpoints_and_resume_do_not_duplicate_executions(tmp_p
     store.close()
 
 
-@pytest.mark.parametrize("server,client",[("SQL_ASCII","ascii"),("UTF8","ascii"),("SQL_ASCII","utf-8")])
+# MULE_INTERNAL has no Python codec: psycopg raises NotSupportedError when asked for the connection's Python encoding.
+@pytest.mark.parametrize("server,client",[("SQL_ASCII","SQL_ASCII"),("UTF8","SQL_ASCII"),("SQL_ASCII","UTF8"),("UTF8","MULE_INTERNAL")])
 def test_store_refuses_a_non_utf8_postgres_database(tmp_path,monkeypatch,server,client):
     import psycopg
     closed=[]
     class Info:
-        encoding=client
+        @property
+        def encoding(self):
+            if client=="MULE_INTERNAL":raise psycopg.NotSupportedError("codec not available in Python: 'MULE_INTERNAL'")
+            return {"UTF8":"utf-8","SQL_ASCII":"ascii"}[client]
         @staticmethod
-        def parameter_status(name):return server if name=="server_encoding" else None
+        def parameter_status(name):return {"server_encoding":server,"client_encoding":client}.get(name)
     class Conn:
         info=Info()
         def close(self):closed.append(True)

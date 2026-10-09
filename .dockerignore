@@ -11,3 +11,5 @@ catalogs
 benchmarks
 frontend/dist
 *.zip
+.claude
+CLAUDE.md
