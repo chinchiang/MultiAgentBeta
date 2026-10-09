@@ -65,17 +65,20 @@ def _release_script():
 def test_release_ships_tracked_files_and_the_built_ui_only(tmp_path):
     import subprocess
     release = _release_script()
-    for name, text in {"b.py": "b", "A/z.txt": "z", ".claude/settings.json": "{}", "scratch.txt": "x",
+    for name, text in {"b.py": "b", "A/z.txt": "z", ".claude/settings.json": "{}", ".claude/hooks/start.sh": "x",
+                       "CLAUDE.md": "notes", "docs/CLAUDE.md": "kept", "scratch.txt": "x",
                        "frontend/dist/index.html": "<html>", ".env.local": "SECRET=1"}.items():
         (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / name).write_text(text)
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
-    subprocess.run(["git", "add", "b.py", "A/z.txt"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "add", "b.py", "A/z.txt", "docs/CLAUDE.md"], cwd=tmp_path, check=True)
+    # Agent configuration stays out of a release even when it is committed for cloud sessions.
+    subprocess.run(["git", "add", ".claude", "CLAUDE.md"], cwd=tmp_path, check=True)
     subprocess.run(["git", "add", "-f", ".env.local"], cwd=tmp_path, check=True)
     names = release.deliverables(tmp_path)
-    assert names == ["A/z.txt", "b.py", "frontend/dist/index.html"]
+    assert names == ["A/z.txt", "b.py", "docs/CLAUDE.md", "frontend/dist/index.html"]
     rendered = release.render(names, tmp_path)
-    assert rendered.count(b"\r\n") == 3 and rendered.endswith(b"  frontend/dist/index.html\r\n")
+    assert rendered.count(b"\r\n") == 4 and rendered.endswith(b"  frontend/dist/index.html\r\n")
     (tmp_path / release.MANIFEST).write_bytes(rendered)
     assert release.check(tmp_path) == []
     (tmp_path / "b.py").write_text("changed")
