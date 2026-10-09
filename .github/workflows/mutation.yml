@@ -28,7 +28,7 @@ jobs:
       # The lease tests run on SQLite and on PostgreSQL (its own clock and row locks); same image as ci.yml.
       postgres:
         # postgres:18.6, digest read from the registry on 2026-10-03.
-        image: postgres@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722
+        image: public.ecr.aws/docker/library/postgres@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722
         env:
           POSTGRES_USER: vibeaudit_test
           POSTGRES_PASSWORD: ci-only-throwaway
