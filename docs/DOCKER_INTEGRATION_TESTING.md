@@ -16,10 +16,11 @@ mkdir -p /tmp/va-pgsock
 
 ## 2. 測試用 runtime profile
 
-正式 profile 的 work_root（/var/lib/vibeaudit/workers）屬於專用控制帳號。以自己的帳號測試時另產生一份，讓 work_root 指向自己可寫的目錄；腳本會從本機 Docker 讀出 image ID，不必手抄。
+正式 profile 的 work_root（/var/lib/vibeaudit/workers）屬於專用控制帳號。以自己的帳號測試時另產生一份，讓 work_root 指向自己可寫的目錄；腳本會從本機 Docker 讀出 image ID，不必手抄。三個離線掃描器測試與完整 pipeline 測試會掛載 profile 的 offline_db_dir（`--offline-db` 預設為 /opt/vibeaudit/osv），所以要先佈建離線 OSV 資料；目錄不存在時，這些測試會以 SandboxBlocked 或「OSV offline database needs a provisioning manifest」失敗，不會 skip。
 
 ```sh
-.venv/bin/python scripts/provision-runtime.py --output /tmp/va-runtime.json --work-root /tmp/va-workers
+.venv/bin/python scripts/provision-offline-db.py /tmp/va-osv
+.venv/bin/python scripts/provision-runtime.py --output /tmp/va-runtime.json --work-root /tmp/va-workers --offline-db /tmp/va-osv
 mkdir -p /tmp/va-workers
 ```
 
@@ -88,10 +89,11 @@ mkdir -p /tmp/va-pgsock
 
 ## 2. Runtime profile for testing
 
-The production profile's work_root (/var/lib/vibeaudit/workers) belongs to the dedicated control account. When testing under your own account, generate a separate profile whose work_root points to a directory you can write; the script reads the image IDs from the local Docker, so no manual copying is needed.
+The production profile's work_root (/var/lib/vibeaudit/workers) belongs to the dedicated control account. When testing under your own account, generate a separate profile whose work_root points to a directory you can write; the script reads the image IDs from the local Docker, so no manual copying is needed. The three offline scanner tests and the full pipeline test mount the profile's offline_db_dir (`--offline-db` defaults to /opt/vibeaudit/osv), so provision the offline OSV data first; without that directory those tests fail with SandboxBlocked or "OSV offline database needs a provisioning manifest" rather than skipping.
 
 ```sh
-.venv/bin/python scripts/provision-runtime.py --output /tmp/va-runtime.json --work-root /tmp/va-workers
+.venv/bin/python scripts/provision-offline-db.py /tmp/va-osv
+.venv/bin/python scripts/provision-runtime.py --output /tmp/va-runtime.json --work-root /tmp/va-workers --offline-db /tmp/va-osv
 mkdir -p /tmp/va-workers
 ```
 
