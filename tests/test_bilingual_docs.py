@@ -1,6 +1,7 @@
 """Documentation stays bilingual (Traditional Chinese first, then English) and names the current release."""
 import re
 import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
@@ -8,13 +9,12 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 CJK = re.compile(r"[一-鿿]")
-# Generated example output and upstream source snapshots are not project documentation.
-NOT_DOCUMENTATION = {"docs/sample-report.md"}
 
 
 def documents():
     tracked = subprocess.run(["git", "ls-files", "*.md"], cwd=ROOT, capture_output=True, text=True, check=True).stdout.split()
-    names = [name for name in tracked if not name.startswith("catalogs/sources/") and name not in NOT_DOCUMENTATION]
+    # Upstream source snapshots are not project documentation.
+    names = [name for name in tracked if not name.startswith("catalogs/sources/")]
     return sorted(names + ["NOTICE"])
 
 
@@ -35,7 +35,8 @@ def headings(text):
 @pytest.mark.parametrize("name", documents())
 def test_each_document_has_a_chinese_half_then_an_english_half(name):
     chinese, english = halves(name)
-    zh, en = len(CJK.findall(chinese)), len(CJK.findall(english))
+    # A title can be a name in either language (the sample report's title is its run's name), so titles do not count.
+    zh, en = (len(CJK.findall(re.sub(r"^# .*$", "", half, flags=re.M))) for half in (chinese, english))
     assert zh >= 50, f"{name}: the first half should be the Chinese text"
     # The English half may quote a few interface labels (for example 合成示範), nothing more.
     assert en * 10 <= zh, f"{name}: the second half should be the English text"
@@ -52,3 +53,8 @@ def test_document_titles_name_the_current_release():
                 if found != version:
                     stale.append(f"{name}: {line.strip()}")
     assert not stale, "Titles still name an older release:\n" + "\n".join(stale)
+
+
+def test_sample_report_is_the_report_generators_output():
+    # docs/sample-report.md is the Chinese and English Markdown export of the run stored in docs/sample-report.json.
+    subprocess.run([sys.executable, "scripts/render-sample-report.py", "--check"], cwd=ROOT, check=True)

@@ -111,6 +111,7 @@ MultiAgentBeta/
 │   ├── workspace_api.py           #   專案、模型範本、標準目錄、追溯、複測、裁決、清理確認
 │   ├── service.py                 #   LangGraph 七個階段、閘門呼叫、Markdown／SARIF 報告
 │   ├── providers.py               #   LiteLLM 模型呼叫與探測、憑證 origin 綁定、無 fallback
+│   ├── messages.py                #   錯誤訊息的正體中文對照（API 的 detail_zh、run 的 error_zh）
 │   ├── staging.py / snapshot.py   #   raw 私密 staging（給掃描器）與脫敏快照（給模型）
 │   ├── sandbox.py                 #   白箱掃描器的路徑檢查、上限與結果解析
 │   ├── catalog.py                 #   標準 ID 與來源釘選
@@ -131,7 +132,7 @@ MultiAgentBeta/
 │   ├── src/                       #   App.tsx、extensions.tsx、api.ts、types.ts、i18n.ts（中英切換）、樣式
 │   ├── scripts/                   #   contract-smoke、browser-smoke、check-i18n
 │   └── dist/                      #   已建置的介面，由 FastAPI 同 origin 提供
-├── tests/                         # pytest（20 個檔案，含 test_bilingual_docs.py 文件雙語檢查）
+├── tests/                         # pytest（22 個檔案，含 test_bilingual_docs.py 文件雙語檢查）
 ├── catalogs/                      # ASVS 5.0.0、WSTG 4.2、LLM 2026、Agentic 2026 標準 JSON 與 manifest
 │   └── sources/                   #   原始標準內容與授權
 ├── fixtures/                      # 掃描器規則與設定（Semgrep、Gitleaks、OSV）
@@ -144,7 +145,7 @@ MultiAgentBeta/
 ├── docs/                          # ARCHITECTURE、LINUX_SETUP、DOCKER_INTEGRATION_TESTING、VALIDATION、DELIVERY、SOURCES、
 │                                  #   VIBESEC_ADVISORIES、threat-model.yaml、run-input.schema.json、驗證收據、截圖、history/
 ├── scripts/                       # setup／start-local、verify、provision-runtime／offline-db、package-release、hash-lock、
-│                                  #   redact-receipts、summarize-validation、refresh-catalog
+│                                  #   redact-receipts、summarize-validation、refresh-catalog、render-sample-report
 ├── .github/workflows/ci.yml       # backend（pytest ＋ PostgreSQL）與 frontend（typecheck、check:i18n、建置一致性、清單）
 ├── .claude/                       # 雲端 session 的 SessionStart hook（不進發佈檔）
 ├── CLAUDE.md                      # 開發指引（不進發佈檔）
@@ -178,7 +179,7 @@ MultiAgentBeta/
 - [交付對照](docs/DELIVERY.md)／[驗證紀錄](docs/VALIDATION.md)
 - [模型減偏比較設計](benchmarks/README.md)
 - [來源與授權](docs/SOURCES.md)／[NOTICE](NOTICE)
-- [合成範例報告](docs/sample-report.md)
+- [合成範例報告（中英雙語）](docs/sample-report.md)
 
 ```powershell
 $env:PYTHONPATH = 'backend'
@@ -303,6 +304,7 @@ MultiAgentBeta/
 │   ├── workspace_api.py           #   projects, model templates, standards catalog, trace, retest, decisions, cleanup attestation
 │   ├── service.py                 #   the seven LangGraph stages, gate calls, Markdown/SARIF reports
 │   ├── providers.py               #   LiteLLM model calls and probes, credential origin binding, no fallback
+│   ├── messages.py                #   Traditional Chinese wording of error messages (detail_zh, error_zh)
 │   ├── staging.py / snapshot.py   #   raw private staging (for scanners) and redacted snapshot (for models)
 │   ├── sandbox.py                 #   white-box scanner path checks, bounds and result parsing
 │   ├── catalog.py                 #   standard IDs and source pins
@@ -323,7 +325,7 @@ MultiAgentBeta/
 │   ├── src/                       #   App.tsx, extensions.tsx, api.ts, types.ts, i18n.ts (language switch), styles
 │   ├── scripts/                   #   contract-smoke, browser-smoke, check-i18n
 │   └── dist/                      #   built UI, served by FastAPI on the same origin
-├── tests/                         # pytest (20 files, including test_bilingual_docs.py for bilingual docs)
+├── tests/                         # pytest (22 files, including test_bilingual_docs.py for bilingual docs)
 ├── catalogs/                      # ASVS 5.0.0, WSTG 4.2, LLM 2026, Agentic 2026 standard JSON and manifest
 │   └── sources/                   #   original standard content and licenses
 ├── fixtures/                      # scanner rules and settings (Semgrep, Gitleaks, OSV)
@@ -336,7 +338,7 @@ MultiAgentBeta/
 ├── docs/                          # ARCHITECTURE, LINUX_SETUP, DOCKER_INTEGRATION_TESTING, VALIDATION, DELIVERY, SOURCES,
 │                                  #   VIBESEC_ADVISORIES, threat-model.yaml, run-input.schema.json, receipts, screenshots, history/
 ├── scripts/                       # setup/start-local, verify, provision-runtime/offline-db, package-release, hash-lock,
-│                                  #   redact-receipts, summarize-validation, refresh-catalog
+│                                  #   redact-receipts, summarize-validation, refresh-catalog, render-sample-report
 ├── .github/workflows/ci.yml       # backend (pytest + PostgreSQL) and frontend (typecheck, check:i18n, build parity, manifest)
 ├── .claude/                       # SessionStart hook for cloud sessions (excluded from releases)
 ├── CLAUDE.md                      # development guide (excluded from releases)
@@ -370,7 +372,7 @@ Containers, the database, and control-process administrators are trust boundarie
 - [Delivery comparison](docs/DELIVERY.md) / [Validation log](docs/VALIDATION.md)
 - [Bias-reduction comparison design](benchmarks/README.md)
 - [Sources and license](docs/SOURCES.md) / [NOTICE](NOTICE)
-- [Synthetic sample report](docs/sample-report.md)
+- [Synthetic sample report (Chinese and English)](docs/sample-report.md)
 
 ```powershell
 $env:PYTHONPATH = 'backend'

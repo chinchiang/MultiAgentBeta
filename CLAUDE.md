@@ -27,6 +27,7 @@ git add -N frontend/dist && git diff --exit-code -- frontend/dist # CI：dist �
 - skip 不等於通過，不要在 docs/VALIDATION.md 把 skip 記成已驗證。
 - JUnit 收據放進 docs/ 前先跑 `python scripts/redact-receipts.py`，再跑 `python scripts/summarize-validation.py`。
 - `.claude/` 與本檔由 `scripts/package-release.py` 排除在發佈檔之外。
+- `docs/sample-report.md` 由 `python scripts/render-sample-report.py` 依 `docs/sample-report.json` 產生（中文報告、`---`、英文報告），不可手改；報告產生器改了就重產。
 
 ## 整合測試開關
 
@@ -69,6 +70,7 @@ git add -N frontend/dist && git diff --exit-code -- frontend/dist # CI: dist mus
 - A skipped test is not a pass. Do not record skips as verification in docs/VALIDATION.md.
 - Run `python scripts/redact-receipts.py` before adding a JUnit receipt to docs/, then `python scripts/summarize-validation.py`.
 - `.claude/` and this file are excluded from releases by `scripts/package-release.py`.
+- `docs/sample-report.md` is rendered from `docs/sample-report.json` by `python scripts/render-sample-report.py` (Chinese report, `---`, English report). Never edit it by hand; re-render it when the report generator changes.
 
 ## Integration test switches
 

@@ -16,6 +16,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 
 from .catalog import CatalogError
 from .domain import RunInput, digest, new_run, now
+from .messages import zh
 from .policy import Policy, PolicyError, elapsed_seconds, sealed
 from .store import Store
 from .contracts import (CORE_REVIEW_QUESTIONS, CaseDesignProposal, CommanderProposal, ArchitectureProposal,
@@ -54,6 +55,7 @@ class Engine:
                 run["status"]="cancelling" if run.get("workers_pending_cleanup") else "incomplete"
                 run["error"]=("Controller restarted after a request was sent; reset the target and continue in a new run" if settled
                             else "Controller restarted; resume re-checks every gate against the stored run")
+                run["error_zh"]=zh(run["error"])
                 if run.get("attempt_started_at"):
                     # The interrupted attempt was active until its last save at the latest.
                     attempt=(datetime.fromisoformat(run["updated_at"])-datetime.fromisoformat(run["attempt_started_at"])).total_seconds()
@@ -147,6 +149,7 @@ class Engine:
         self.runs[run_id]=run
         run["status"]="running"
         run["error"]=None
+        run["error_zh"]=None
         run["started_at"]=run.get("started_at") or now()
         run["attempt_started_at"]=now()
         self.event(run,"Resuming journaled workflow" if resume else "Starting evidence-gated workflow")
@@ -270,6 +273,7 @@ class Engine:
             # ProviderError text is fixed local wording that never embeds provider bodies or credentials.
             run["error"]=(str(exc) if isinstance(exc,(PolicyError,CatalogError)) else f"Model call failed ({exc.code}): {exc}" if isinstance(exc,ProviderError)
                         else f"{type(exc).__name__}: operation failed; no successful verification claimed")
+            run["error_zh"]=zh(run["error"])
             self.event(run,run["error"],"error")
         finally:
             self.policy.revoke(run["id"])
@@ -866,6 +870,7 @@ def report_markdown(run:dict,lang:str="en")->str:
         run["status"]=label("run_status",run.get("status"))
         run["mode"]=label("mode",run.get("mode"))
         if "report_note" in run: run["report_note"]=label("note",run["report_note"])
+        if run.get("error"): run["error"]=zh(run["error"]) or run["error"]
         for finding in run["findings"]:
             finding["severity"]=label("severity",finding["severity"]); finding["state"]=label("state",finding["state"])
         for execution in run["executions"]:

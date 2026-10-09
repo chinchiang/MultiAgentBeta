@@ -14,9 +14,11 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
+from fastapi.exceptions import StarletteHTTPException
 from pydantic import ValidationError
 
 from .domain import Budget, ModelProfile, RunInput, origin
+from .messages import zh
 from .policy import PolicyError
 from .service import REPORT_LANGUAGES, Engine, report_markdown, report_sarif
 from .store import RunNotFound, Store
@@ -44,6 +46,14 @@ MAX_SESSIONS=8
 # so another local process cannot lock the operator out. Guessing resistance comes from the token's entropy.
 TOKEN_FAILURE_WINDOW,TOKEN_FAILURE_DELAY,TOKEN_FAILURE_DELAY_MAX=60,0.25,5.0
 SECURITY_HEADERS={"X-Content-Type-Options":"nosniff","Referrer-Policy":"no-referrer","X-Frame-Options":"DENY","Cache-Control":"no-store","Content-Security-Policy":"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'"}
+
+
+def problem(detail,status_code,headers=None):
+    """An error response: `detail` is the stable English text, `detail_zh` the console's Chinese wording when there is one."""
+    body={"detail":detail}
+    if (chinese:=zh(detail)) is not None:
+        body["detail_zh"]=chinese
+    return JSONResponse(body,status_code=status_code,headers=headers)
 
 
 def clock():
@@ -128,34 +138,34 @@ def create_app(data_dir=None, database_url=None, testing=False, session_token=No
 
     async def guard(request):
         if request.headers.get("host","") not in allowed_hosts:
-            return JSONResponse({"detail":"Untrusted Host"},status_code=403)
+            return problem("Untrusted Host",403)
         req_origin=request.headers.get("origin")
         if req_origin and req_origin.rstrip("/") not in allowed_origins:
-            return JSONResponse({"detail":"Untrusted Origin"},status_code=403)
+            return problem("Untrusted Origin",403)
         if request.headers.get("sec-fetch-site") in {"cross-site","same-site"}:
-            return JSONResponse({"detail":"Cross-site access denied"},status_code=403)
+            return problem("Cross-site access denied",403)
         try:
             declared_length=int(request.headers.get("content-length","0"))
             if declared_length<0:
                 raise ValueError
         except ValueError:
-            return JSONResponse({"detail":"Invalid Content-Length"},status_code=400)
+            return problem("Invalid Content-Length",400)
         if declared_length>512*1024:
-            return JSONResponse({"detail":"Request body too large"},status_code=413)
+            return problem("Request body too large",413)
         if request.method in {"POST","PUT","PATCH"}:
             body=bytearray()
             async for chunk in request.stream():
                 if len(body)+len(chunk)>512*1024:
-                    return JSONResponse({"detail":"Request body too large"},status_code=413)
+                    return problem("Request body too large",413)
                 body.extend(chunk)
             request._body=bytes(body)
         if request.url.path.startswith("/api/") and request.url.path!="/api/session":
             session=current_session(request)
             if not session:
-                return JSONResponse({"detail":"Local session required"},status_code=401)
+                return problem("Local session required",401)
             # Reads need the token too: the cookie alone would expose evidence, reports and settings.
             if not csrf_matches(request,session):
-                return JSONResponse({"detail":"CSRF token required"},status_code=403)
+                return problem("CSRF token required",403)
         return None
 
     def require_session(request:Request):
@@ -183,18 +193,22 @@ def create_app(data_dir=None, database_url=None, testing=False, session_token=No
         response.headers.update(SECURITY_HEADERS)
         return response
 
+    @app.exception_handler(StarletteHTTPException)
+    async def http_error(request,exc):
+        return problem(exc.detail,exc.status_code,exc.headers)
+
     @app.exception_handler(PolicyError)
     async def policy_error(request,exc):
-        return JSONResponse({"detail":str(exc)},status_code=409)
+        return problem(str(exc),409)
 
     @app.exception_handler(RunNotFound)
     async def not_found(request,exc):
-        return JSONResponse({"detail":"Run or artifact not found"},status_code=404)
+        return problem("Run or artifact not found",404)
 
     @app.exception_handler(ValidationError)
     async def invalid(request,exc):
         # A derived manifest (such as a retest's) can fail validation; that is the caller's input, not a crash.
-        return JSONResponse({"detail":"Invalid run configuration: "+"; ".join(str(e.get("msg",""))[:200] for e in exc.errors()[:5])},status_code=422)
+        return problem("Invalid run configuration: "+"; ".join(str(e.get("msg",""))[:200] for e in exc.errors()[:5]),422)
 
     @app.get("/api/session")
     async def session(request:Request):
@@ -212,7 +226,7 @@ def create_app(data_dir=None, database_url=None, testing=False, session_token=No
             if startup:
                 token_failures.append(moment)
                 await pause(min(TOKEN_FAILURE_DELAY_MAX,TOKEN_FAILURE_DELAY*len(token_failures)))
-            return JSONResponse({"detail":"Startup token required: open the URL printed when the local service started"},status_code=401)
+            return problem("Startup token required: open the URL printed when the local service started",401)
         for sid in [sid for sid,entry in sessions.items() if entry["expires"]<moment or entry["last_seen"]+SESSION_IDLE_SECONDS<moment]:
             del sessions[sid]
         sessions.pop(request.cookies.get("vibeaudit_session",""),None)
@@ -410,7 +424,7 @@ def create_app(data_dir=None, database_url=None, testing=False, session_token=No
     async def frontend(path:str):
         # A mistyped API call must fail as an API error, not succeed with the workbench HTML.
         if path=="api" or path.startswith("api/"):
-            return JSONResponse({"detail":"Not Found"},status_code=404)
+            return problem("Not Found",404)
         dist=ROOT/"frontend"/"dist"
         candidate=(dist/path).resolve()
         if candidate.is_relative_to(dist.resolve()) and candidate.is_file():

@@ -4,44 +4,67 @@
 
 ```mermaid
 flowchart TB
-  UI["Local React console"] --> API["FastAPI session / CSRF / scope"]
-  API --> C["AI Commander + LangGraph"]
-  C --> MG["LiteLLM gateway / per-agent profiles"]
-  C --> G["Deterministic gates + job ledger"]
-  G --> W["Read-only whitebox workers"]
-  W --> TM["Versioned assets / flows / threats / requirements"]
-  TM --> TC["Fixed case compiler / oracle / fixture hash"]
-  TC --> S["Independent supervisor / persistent lease"]
-  S --> B["Docker blackbox worker / network none"]
-  B --> R["Unix socket relay"]
-  R --> S
-  S --> T["Exact approved staging interfaces"]
-  T --> E["Independent effect collector / mock sink"]
-  E --> A["Run-bound evidence + trace graph"]
-  S --> A
-  A --> UI
+  subgraph CP["受信任的控制平面"]
+    direction TB
+    UI["React 控制台<br/>frontend/src"]
+    API["FastAPI：session／CSRF／scope<br/>api.py・workspace_api.py"]
+    C["指揮與 LangGraph 階段<br/>service.py"]
+    MG["模型閘道・每個代理的 profile<br/>providers.py"]
+    G["確定性閘門<br/>policy.py・contracts.py・domain.py"]
+    SUP["獨立 supervisor ＋ 持久 lease<br/>worker_runtime.py・lease.py<br/>持有目標憑證・IP 釘選傳輸 adapters.py"]
+    EC["獨立 effect collector<br/>effect_collector.py"]
+    DB[("證據寫入與 job 帳本<br/>store.py・traceability.py")]
+  end
+  subgraph UT["不受信任的資料與執行區"]
+    direction TB
+    REPO["受測儲存庫"]
+    ST["raw 私密 staging<br/>staging.py"]
+    SN["脫敏快照<br/>snapshot.py"]
+    LLM["模型端點"]
+    SC["唯讀白箱掃描 worker<br/>sandbox.py・deploy/scanners"]
+    BW["Docker 黑箱 worker（network none）<br/>worker_entry.py・tool_runners.py"]
+    T["核准的 staging 目標<br/>或 fixtures/ 合成靶場"]
+  end
+  UI -->|"/api/* ＋ X-CSRF-Token"| API
+  API --> C
+  REPO --> ST
+  REPO --> SN
+  C -->|"run_scanner"| SC
+  ST -->|"唯讀掛載"| SC
+  C --> MG
+  SN -->|"只給模型看"| MG
+  MG <--> LLM
+  MG -->|"模型輸出"| G
+  SC -->|"掃描器產物"| G
+  C --> G
+  G -->|"通過閘門的案例"| SUP
+  SUP <-->|"Unix socket relay"| BW
+  SUP -->|"精確 METHOD/path・身分・IP・預算"| T
+  T -.->|"副作用（fixture 路徑）"| EC
+  EC -.->|"事件序列與 sink 收據"| SUP
+  G --> DB
+  SUP -->|"observations"| DB
+  API <-->|"讀取證據・匯出報告"| DB
 ```
 
 ### 模組對照
 
-上圖每個節點對應 `backend/vibe_audit/`（或註明目錄）中的程式。README 的「系統架構與流程」以階段為主軸畫出同一個系統。
+上圖每個節點對應 `backend/vibe_audit/`（或註明目錄）中的程式。兩個區塊就是下文的信任邊界：不受信任區的內容只能以資料形式經過閘門或 supervisor 進入控制平面。README 的「系統架構與流程」以階段為主軸畫出同一個系統。
 
 | 節點 | 實作位置 |
 |---|---|
-| Local React console | `frontend/src`（建置到 `frontend/dist`，由 FastAPI 提供） |
-| FastAPI session / CSRF / scope | `api.py`、`workspace_api.py` |
-| AI Commander + LangGraph | `service.py`（`STAGES`，每個階段一個圖節點） |
-| LiteLLM gateway / per-agent profiles | `providers.py` |
-| Deterministic gates + job ledger | `policy.py`、`contracts.py`、`domain.py`、`store.py` |
-| Read-only whitebox workers | `staging.py`、`snapshot.py`、`sandbox.py`、`worker_runtime.py`（掃描器路徑）、`deploy/scanners/` |
-| Versioned assets / flows / threats / requirements | `service.py` 威脅模型階段、`catalog.py` 與 `catalogs/`、`traceability.py` |
-| Fixed case compiler / oracle / fixture hash | `contracts.py`、`policy.py`、`adapters.py`（oracle）、`fixture_protocol.py` |
-| Independent supervisor / persistent lease | `worker_runtime.py`、`lease.py` |
-| Docker blackbox worker / network none | `worker_entry.py`、`tool_runners.py`、`deploy/worker/` |
-| Unix socket relay | `worker_runtime.py` |
-| Exact approved staging interfaces | `adapters.py`（IP 釘選傳輸）；合成目標在 `fixtures/` |
-| Independent effect collector / mock sink | `effect_collector.py` |
-| Run-bound evidence + trace graph | `store.py`、`traceability.py`、`service.py` 的報告匯出 |
+| React 控制台 | `frontend/src`（建置到 `frontend/dist`，由 FastAPI 提供） |
+| FastAPI：session／CSRF／scope | `api.py`、`workspace_api.py` |
+| 指揮與 LangGraph 階段 | `service.py`（`STAGES`，每個階段一個圖節點） |
+| 模型閘道・每個代理的 profile | `providers.py`（LiteLLM，無 fallback） |
+| 確定性閘門 | `policy.py`（manifest、whitebox、threat、case 閘門與 `authorize`）、`contracts.py`、`domain.py` |
+| 獨立 supervisor ＋ 持久 lease | `worker_runtime.py`、`lease.py`；IP 釘選傳輸與 oracle 在 `adapters.py` |
+| 獨立 effect collector | `effect_collector.py`，經 `fixture_protocol.py` 使用 |
+| 證據寫入與 job 帳本 | `store.py`、`traceability.py`；報告匯出在 `service.py` |
+| raw 私密 staging／脫敏快照 | `staging.py`（只給掃描器）、`snapshot.py`（只給模型） |
+| 唯讀白箱掃描 worker | `sandbox.py`、`worker_runtime.py` 的 `run_scanner`、`deploy/scanners/` |
+| Docker 黑箱 worker | `worker_entry.py`、`tool_runners.py`、`deploy/worker/` |
+| 核准的 staging 目標 | 操作者提供；合成目標在 `fixtures/` |
 
 受信任的控制平面包含操作者設定、模型閘道、supervisor、資料庫與證據寫入器。儲存庫、模型、目標、掃描器產物與報告文字皆屬不受信任的資料。JSON schema 驗證並不保證語意正確。broker 是強制執行點；模型 prompt 不是安全邊界。
 
@@ -85,44 +108,67 @@ ZAP 只執行經審查的 requestor/passive 計畫。Schemathesis 使用明確�
 
 ```mermaid
 flowchart TB
-  UI["Local React console"] --> API["FastAPI session / CSRF / scope"]
-  API --> C["AI Commander + LangGraph"]
-  C --> MG["LiteLLM gateway / per-agent profiles"]
-  C --> G["Deterministic gates + job ledger"]
-  G --> W["Read-only whitebox workers"]
-  W --> TM["Versioned assets / flows / threats / requirements"]
-  TM --> TC["Fixed case compiler / oracle / fixture hash"]
-  TC --> S["Independent supervisor / persistent lease"]
-  S --> B["Docker blackbox worker / network none"]
-  B --> R["Unix socket relay"]
-  R --> S
-  S --> T["Exact approved staging interfaces"]
-  T --> E["Independent effect collector / mock sink"]
-  E --> A["Run-bound evidence + trace graph"]
-  S --> A
-  A --> UI
+  subgraph CP["Trusted control plane"]
+    direction TB
+    UI["React console<br/>frontend/src"]
+    API["FastAPI: session / CSRF / scope<br/>api.py · workspace_api.py"]
+    C["Commander and LangGraph stages<br/>service.py"]
+    MG["Model gateway · per-agent profiles<br/>providers.py"]
+    G["Deterministic gates<br/>policy.py · contracts.py · domain.py"]
+    SUP["Independent supervisor + persistent lease<br/>worker_runtime.py · lease.py<br/>holds target credentials · IP-pinned transport adapters.py"]
+    EC["Independent effect collector<br/>effect_collector.py"]
+    DB[("Evidence writer and job ledger<br/>store.py · traceability.py")]
+  end
+  subgraph UT["Untrusted data and execution"]
+    direction TB
+    REPO["Repository under test"]
+    ST["Raw private staging<br/>staging.py"]
+    SN["Redacted snapshot<br/>snapshot.py"]
+    LLM["Model endpoints"]
+    SC["Read-only whitebox scanner worker<br/>sandbox.py · deploy/scanners"]
+    BW["Docker blackbox worker (network none)<br/>worker_entry.py · tool_runners.py"]
+    T["Approved staging target<br/>or fixtures/ synthetic targets"]
+  end
+  UI -->|"/api/* + X-CSRF-Token"| API
+  API --> C
+  REPO --> ST
+  REPO --> SN
+  C -->|"run_scanner"| SC
+  ST -->|"read-only mount"| SC
+  C --> MG
+  SN -->|"the only source models see"| MG
+  MG <--> LLM
+  MG -->|"model output"| G
+  SC -->|"scanner artifacts"| G
+  C --> G
+  G -->|"cases that pass the gates"| SUP
+  SUP <-->|"Unix socket relay"| BW
+  SUP -->|"exact METHOD/path · identity · IP · budget"| T
+  T -.->|"side effects (fixture path)"| EC
+  EC -.->|"event sequence and sink receipts"| SUP
+  G --> DB
+  SUP -->|"observations"| DB
+  API <-->|"read evidence · export reports"| DB
 ```
 
 ### Module map
 
-Each node above maps to code in `backend/vibe_audit/` (or the named directory). The README's "Architecture Overview" draws the same system by stage.
+Each node above maps to code in `backend/vibe_audit/` (or the named directory). The two boxes are the trust boundary described below: anything from the untrusted box reaches the control plane only as data, through a gate or the supervisor. The README's "Architecture Overview" draws the same system by stage.
 
 | Node | Implementation |
 |---|---|
-| Local React console | `frontend/src` (built into `frontend/dist`, served by FastAPI) |
-| FastAPI session / CSRF / scope | `api.py`, `workspace_api.py` |
-| AI Commander + LangGraph | `service.py` (`STAGES`, one graph node per stage) |
-| LiteLLM gateway / per-agent profiles | `providers.py` |
-| Deterministic gates + job ledger | `policy.py`, `contracts.py`, `domain.py`, `store.py` |
-| Read-only whitebox workers | `staging.py`, `snapshot.py`, `sandbox.py`, `worker_runtime.py` (scanner path), `deploy/scanners/` |
-| Versioned assets / flows / threats / requirements | `service.py` threat-model stage, `catalog.py` with `catalogs/`, `traceability.py` |
-| Fixed case compiler / oracle / fixture hash | `contracts.py`, `policy.py`, `adapters.py` (oracle), `fixture_protocol.py` |
-| Independent supervisor / persistent lease | `worker_runtime.py`, `lease.py` |
-| Docker blackbox worker / network none | `worker_entry.py`, `tool_runners.py`, `deploy/worker/` |
-| Unix socket relay | `worker_runtime.py` |
-| Exact approved staging interfaces | `adapters.py` (pinned transport); synthetic targets in `fixtures/` |
-| Independent effect collector / mock sink | `effect_collector.py` |
-| Run-bound evidence + trace graph | `store.py`, `traceability.py`, report export in `service.py` |
+| React console | `frontend/src` (built into `frontend/dist`, served by FastAPI) |
+| FastAPI: session / CSRF / scope | `api.py`, `workspace_api.py` |
+| Commander and LangGraph stages | `service.py` (`STAGES`, one graph node per stage) |
+| Model gateway · per-agent profiles | `providers.py` (LiteLLM, no fallback) |
+| Deterministic gates | `policy.py` (manifest, whitebox, threat and case gates and `authorize`), `contracts.py`, `domain.py` |
+| Independent supervisor + persistent lease | `worker_runtime.py`, `lease.py`; IP-pinned transport and oracles in `adapters.py` |
+| Independent effect collector | `effect_collector.py`, used through `fixture_protocol.py` |
+| Evidence writer and job ledger | `store.py`, `traceability.py`; report export in `service.py` |
+| Raw private staging / redacted snapshot | `staging.py` (scanners only), `snapshot.py` (models only) |
+| Read-only whitebox scanner worker | `sandbox.py`, `run_scanner` in `worker_runtime.py`, `deploy/scanners/` |
+| Docker blackbox worker | `worker_entry.py`, `tool_runners.py`, `deploy/worker/` |
+| Approved staging target | Supplied by the operator; synthetic targets in `fixtures/` |
 
 The trusted control plane includes operator configuration, the model gateway, supervisor, database and evidence writer. Repository, model, target, scanner artifacts and report text are untrusted data. JSON schema validation does not establish semantic correctness. The broker is the enforcement point; model prompts are not security boundaries.
 

@@ -4,7 +4,7 @@
 
 ## API
 
-所有路由皆以 /api 開頭；在已有 session 的情況下，未知的 /api 路徑會回傳 JSON 404。GET /session 會以啟動權杖（X-VibeAudit-Token；以 `#token=…` 形式印在啟動 URL 中，或以 VIBEAUDIT_SESSION_TOKEN 固定）換取 8 小時的 HttpOnly SameSite=Strict session cookie 與 CSRF token。其餘所有 /api 請求（含讀取）都必須同時具備該 cookie 與 X-CSRF-Token：cookie 會送達主機上的每個連接埠，因此僅憑 cookie 無法開啟任何東西，而 GET /session 只會把 token 回傳給已出示該 token 的呼叫方。Host/Origin 檢查涵蓋工作區路由。錯誤格式：{detail: ...}。
+所有路由皆以 /api 開頭；在已有 session 的情況下，未知的 /api 路徑會回傳 JSON 404。GET /session 會以啟動權杖（X-VibeAudit-Token；以 `#token=…` 形式印在啟動 URL 中，或以 VIBEAUDIT_SESSION_TOKEN 固定）換取 8 小時的 HttpOnly SameSite=Strict session cookie 與 CSRF token。其餘所有 /api 請求（含讀取）都必須同時具備該 cookie 與 X-CSRF-Token：cookie 會送達主機上的每個連接埠，因此僅憑 cookie 無法開啟任何東西，而 GET /session 只會把 token 回傳給已出示該 token 的呼叫方。Host/Origin 檢查涵蓋工作區路由。錯誤格式：{detail: ..., detail_zh?: ...}；`detail` 是固定的英文訊息，`detail_zh` 是 `messages.py` 對照表中的正體中文說法（沒有對照時省略）。run 的 `error` 也同樣附帶 `error_zh`，控制台依介面語言顯示。
 
 | Method | Route | Purpose |
 |---|---|---|
@@ -61,7 +61,7 @@ Authoritative validation: backend/vibe_audit/domain.py, contracts.py, policy.py 
 
 ## API
 
-All routes start with /api; with a session, an unknown /api path is a JSON 404. GET /session exchanges the startup token (X-VibeAudit-Token; printed as `#token=…` in the launch URL, or fixed with VIBEAUDIT_SESSION_TOKEN) for an 8-hour HttpOnly SameSite=Strict session cookie and the CSRF token. Every other /api request, reads included, needs both the cookie and X-CSRF-Token: cookies reach every port on the host, so the cookie alone opens nothing, and GET /session returns the token only to a caller that already presents it. Host/Origin checks include workspace routes. Errors: {detail: ...}.
+All routes start with /api; with a session, an unknown /api path is a JSON 404. GET /session exchanges the startup token (X-VibeAudit-Token; printed as `#token=…` in the launch URL, or fixed with VIBEAUDIT_SESSION_TOKEN) for an 8-hour HttpOnly SameSite=Strict session cookie and the CSRF token. Every other /api request, reads included, needs both the cookie and X-CSRF-Token: cookies reach every port on the host, so the cookie alone opens nothing, and GET /session returns the token only to a caller that already presents it. Host/Origin checks include workspace routes. Errors: {detail: ..., detail_zh?: ...}; `detail` is the stable English message and `detail_zh` its Traditional Chinese wording from the table in `messages.py` (omitted when there is none). A run's `error` likewise carries `error_zh`; the console shows the one for its language.
 
 | Method | Route | Purpose |
 |---|---|---|

@@ -66,7 +66,7 @@ runtime-images.json 保存 provision 時讀出的 image IDs。工具的相依套
 
 ## 示範與效果比較的界線
 
-sample-report.json / .md 是實際本地合成 demo 的匯出。它刻意包含缺少副作用觀測的 inconclusive，整體標為 incomplete；這是驗證「不能假通過」的示例，不表示工程流程沒有執行完。
+sample-report.json / .md 是實際本地合成 demo 的匯出；.md 由 `scripts/render-sample-report.py` 依 .json 以報告產生器輸出中文版與英文版，測試會確認兩者一致。它刻意包含缺少副作用觀測的 inconclusive，整體標為 incomplete；這是驗證「不能假通過」的示例，不表示工程流程沒有執行完。
 
 benchmarks/results-synthetic 有七組、每組六件的 42 次合成比較，用於驗證預算、分組、記錄與指標管線。results-local 的本地 AST 基線實際讀取樣本；沒有模型端點的組別明列 blocked。沒有人工核定的完整 ground truth 與真模型輸出時，正式 efficacy metrics 保持 null，不發布減偏或 recall 改善結論。
 
@@ -169,7 +169,7 @@ Pinned versions and hashes provide traceable inputs and do not guarantee that al
 
 ## Boundaries of the Demo and Effect Comparison
 
-sample-report.json / .md are exports of an actual local synthetic demo. It deliberately includes inconclusive entries that lack side-effect observations and is marked incomplete overall; this is an example demonstrating that "passing cannot be faked", not an indication that the engineering flow failed to run to completion.
+sample-report.json / .md are exports of an actual local synthetic demo; `scripts/render-sample-report.py` renders the .md from the .json with the report generator, Chinese then English, and a test keeps them in step. It deliberately includes inconclusive entries that lack side-effect observations and is marked incomplete overall; this is an example demonstrating that "passing cannot be faked", not an indication that the engineering flow failed to run to completion.
 
 benchmarks/results-synthetic contains seven groups of six items each — 42 synthetic comparisons in total — used to verify the budget, grouping, recording and metric pipelines. The local AST baseline in results-local actually reads samples; groups without model endpoints are explicitly listed as blocked. Without a manually adjudicated complete ground truth and real model outputs, the official efficacy metrics remain null and no bias-reduction or recall-improvement conclusions are published.
 

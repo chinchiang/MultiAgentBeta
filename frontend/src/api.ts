@@ -30,11 +30,17 @@ function headers(path: string, json: boolean): Record<string, string> {
   else if (csrfToken) result['X-CSRF-Token'] = csrfToken;
   return result;
 }
+/** A service error that reads in the console's current language: `detail_zh` is the Chinese wording of `detail`, when the service has one. */
+class ServiceError extends Error {
+  constructor(private readonly zh: string, private readonly en: string) { super(); }
+  override get message() { return t(this.zh, this.en); }
+}
 async function failure(response: Response): Promise<Error> {
   let data: unknown;
   try { data = await response.json(); } catch { return new Error(t(`無法讀取服務回應（HTTP ${response.status}）。請確認本地 API 已啟動。`,`Cannot read the service response (HTTP ${response.status}). Make sure the local API is running.`)); }
-  const detail = (data as {detail?: unknown})?.detail;
-  return new Error(typeof detail === 'string' ? detail : JSON.stringify(detail ?? data));
+  const { detail, detail_zh } = (data ?? {}) as {detail?: unknown; detail_zh?: unknown};
+  const en = typeof detail === 'string' ? detail : JSON.stringify(detail ?? data);
+  return new ServiceError(typeof detail_zh === 'string' ? detail_zh : en, en);
 }
 export async function api<T>(path: string, body?: unknown, method: 'GET'|'POST'|'PUT' = body === undefined ? 'GET' : 'POST'): Promise<T> {
   const response = await fetch(`/api${path}`, {
