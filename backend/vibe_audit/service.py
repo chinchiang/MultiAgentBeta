@@ -827,12 +827,49 @@ def model_body_denied(run:dict,case:dict)->bool:
                    for r in run["manifest"].get("allowed_requests",[]))
 
 
-def report_markdown(run:dict)->str:
+# Report languages: English (the default, for existing callers) and Traditional Chinese for the console's Chinese interface.
+REPORT_LANGUAGES=("en","zh-Hant")
+_REPORT_TEXT={
+    "en":{"run":"Run: {id}","retest":"Retest of: {parent} (findings: {findings})","mode":"Mode: {mode} | Status: {status}",
+          "error":"Error: {error}","note":"Incomplete report; workflow has not finished","findings":"## Findings","evidence":"  Evidence: {ids}",
+          "gaps":"## Coverage gaps","executions":"## Executions","limits":"## Capability limits","sep":", "},
+    "zh-Hant":{"run":"執行：{id}","retest":"複測對象：{parent}（發現：{findings}）","mode":"模式：{mode}｜狀態：{status}",
+               "error":"錯誤：{error}","note":"報告未完整；流程尚未結束","findings":"## 發現","evidence":"  證據：{ids}",
+               "gaps":"## 涵蓋缺口","executions":"## 執行紀錄","limits":"## 能力限制","sep":"、"},
+}
+# Chinese labels for the codes a report shows, the same wording as the console. Unknown codes stay as they are.
+_REPORT_LABELS_ZH={
+    "run_status":{"created":"待啟動","awaiting_approval":"待核准案例","running":"執行中","cancelling":"停止中","cancelled":"已停止",
+                  "completed":"已完成","incomplete":"未完整完成","blocked":"受阻","failed":"執行失敗"},
+    "execution_status":{"pass":"未觀測到違規","fail":"觀測到違規","inconclusive":"證據不足","blocked":"受阻",
+                        "execution_error":"執行錯誤","outcome_unknown":"結果不明"},
+    "mode":{"demo":"合成示範","live":"實際評估"},
+    "severity":{"critical":"嚴重","high":"高","medium":"中","low":"低","info":"資訊"},
+    "state":{"hypothesis":"待驗證假設","corroborated_static":"靜態佐證","validated_dynamic":"動態驗證","refuted":"已排除","inconclusive":"尚無定論"},
+    "note":{"SYNTHETIC DEMO ONLY: not real model or application validation":"僅為合成示範：不是真實模型或應用程式的驗證",
+            "Results cover only executed cases and available evidence; unresolved gaps remain visible":"結果只涵蓋已執行的案例與現有證據；未解決的缺口會保持可見"},
+}
+
+
+def report_markdown(run:dict,lang:str="en")->str:
+    if lang not in REPORT_LANGUAGES:
+        raise ValueError("Unsupported report language")
+    text=_REPORT_TEXT[lang]
     # Escape untrusted values before Markdown consumers can interpret them.
     def safe(value):
         value=html.escape(str(value),quote=True).replace("\r"," ").replace("\n"," ")
         return "".join("\\"+c if c in "\\\x60*_{}[]()#!|" else c for c in value)
     run=copy.deepcopy(run)
+    if lang=="zh-Hant":
+        # Codes become labels before escaping, so every value still passes through safe().
+        label=lambda kind,value:_REPORT_LABELS_ZH[kind].get(value,value) if isinstance(value,str) else value
+        run["status"]=label("run_status",run.get("status"))
+        run["mode"]=label("mode",run.get("mode"))
+        if "report_note" in run: run["report_note"]=label("note",run["report_note"])
+        for finding in run["findings"]:
+            finding["severity"]=label("severity",finding["severity"]); finding["state"]=label("state",finding["state"])
+        for execution in run["executions"]:
+            execution["status"]=label("execution_status",execution["status"])
     for key in ("name","id","mode","status","report_note"):
         if key in run: run[key]=safe(run[key])
     for finding in run["findings"]:
@@ -843,16 +880,15 @@ def report_markdown(run:dict)->str:
     run["gaps"]=[safe(value) for value in run["gaps"]]
     manifest=run.get("manifest") or {}
     # A retest report says what it re-checks, so a clean result is not read as a fresh assessment.
-    retest=[f"Retest of: {safe(manifest['parent_run_id'])} (findings: {', '.join(safe(value) for value in manifest.get('parent_finding_ids',[]))})"] if manifest.get("parent_run_id") else []
-    error=[f"Error: {safe(run['error'])}"] if run.get("error") else []
-    lines=[f"# {run['name']}","",f"Run: {run['id']}",*retest,f"Mode: {run['mode']} | Status: {run['status']}",*error,"",run.get("report_note","Incomplete report; workflow has not finished"),"","## Findings",""]
+    retest=[text["retest"].format(parent=safe(manifest["parent_run_id"]),findings=text["sep"].join(safe(value) for value in manifest.get("parent_finding_ids",[])))] if manifest.get("parent_run_id") else []
+    error=[text["error"].format(error=safe(run["error"]))] if run.get("error") else []
+    lines=[f"# {run['name']}","",text["run"].format(id=run["id"]),*retest,text["mode"].format(mode=run["mode"],status=run["status"]),*error,"",run.get("report_note",text["note"]),"",text["findings"],""]
     for f in run["findings"]:
-        lines.extend([f"- [{f['severity']} / {f['state']}] {f['title']}",f"  Evidence: {', '.join(f['evidence_ids'])}"])
-    lines.extend(["","## Coverage gaps",""]+["- "+str(g) for g in run["gaps"]])
-    lines.extend(["","## Executions",""]+[f"- {e['case_id']}: {e['status']} — {e['reason']}" for e in run["executions"]])
-    lines.extend(["","## Capability limits",""]+["- "+safe(value) for value in run.get("limitations",[])])
+        lines.extend([f"- [{f['severity']} / {f['state']}] {f['title']}",text["evidence"].format(ids=text["sep"].join(f["evidence_ids"]))])
+    lines.extend(["",text["gaps"],""]+["- "+str(g) for g in run["gaps"]])
+    lines.extend(["",text["executions"],""]+[f"- {e['case_id']}: {e['status']} — {e['reason']}" for e in run["executions"]])
+    lines.extend(["",text["limits"],""]+["- "+safe(value) for value in run.get("limitations",[])])
     return "\n".join(lines)
-
 
 SARIF_LEVELS={"validated_dynamic":"error","corroborated_static":"warning","hypothesis":"note","inconclusive":"note","refuted":"none"}
 # Line breaks, other controls and bidi or zero-width marks, which can hide or reorder text in a viewer.

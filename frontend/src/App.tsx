@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import { api, download, forgetStartupToken, setCSRF, streamEvents } from './api';
 import { ProjectControls, ModelPresetControls, ExecutionSettings, TraceRegister, RetestControl, ROLE_LABELS, defaultExtensions } from './extensions';
-import { labels, locale, setLang, t, useLang } from './i18n';
+import { getLang, labels, locale, setLang, t, useLang } from './i18n';
 import type { AuthProfile, Budget, Capabilities, Finding, ModelProfile, Provider, Run, RunInput, RunExtensions, Session, TestCase } from './types';
 
 const STAGES = () => [['intake',t('接收','Intake')],['preflight',t('預檢','Preflight')],['whitebox',t('白箱審查','White-box review')],['adjudication',t('證據仲裁','Adjudication')],['threat_model',t('威脅建模','Threat modeling')],['case_design',t('測試設計','Test design')],['blackbox',t('黑箱驗證','Black-box verification')],['report',t('產出報告','Report')],['complete',t('完成','Complete')]];
@@ -113,7 +113,7 @@ const resumable=(run:Run)=>!run.workers_pending_cleanup&&!run.usage_unknown&&!ru
 const REPORT_FORMATS = () => [['markdown','Markdown','md'],['json',t('完整 JSON','Full JSON'),'json'],['sarif','SARIF','sarif']] as const;
 function ReportMenu({run}: {run:Run}) {
   const [error,setError] = useState('');
-  async function save(format:string,extension:string) {setError('');try {await download(`/runs/${encodeURIComponent(run.id)}/report?format=${format}`,`vibe-audit-${run.id.slice(0,8)}.${extension}`);}catch(e){setError(t(`匯出失敗：${e instanceof Error?e.message:String(e)}`,`Export failed: ${e instanceof Error?e.message:String(e)}`));}}
+  async function save(format:string,extension:string) {setError('');try {await download(`/runs/${encodeURIComponent(run.id)}/report?format=${format}&lang=${getLang()}`,`vibe-audit-${run.id.slice(0,8)}.${extension}`);}catch(e){setError(t(`匯出失敗：${e instanceof Error?e.message:String(e)}`,`Export failed: ${e instanceof Error?e.message:String(e)}`));}}
   return <details className="download-menu"><summary className="button secondary small"><Icon name="download" size={15}/>{t('匯出報告','Export report')}</summary><div>{REPORT_FORMATS().map(([format,label,extension])=><button type="button" key={format} onClick={()=>void save(format,extension)}>{label}<Icon name="download" size={13}/></button>)}{error&&<p className="download-error" role="alert">{error}</p>}</div></details>;
 }
 type RunAction = 'start'|'cancel'|'resume'|'reconcile'|'approve-cases';

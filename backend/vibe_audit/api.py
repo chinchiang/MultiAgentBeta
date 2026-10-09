@@ -18,7 +18,7 @@ from pydantic import ValidationError
 
 from .domain import Budget, ModelProfile, RunInput, origin
 from .policy import PolicyError
-from .service import Engine, report_markdown, report_sarif
+from .service import REPORT_LANGUAGES, Engine, report_markdown, report_sarif
 from .store import RunNotFound, Store
 
 ROOT=Path(__file__).resolve().parents[2]
@@ -363,7 +363,10 @@ def create_app(data_dir=None, database_url=None, testing=False, session_token=No
             raise HTTPException(409,"Evidence integrity check failed") from None
 
     @api.get("/runs/{run_id}/report")
-    async def report(run_id:str,format:str="json"):
+    async def report(run_id:str,format:str="json",lang:str="en"):
+        # lang only changes the Markdown report's wording; JSON and SARIF are data for other tools.
+        if lang not in REPORT_LANGUAGES:
+            raise HTTPException(400,"Choose lang en or zh-Hant")
         run=store.get(run_id)
         for artifact in run["artifacts"]:
             try:
@@ -371,7 +374,7 @@ def create_app(data_dir=None, database_url=None, testing=False, session_token=No
             except (ValueError,OSError):
                 raise HTTPException(409,"Report blocked: evidence integrity failure") from None
         if format=="markdown":
-            return PlainTextResponse(report_markdown(run),media_type="text/markdown")
+            return PlainTextResponse(report_markdown(run,lang),media_type="text/markdown")
         if format=="sarif":
             return report_sarif(run)
         if format!="json":

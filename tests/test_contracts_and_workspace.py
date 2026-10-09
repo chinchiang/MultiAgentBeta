@@ -289,6 +289,9 @@ def test_workspace_settings_catalog_and_linked_retest(tmp_path):
         assert sarif=={"runId":child["id"],"retestOf":run["id"],"retestedFindingIds":[finding_id]}
         assert "retestOf" not in client.get(f"/api/runs/{run['id']}/report",params={"format":"sarif"}).json()["runs"][0]["properties"]
         assert "Retest of" not in client.get(f"/api/runs/{run['id']}/report",params={"format":"markdown"}).text
+        chinese=client.get(f"/api/runs/{child['id']}/report",params={"format":"markdown","lang":"zh-Hant"}).text
+        assert "複測對象："+run["id"]+"（發現："+finding_id.replace("_","\\_")+"）" in chinese and "## 發現" in chinese
+        assert client.get(f"/api/runs/{child['id']}/report",params={"format":"markdown","lang":"fr"}).status_code==400
 
 
 def test_finding_decision_needs_independent_execution_evidence(tmp_path):

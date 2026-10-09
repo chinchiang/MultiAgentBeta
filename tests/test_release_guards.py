@@ -61,6 +61,23 @@ def test_report_markdown_never_interprets_untrusted_html_or_links():
     assert run["name"].startswith("<script>")
 
 
+def test_chinese_report_uses_chinese_wording_and_escapes_the_same_way():
+    run = {"name":'<script>alert(1)</script>',"id":"r","mode":"demo","status":"incomplete",
+        "report_note":"SYNTHETIC DEMO ONLY: not real model or application validation",
+        "findings":[{"severity":"high","state":"hypothesis","title":"[click](javascript:alert(1))","evidence_ids":["e1","e2"]}],
+        "gaps":["<img src=x onerror=alert(1)>"],"executions":[{"case_id":"C-1","status":"outcome_unknown","reason":"sent"}],
+        "limitations":["General bound"],"manifest":{"parent_run_id":"p1","parent_finding_ids":["f1"]}}
+    report = report_markdown(run, "zh-Hant")
+    assert "<script>" not in report and "<img " not in report and "[click](javascript:" not in report
+    for text in ("## 發現", "## 涵蓋缺口", "## 執行紀錄", "## 能力限制", "模式：合成示範｜狀態：未完整完成", "- [高 / 待驗證假設]",
+                 "  證據：e1、e2", "- C-1: 結果不明", "複測對象：p1（發現：f1）", "僅為合成示範：不是真實模型或應用程式的驗證"):
+        assert text in report, text
+    # An unknown code is shown as it is rather than dropped.
+    assert "[mystery / hypothesis]" in report_markdown({**run, "findings":[{**run["findings"][0], "severity":"mystery"}]})
+    with pytest.raises(ValueError):
+        report_markdown(run, "fr")
+
+
 async def test_optional_reporter_can_order_but_cannot_invent_findings(tmp_path):
     store = Store(tmp_path)
     engine = Engine(store)

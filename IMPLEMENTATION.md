@@ -19,7 +19,7 @@
 | GET | /runs/{id}/events | SSE 進度事件 |
 | GET | /runs/{id}/trace | 持久化的實體、連結與歷史 |
 | GET | /runs/{id}/evidence/{artifact_id} | 綁定於 run、經雜湊驗證的信封 |
-| GET | /runs/{id}/report?format=json or markdown or sarif | 經驗證的匯出 |
+| GET | /runs/{id}/report?format=json or markdown or sarif&lang=en or zh-Hant | 經驗證的匯出；lang 只影響 Markdown 報告的用語（預設 en），JSON 與 SARIF 不變 |
 | POST | /runs/{id}/retest | 建立連結到原始發現的新 run（trace 記錄 `retests` 連結，Markdown 與 SARIF 會標註父項） |
 | POST | /runs/{id}/reconcile | 操作者對 worker 清理的證明；關閉處於 cancelling 狀態的 run，該 run 仍不可恢復（unresumable） |
 | POST | /runs/{id}/findings/{finding_id}/decision | 以證據為依據的 refuted／inconclusive 決策：被引用的黑箱執行必須測試該發現的威脅（若該發現沒有威脅連結，由操作者命名這些威脅）；要駁回（refute）需要一次 pass，且該 run 中這些威脅沒有任何失敗；validated_dynamic 狀態的發現只能透過已連結的 retest 清除 |
@@ -76,7 +76,7 @@ All routes start with /api; with a session, an unknown /api path is a JSON 404. 
 | GET | /runs/{id}/events | SSE progress events |
 | GET | /runs/{id}/trace | Persisted entities, links and history |
 | GET | /runs/{id}/evidence/{artifact_id} | Run-bound, hash-verified envelope |
-| GET | /runs/{id}/report?format=json or markdown or sarif | Verified export |
+| GET | /runs/{id}/report?format=json or markdown or sarif&lang=en or zh-Hant | Verified export; lang changes only the Markdown report's wording (default en), JSON and SARIF stay the same |
 | POST | /runs/{id}/retest | New run linked to original findings (trace `retests` links, Markdown and SARIF note the parent) |
 | POST | /runs/{id}/reconcile | Operator attestation of worker cleanup; closes a cancelling run, which stays unresumable |
 | POST | /runs/{id}/findings/{finding_id}/decision | Evidence-backed refuted/inconclusive decision: cited black-box executions must test the finding's threats (the operator names them for a finding without threat links); refuting needs a pass and no failure of those threats in the run; a validated_dynamic finding is cleared only by a linked retest |
