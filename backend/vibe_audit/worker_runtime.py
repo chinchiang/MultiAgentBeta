@@ -19,6 +19,7 @@ import sys
 import tempfile
 import uuid
 
+from .diagnostics import note_failure
 from .lease import LeaseStore,LeaseError,canonical_hash
 from .staging import remove_private_tree
 
@@ -273,7 +274,8 @@ class WorkerRuntime:
             # Recorded with the run, so whether AppArmor, user namespaces or rootless mode also applied stays visible.
             return {"available":True,"isolation":"docker_network_none","production_ready":True,
                     "security_options":sorted(item[0].removeprefix("name=") for item in options)}
-        except Exception:
+        except Exception as exc:
+            note_failure("docker daemon verification",exc)
             return {"available":False,"reason":"Local Linux Docker daemon could not be verified"}
 
     async def tool_inventory(self):
@@ -470,7 +472,8 @@ class WorkerRuntime:
                         except Exception: pass
                         await send({"kind":"grant","request_id":message["request_id"],"allow":allow})
                     elif message.get("kind")=="result": result=message["result"];break
-            except (Exception,asyncio.CancelledError):
+            except (Exception,asyncio.CancelledError) as exc:
+                note_failure(f"worker {cap['task_id']} supervision",exc)
                 await asyncio.to_thread(self.leases.revoke,cap["id"],"Controller stopped awaiting worker")
                 try: await send({"kind":"cancel"})
                 except Exception: pass
@@ -514,6 +517,8 @@ class WorkerRuntime:
             # Our own gate messages are fixed local text; an OSError or unexpected
             # error string can embed host paths or database details, so only its
             # type name reaches the run record.
+            if not isinstance(exc,(WorkerBlocked,LeaseError)):
+                note_failure("worker prerequisites",exc)
             reason=str(exc) if isinstance(exc,(WorkerBlocked,LeaseError)) else f"{type(exc).__name__}: worker prerequisites failed before any dispatch"
             return {"status":"blocked","reason":reason,"cleanup_confirmed":True}
 

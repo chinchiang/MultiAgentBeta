@@ -15,6 +15,7 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import InMemorySaver
 
 from .catalog import CatalogError
+from .diagnostics import note_failure
 from .domain import RunInput, digest, new_run, now
 from .messages import zh
 from .policy import Policy, PolicyError, elapsed_seconds, sealed
@@ -267,6 +268,7 @@ class Engine:
                 self.event(run,"Workflow returned after cancellation; no further capabilities remain", "warning")
                 return
             run["status"]="cancelling" if run.get("workers_pending_cleanup") else "blocked" if isinstance(exc,PolicyError) else "failed"
+            note_failure(f"run {run['id']} stage {run.get('stage')}",exc)
             # Exception bodies from provider/targets can include sensitive data: never expose them.
             # Policy and catalog messages are fixed local text, so they stay diagnosable.
             from .providers import ProviderError
@@ -578,6 +580,7 @@ class Engine:
         for p in profiles:
             result=done[p["id"]] if p["id"] in done else results[p["id"]]
             if isinstance(result,BaseException):
+                note_failure(f"run {run['id']} review {p['id']}",result)
                 run["reviews"].append(dict(agent_id=p["id"],provider=p["provider"],model_id=p["model_id"],family=p["family"],status="incomplete",findings=[],gaps=[type(result).__name__],input_hash=run["source_digest"],simulated=False))
             else:
                 run["reviews"].append(result)
