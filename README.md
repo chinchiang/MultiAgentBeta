@@ -129,8 +129,8 @@ MultiAgentBeta/
 │   ├── benchmark.py / benchmark_matching.py  # 獨立的比較評估工具（不在評估流程中）
 │   └── tokenizers/                #   離線 tiktoken 詞彙表與授權
 ├── frontend/                      # React ＋ TypeScript ＋ Vite 控制台
-│   ├── src/                       #   App.tsx、extensions.tsx、api.ts、types.ts、i18n.ts（中英切換）、樣式
-│   ├── scripts/                   #   contract-smoke、browser-smoke、check-i18n
+│   ├── src/                       #   App.tsx、extensions.tsx、api.ts、types.ts、i18n.ts（中英切換）、messages.ts（引擎訊息中文）、樣式
+│   ├── scripts/                   #   contract-smoke、browser-smoke、check-i18n、check-messages
 │   └── dist/                      #   已建置的介面，由 FastAPI 同 origin 提供
 ├── tests/                         # pytest（22 個檔案，含 test_bilingual_docs.py 文件雙語檢查）
 ├── catalogs/                      # ASVS 5.0.0、WSTG 4.2、LLM 2026、Agentic 2026 標準 JSON 與 manifest
@@ -146,7 +146,8 @@ MultiAgentBeta/
 │                                  #   VIBESEC_ADVISORIES、threat-model.yaml、run-input.schema.json、驗證收據、截圖、history/
 ├── scripts/                       # setup／start-local、verify、provision-runtime／offline-db、package-release、hash-lock、
 │                                  #   redact-receipts、summarize-validation、refresh-catalog、render-sample-report
-├── .github/workflows/ci.yml       # backend（pytest ＋ PostgreSQL）與 frontend（typecheck、check:i18n、建置一致性、清單）
+├── .github/workflows/ci.yml       # backend（pytest ＋ PostgreSQL）與 frontend（typecheck、check:i18n、check:messages、建置一致性、清單）
+├── .github/workflows/integration.yml  # 以 deploy/ 建置的映像跑 Docker worker、掃描器、工具、fixture 與完整 pipeline 整合測試
 ├── .claude/                       # 雲端 session 的 SessionStart hook（不進發佈檔）
 ├── CLAUDE.md                      # 開發指引（不進發佈檔）
 ├── IMPLEMENTATION.md              # API 與模組契約
@@ -322,8 +323,8 @@ MultiAgentBeta/
 │   ├── benchmark.py / benchmark_matching.py  # separate comparative-evaluation tool (not part of an assessment)
 │   └── tokenizers/                #   offline tiktoken vocabulary and license
 ├── frontend/                      # React + TypeScript + Vite console
-│   ├── src/                       #   App.tsx, extensions.tsx, api.ts, types.ts, i18n.ts (language switch), styles
-│   ├── scripts/                   #   contract-smoke, browser-smoke, check-i18n
+│   ├── src/                       #   App.tsx, extensions.tsx, api.ts, types.ts, i18n.ts (language switch), messages.ts (engine messages in Chinese), styles
+│   ├── scripts/                   #   contract-smoke, browser-smoke, check-i18n, check-messages
 │   └── dist/                      #   built UI, served by FastAPI on the same origin
 ├── tests/                         # pytest (22 files, including test_bilingual_docs.py for bilingual docs)
 ├── catalogs/                      # ASVS 5.0.0, WSTG 4.2, LLM 2026, Agentic 2026 standard JSON and manifest
@@ -339,7 +340,8 @@ MultiAgentBeta/
 │                                  #   VIBESEC_ADVISORIES, threat-model.yaml, run-input.schema.json, receipts, screenshots, history/
 ├── scripts/                       # setup/start-local, verify, provision-runtime/offline-db, package-release, hash-lock,
 │                                  #   redact-receipts, summarize-validation, refresh-catalog, render-sample-report
-├── .github/workflows/ci.yml       # backend (pytest + PostgreSQL) and frontend (typecheck, check:i18n, build parity, manifest)
+├── .github/workflows/ci.yml       # backend (pytest + PostgreSQL) and frontend (typecheck, check:i18n, check:messages, build parity, manifest)
+├── .github/workflows/integration.yml  # Docker worker, scanner, tool, fixture and full-pipeline integration tests on images built from deploy/
 ├── .claude/                       # SessionStart hook for cloud sessions (excluded from releases)
 ├── CLAUDE.md                      # development guide (excluded from releases)
 ├── IMPLEMENTATION.md              # API and module contracts

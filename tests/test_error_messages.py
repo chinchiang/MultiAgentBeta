@@ -7,53 +7,101 @@ import pytest
 from fastapi.testclient import TestClient
 
 from vibe_audit.api import create_app
-from vibe_audit.messages import PATTERNS, ZH, zh
+from vibe_audit.messages import PATTERNS, STATUS_ZH, ZH, zh
 
 ROOT = Path(__file__).resolve().parents[1]
 BACKEND = ROOT / "backend" / "vibe_audit"
 CJK = re.compile(r"[一-鿿]")
-RAISERS = {"PolicyError", "HTTPException", "problem"}
-# Arguments that pass on a message written elsewhere (an adapter, a runtime probe, an exception handler); those
-# messages stay English unless they also have an entry.
-PASSED_ON = {"str(exc)", "capabilities.get('reason', 'Isolated runtime unavailable')", "exc.detail"}
-
-
-def sample(node):
-    """The message a raise site produces, with each run-specific value replaced by a placeholder."""
+RAISERS = {"PolicyError", "HTTPException", "problem", "AdapterBlocked", "ProviderError", "CatalogError"}
+# Calls whose first message argument is shown to the operator: activity events, snapshot gaps and run gaps.
+REPORTERS = {"event": 1, "gap": 0}
+# The separate benchmark tool and the table itself report nothing to the console.
+SKIPPED_MODULES = {"benchmark.py", "benchmark_matching.py", "messages.py"}
+def sample(node, top=True):
+    """The message a site produces, with each run-specific value replaced by a placeholder."""
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return node.value
     if isinstance(node, ast.JoinedStr):
         return "".join(part.value if isinstance(part, ast.Constant) else "1" for part in node.values)
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
-        left, right = sample(node.left), sample(node.right)
-        return None if left is None or right is None else left + right
+        return sample(node.left, False) + sample(node.right, False)
+    if isinstance(node, ast.GeneratorExp):
+        return sample(node.elt, top)
+    return None if top else "1"
+
+
+def message_args(node):
+    """The message arguments of one AST node, if it reports a message to the operator."""
     if isinstance(node, ast.Call):
-        return "X1, X2"
-    return None
+        name = getattr(node.func, "id", getattr(node.func, "attr", None))
+        if name in RAISERS:
+            args = [arg for arg in node.args if not (isinstance(arg, ast.Constant) and isinstance(arg.value, int))]
+            args += [keyword.value for keyword in node.keywords if keyword.arg == "detail"]
+            return args[:1]
+        if name in REPORTERS and len(node.args) > REPORTERS[name]:
+            return [node.args[REPORTERS[name]]]
+        target = getattr(node.func, "value", None)
+        gaps = (isinstance(target, ast.Subscript) and getattr(target.slice, "value", None) == "gaps") or getattr(target, "id", None) == "gaps"
+        if name in {"append", "extend"} and gaps:
+            return node.args[:1]
+        return [keyword.value for keyword in node.keywords if keyword.arg == "reason"]
+    if isinstance(node, ast.Dict):
+        return [value for key, value in zip(node.keys, node.values) if getattr(key, "value", None) == "reason"]
+    if isinstance(node, ast.Assign) and isinstance(node.value, ast.Tuple):
+        names = [getattr(target, "id", None) for target in getattr(node.targets[0], "elts", [])]
+        return [node.value.elts[names.index("reason")]] if "reason" in names else []
+    return []
 
 
 def raise_sites():
     for path in sorted(BACKEND.glob("*.py")):
+        if path.name in SKIPPED_MODULES:
+            continue
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
-            if not isinstance(node, ast.Call):
-                continue
-            name = getattr(node.func, "id", getattr(node.func, "attr", None))
-            if name not in RAISERS:
-                continue
-            args = [arg for arg in node.args if not (isinstance(arg, ast.Constant) and isinstance(arg.value, int))]
-            args += [keyword.value for keyword in node.keywords if keyword.arg == "detail"]
-            if args:
-                yield pytest.param(args[0], id=f"{path.name}:{node.lineno}")
+            # Either branch of a conditional message is reported.
+            args = [side for arg in message_args(node) for side in ([arg.body, arg.orelse] if isinstance(arg, ast.IfExp) else [arg])]
+            for arg in args:
+                if not (isinstance(arg, ast.Constant) and arg.value in ("", None)):
+                    yield pytest.param(arg, id=f"{path.name}:{arg.lineno}:{arg.col_offset}")
+
+
+def candidates(node):
+    """The messages an argument can carry. A bare variable, field or call passes on text written elsewhere: another
+    message (checked where it is written) or untrusted repository, model, scanner or target text, which stays as it is.
+    Only the fixed fallbacks of such expressions (`x or "..."`, `.get(k, "...")`, `next(..., "...")`) are messages here."""
+    text = sample(node)
+    if text is not None:
+        return [text]
+    if isinstance(node, ast.BoolOp):
+        return [text for value in node.values for text in candidates(value)]
+    if isinstance(node, ast.Call) and len(node.args) == 2 and getattr(node.func, "attr", getattr(node.func, "id", None)) in {"get", "next"}:
+        return candidates(node.args[1])
+    return []
 
 
 @pytest.mark.parametrize("message", list(raise_sites()))
-def test_every_raised_message_has_chinese_wording(message):
-    source = ast.unparse(message)
-    if source in PASSED_ON:
-        return
-    text = sample(message)
-    assert text is not None, f"cannot read the message of {source}; add it to PASSED_ON only if it passes on another message"
-    assert zh(text) is not None, f"no Chinese wording for: {text}"
+def test_every_reported_message_has_chinese_wording(message):
+    for text in candidates(message):
+        # "<value>: <value>" joins a label and a message that are both reported, and checked, elsewhere.
+        if re.fullmatch(r"1: 1( — 1)?", text):
+            continue
+        assert zh(text) is not None, f"no Chinese wording for: {text}"
+
+
+def test_messages_built_in_two_steps_have_chinese_wording():
+    # policy.py builds this gap in a variable before adding it.
+    assert zh("Automated threats without a provided case were not tested: T-001") == "沒有提供案例的自動化威脅未經測試：T-001"
+
+
+def test_every_engine_written_text_of_the_demo_run_reads_in_chinese():
+    import json
+    run = json.loads((ROOT / "docs" / "sample-report.json").read_text(encoding="utf-8"))
+    threats = run["threat_model"]["threats"]
+    texts = [event["message"] for event in run["events"]] + run["gaps"] + [finding["title"] for finding in run["findings"]]
+    texts += [execution["reason"] for execution in run["executions"]] + [case["title"] for case in run["cases"]]
+    texts += [threat[key] for threat in threats for key in ("title", "category", "invariant", "impact")]
+    missing = sorted({text for text in texts if zh(text) is None})
+    assert not missing, f"engine-written demo text without Chinese wording: {missing}"
 
 
 def test_chinese_wording_is_chinese_and_every_entry_is_used():
@@ -62,7 +110,8 @@ def test_chinese_wording_is_chinese_and_every_entry_is_used():
     unused = [message for message in ZH if message not in source and message not in {"Not Found", "Method Not Allowed"}]
     assert not unused, f"entries no backend code reports: {unused}"
     for chinese in [*ZH.values(), *(template for _, template in PATTERNS)]:
-        assert CJK.search(chinese), chinese
+        # A template may only rearrange its values with Chinese punctuation.
+        assert CJK.search(chinese) or "：" in chinese, chinese
     assert not any(c in chinese for chinese in ZH.values() for c in "们这个对说为时问进"), "use Traditional Chinese"
 
 
@@ -85,6 +134,12 @@ def test_api_errors_carry_chinese_detail(tmp_path):
     unknown = client.get("/api/no-such-route")
     assert unknown.status_code == 404 and unknown.json() == {"detail": "Not Found", "detail_zh": "找不到"}
     assert client.put("/api/runs").json() == {"detail": "Method Not Allowed", "detail_zh": "不允許此方法"}
+    # The console reads the same table; GET /api/messages needs the session like every other route.
+    table = client.get("/api/messages").json()
+    assert table == {"exact": ZH, "status": STATUS_ZH, "patterns": [list(pair) for pair in PATTERNS]}
+    for pattern, _ in PATTERNS:
+        # Patterns are read by JavaScript too: no Python-only group, flag or lookbehind syntax.
+        assert not re.search(r"\(\?(P|<[=!]|[aiLmsux])", pattern), pattern
 
 
 def test_chinese_report_shows_the_run_error_in_chinese():

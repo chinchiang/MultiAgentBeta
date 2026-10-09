@@ -1,5 +1,5 @@
-# Checks that need no model credentials, Docker images or a target. Integration tests that
-# require them stay skipped here; docs/VALIDATION.md records where those were last run.
+# Checks that need no model credentials, Docker images or a target. The Docker integrations stay
+# skipped here and run in integration.yml; docs/VALIDATION.md records where they were last run.
 name: ci
 
 on:
@@ -61,6 +61,9 @@ jobs:
         working-directory: frontend
       # Every visible Chinese string in the console needs its English counterpart.
       - run: npm run check:i18n
+        working-directory: frontend
+      # The console reads engine messages in Chinese with the backend's own table, the same way.
+      - run: npm run check:messages
         working-directory: frontend
       - run: npm run build
         working-directory: frontend

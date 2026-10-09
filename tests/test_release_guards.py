@@ -70,7 +70,7 @@ def test_chinese_report_uses_chinese_wording_and_escapes_the_same_way():
     report = report_markdown(run, "zh-Hant")
     assert "<script>" not in report and "<img " not in report and "[click](javascript:" not in report
     for text in ("## 發現", "## 涵蓋缺口", "## 執行紀錄", "## 能力限制", "模式：合成示範｜狀態：未完整完成", "- [高 / 待驗證假設]",
-                 "  證據：e1、e2", "- C-1: 結果不明", "複測對象：p1（發現：f1）", "僅為合成示範：不是真實模型或應用程式的驗證"):
+                 "  證據：e1、e2", "- C-1：結果不明", "複測對象：p1（發現：f1）", "僅為合成示範：不是真實模型或應用程式的驗證"):
         assert text in report, text
     # An unknown code is shown as it is rather than dropped.
     assert "[mystery / hypothesis]" in report_markdown({**run, "findings":[{**run["findings"][0], "severity":"mystery"}]})

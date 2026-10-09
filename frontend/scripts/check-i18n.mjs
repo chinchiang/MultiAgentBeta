@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const FILES = ['src/App.tsx', 'src/extensions.tsx', 'src/api.ts', 'src/i18n.ts', 'src/main.tsx', 'src/types.ts'];
+const FILES = ['src/App.tsx', 'src/extensions.tsx', 'src/api.ts', 'src/i18n.ts', 'src/main.tsx', 'src/messages.ts', 'src/types.ts'];
 const CJK = /[一-鿿]/;
 // Chinese punctuation (for example the full-width parenthesis in t('）',')')) also marks the Chinese half.
 const CHINESE = /[一-鿿　-〿＀-￯]/;

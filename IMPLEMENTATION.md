@@ -9,6 +9,7 @@
 | Method | Route | Purpose |
 |---|---|---|
 | GET | /session, /capabilities | Session/CSRF 與實際設定的 runtime 可用性；/capabilities?profile=… 回報該 runtime profile（預設：default） |
+| GET | /messages | 引擎固定訊息的正體中文對照表（`messages.py` 的 `exact`、`status` 與 `patterns`）；控制台以它顯示執行紀錄、缺口、判定說明與示範內容，模型、掃描器、目標與操作者的文字維持原文 |
 | GET / PUT | /projects, /projects/{id} | 列出／儲存專案設定 |
 | GET / PUT | /models, /models/{id} | 列出／儲存 profile；僅限憑證參照 |
 | GET | /catalogs?standard=... | 標準 ID、版本與來源出處 |
@@ -66,6 +67,7 @@ All routes start with /api; with a session, an unknown /api path is a JSON 404. 
 | Method | Route | Purpose |
 |---|---|---|
 | GET | /session, /capabilities | Session/CSRF and actual configured runtime availability; /capabilities?profile=… reports that runtime profile (default: default) |
+| GET | /messages | Traditional Chinese table for the engine's fixed messages (`exact`, `status` and `patterns` from `messages.py`); the console uses it for the activity log, gaps, verdicts and demo content, and leaves model, scanner, target and operator text as written |
 | GET / PUT | /projects, /projects/{id} | List/save project settings |
 | GET / PUT | /models, /models/{id} | List/save profiles; credential references only |
 | GET | /catalogs?standard=... | Canonical IDs, versions and provenance |

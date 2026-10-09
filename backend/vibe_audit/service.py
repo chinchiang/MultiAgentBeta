@@ -836,10 +836,10 @@ REPORT_LANGUAGES=("en","zh-Hant")
 _REPORT_TEXT={
     "en":{"run":"Run: {id}","retest":"Retest of: {parent} (findings: {findings})","mode":"Mode: {mode} | Status: {status}",
           "error":"Error: {error}","note":"Incomplete report; workflow has not finished","findings":"## Findings","evidence":"  Evidence: {ids}",
-          "gaps":"## Coverage gaps","executions":"## Executions","limits":"## Capability limits","sep":", "},
+          "gaps":"## Coverage gaps","executions":"## Executions","limits":"## Capability limits","sep":", ","execution":"- {case}: {status} — {reason}"},
     "zh-Hant":{"run":"執行：{id}","retest":"複測對象：{parent}（發現：{findings}）","mode":"模式：{mode}｜狀態：{status}",
                "error":"錯誤：{error}","note":"報告未完整；流程尚未結束","findings":"## 發現","evidence":"  證據：{ids}",
-               "gaps":"## 涵蓋缺口","executions":"## 執行紀錄","limits":"## 能力限制","sep":"、"},
+               "gaps":"## 涵蓋缺口","executions":"## 執行紀錄","limits":"## 能力限制","sep":"、","execution":"- {case}：{status} — {reason}"},
 }
 # Chinese labels for the codes a report shows, the same wording as the console. Unknown codes stay as they are.
 _REPORT_LABELS_ZH={
@@ -870,11 +870,16 @@ def report_markdown(run:dict,lang:str="en")->str:
         run["status"]=label("run_status",run.get("status"))
         run["mode"]=label("mode",run.get("mode"))
         if "report_note" in run: run["report_note"]=label("note",run["report_note"])
-        if run.get("error"): run["error"]=zh(run["error"]) or run["error"]
+        # The engine's own fixed text reads in Chinese; model, scanner and target text stays as it is.
+        said=lambda value:zh(value) or value
+        if run.get("error"): run["error"]=said(run["error"])
+        run["gaps"]=[said(value) for value in run["gaps"]]
         for finding in run["findings"]:
             finding["severity"]=label("severity",finding["severity"]); finding["state"]=label("state",finding["state"])
+            finding["title"]=said(finding["title"])
         for execution in run["executions"]:
             execution["status"]=label("execution_status",execution["status"])
+            execution["reason"]=said(execution.get("reason",""))
     for key in ("name","id","mode","status","report_note"):
         if key in run: run[key]=safe(run[key])
     for finding in run["findings"]:
@@ -891,7 +896,7 @@ def report_markdown(run:dict,lang:str="en")->str:
     for f in run["findings"]:
         lines.extend([f"- [{f['severity']} / {f['state']}] {f['title']}",text["evidence"].format(ids=text["sep"].join(f["evidence_ids"]))])
     lines.extend(["",text["gaps"],""]+["- "+str(g) for g in run["gaps"]])
-    lines.extend(["",text["executions"],""]+[f"- {e['case_id']}: {e['status']} — {e['reason']}" for e in run["executions"]])
+    lines.extend(["",text["executions"],""]+[text["execution"].format(case=e["case_id"],status=e["status"],reason=e["reason"]) for e in run["executions"]])
     lines.extend(["",text["limits"],""]+["- "+safe(value) for value in run.get("limitations",[])])
     return "\n".join(lines)
 

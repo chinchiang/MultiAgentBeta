@@ -7,22 +7,22 @@
 
 ## 發現
 
-- [高 / 待驗證假設] Synthetic cross-tenant order disclosure
+- [高 / 待驗證假設] 合成的跨租戶訂單外洩
   證據：5daea406-47b7-446f-968b-b142adbc12a3、ac940515-8fb8-46e9-bb16-c2e20b30560d、a5737f36-9cbb-498d-b5f1-cd2622896326
-- [高 / 待驗證假設] Synthetic agent export claim needs effect evidence
+- [高 / 待驗證假設] 合成的 agent 匯出主張需要副作用證據
   證據：a5737f36-9cbb-498d-b5f1-cd2622896326
-- [高 / 動態驗證] Synthetic vulnerable tenant boundary
+- [高 / 動態驗證] 合成的有漏洞租戶邊界
   證據：ba752b87-5874-4531-b696-534265cac2d7
 
 ## 涵蓋缺口
 
-- C-003: inconclusive — A required trusted observation is missing.
+- C-003：證據不足 — 缺少必要的受信任觀測。
 
 ## 執行紀錄
 
-- C-001: 觀測到違規 — A forbidden test canary was observed in the response.
-- C-002: 未觀測到違規 — The specified response invariant held with verified prerequisites.
-- C-003: 證據不足 — A required trusted observation is missing.
+- C-001：觀測到違規 — 回應中觀測到禁止出現的測試 canary。
+- C-002：未觀測到違規 — 在前置條件已驗證的情況下，指定的回應不變條件成立。
+- C-003：證據不足 — 缺少必要的受信任觀測。
 
 ## 能力限制
 

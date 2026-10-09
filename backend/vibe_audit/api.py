@@ -18,7 +18,7 @@ from fastapi.exceptions import StarletteHTTPException
 from pydantic import ValidationError
 
 from .domain import Budget, ModelProfile, RunInput, origin
-from .messages import zh
+from .messages import PATTERNS, STATUS_ZH, ZH, zh
 from .policy import PolicyError
 from .service import REPORT_LANGUAGES, Engine, report_markdown, report_sarif
 from .store import RunNotFound, Store
@@ -266,6 +266,11 @@ def create_app(data_dir=None, database_url=None, testing=False, session_token=No
     @api.get("/openapi.json",include_in_schema=False)
     async def openapi_schema():
         return app.openapi()
+
+    @api.get("/messages")
+    async def messages():
+        # The console reads the engine's fixed messages in Chinese with the same table the API and reports use.
+        return {"exact":ZH,"status":STATUS_ZH,"patterns":[list(pair) for pair in PATTERNS]}
 
     @api.get("/capabilities")
     async def capabilities(profile: str = "default"):
