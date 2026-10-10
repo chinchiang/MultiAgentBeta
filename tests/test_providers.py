@@ -765,3 +765,16 @@ async def test_json_mode_asks_for_the_schema_where_a_server_accepts_only_that(pr
         assert sent["type"] == "json_schema" and sent["json_schema"]["schema"] == policy["response_schema"]
     else:
         assert sent == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure,code", [(503, "provider_http_503"), (429, "provider_http_429"), ("timeout", "provider_timeout")])
+async def test_a_failed_model_call_names_its_status_but_never_its_body(profile, policy, fake_provider, failure, code):
+    calls, answers = fake_provider
+    class StatusError(Exception):
+        status_code = failure
+    answers[:] = [asyncio.TimeoutError() if failure == "timeout" else StatusError("secret body text")]
+    with pytest.raises(providers.ProviderError) as error:
+        await providers.generate_json(profile, "Review", {}, policy)
+    assert error.value.code == code and "secret body" not in str(error.value)
+    assert error.value.usage["tokens_known"] is False

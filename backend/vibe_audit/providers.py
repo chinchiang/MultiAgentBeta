@@ -492,6 +492,12 @@ async def generate_json(profile: dict, system: str, payload: dict, policy: dict)
             # Unknown metering must never be represented as zero cost or retried.
             usage["tokens_known"] = False
             code = exc.code if isinstance(exc, ProviderError) else "provider_request_failed"
+            # The HTTP status names the cause (rate limit, overload, bad request) without any of the body.
+            status = getattr(exc, "status_code", None)
+            if not isinstance(exc, ProviderError) and type(status) is int and 400 <= status <= 599:
+                code = f"provider_http_{status}"
+            elif not isinstance(exc, ProviderError) and isinstance(exc, (TimeoutError, asyncio.TimeoutError)) or type(exc).__name__ in {"Timeout", "APITimeoutError"}:
+                code = "provider_timeout"
             raise ProviderError("Model request failed; response and error body withheld; billed usage may be unknown", code=code, usage=usage.copy()) from None
         try:
             metering = _usage(response)
