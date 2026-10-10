@@ -383,3 +383,22 @@ def test_store_refuses_a_non_utf8_postgres_database(tmp_path,monkeypatch,server,
     with pytest.raises(ValueError,match="UTF8"):
         Store(tmp_path/"data","postgresql://synthetic/db")
     assert closed==[True]
+
+
+@pytest.mark.skipif(os.name != "posix" or (hasattr(os, "geteuid") and os.geteuid() == 0), reason="Needs POSIX permissions that apply to this user")
+def test_unreadable_entries_are_recorded_as_omitted_not_silently_dropped(tmp_path):
+    source = tmp_path / "repo"
+    (source / "locked").mkdir(parents=True)
+    (source / "locked" / "secret.py").write_text("x = 1\n")
+    (source / "ok.py").write_text("y = 2\n")
+    (source / "nope.py").write_text("z = 3\n")
+    os.chmod(source / "locked", 0)
+    os.chmod(source / "nope.py", 0)
+    try:
+        staged = stage_source(str(source), tmp_path / "private")
+        assert "locked/" in staged["omitted"] and "nope.py" in staged["omitted"]
+        assert [f["path"] for f in staged["files"]] == ["ok.py"]
+        discard_staging(staged, tmp_path / "private")
+    finally:
+        os.chmod(source / "locked", 0o755)
+        os.chmod(source / "nope.py", 0o644)

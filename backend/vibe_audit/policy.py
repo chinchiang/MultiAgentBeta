@@ -29,6 +29,13 @@ class Policy:
         self.receipts = {}
         self.catalog = None
 
+    def catalog_manifest(self):
+        # A CatalogError names the file that failed, so it reaches the run as it is.
+        from .catalog import load_catalogs
+        if self.catalog is None:
+            self.catalog=load_catalogs()
+        return self.catalog.manifest()
+
     def standards(self, ids, manifest=None):
         from .catalog import load_catalogs,CatalogError
         try:

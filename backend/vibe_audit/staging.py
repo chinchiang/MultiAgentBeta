@@ -60,7 +60,10 @@ def stage_source(source_path: str, private_root: str | Path, *, expected_snapsho
 def _copy_source(source: Path, target: Path, expected_snapshot: dict | None, max_files: int, max_bytes: int) -> dict:
     entries, total = [], 0
     omitted = []
-    for base, dirs, files in os.walk(source, followlinks=False):
+    def unreadable(error):
+        # os.walk skips a directory it cannot list; the record must still name it.
+        omitted.append(Path(error.filename).relative_to(source).as_posix() + "/")
+    for base, dirs, files in os.walk(source, followlinks=False, onerror=unreadable):
         kept = []
         for name in sorted(dirs):
             # Neither scanners nor models see a skipped directory, so the record has to say so.
@@ -84,7 +87,11 @@ def _copy_source(source: Path, target: Path, expected_snapshot: dict | None, max
                 continue
             if len(entries) >= max_files or total + info.st_size > max_bytes:
                 raise ValueError("Scanner source exceeds bounded snapshot limits")
-            fd = _open_regular(item)
+            try:
+                fd = _open_regular(item)
+            except PermissionError:
+                omitted.append(relative)
+                continue
             with os.fdopen(fd, "rb") as handle:
                 before = os.fstat(handle.fileno())
                 if (info.st_dev, info.st_ino, info.st_mtime_ns, info.st_size) != (before.st_dev, before.st_ino, before.st_mtime_ns, before.st_size) or before.st_nlink > 1:

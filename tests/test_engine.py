@@ -287,10 +287,37 @@ async def test_oversized_model_payload_keeps_cited_files_or_blocks(engine,monkey
     monkeypatch.setattr(providers,"MAX_PAYLOAD_BYTES",3000)
     fitted=engine.fitted_source(run,{"candidates":[]},"Challenger")
     assert [f["content"] for f in fitted["files"]]==[cited["content"],""] and fitted["files"][1]["omitted"]
-    assert any(gap.startswith("Challenger received full text only") for gap in run["gaps"])
+    assert any(gap.startswith("Challenger: the model payload limit omitted the text of 1 of 2") for gap in run["gaps"])
     monkeypatch.setattr(providers,"MAX_PAYLOAD_BYTES",200)
     with pytest.raises(PolicyError,match="payload limit"):
         engine.fitted_source(run,{"candidates":[]},"Challenger")
+
+
+async def test_reviewer_payload_drops_the_largest_uncited_files_first(engine,monkeypatch):
+    from vibe_audit import providers
+    run=await finished_demo(engine)
+    run["findings"]=[]
+    # Control characters grow sixfold under JSON escaping, past what the raw-text snapshot cap counts.
+    files=[{"path":"a.py","content":"a"*500},{"path":"b.bin","content":"\x01"*600},{"path":"c.py","content":"c"*400}]
+    monkeypatch.setattr(engine,"source",lambda run:{"digest":"d","files":files})
+    monkeypatch.setattr(providers,"MAX_PAYLOAD_BYTES",2500)
+    fitted=engine.fitted_source(run,{"core_questions":[]},"Reviewers")
+    assert [bool(f["content"]) for f in fitted["files"]]==[True,False,True]
+    assert len(json.dumps({"core_questions":[],"source":fitted},ensure_ascii=False).encode())<=2500
+
+
+async def test_a_budget_refusal_reaches_the_run_as_itself(engine,monkeypatch):
+    from vibe_audit import providers
+    run=await finished_demo(engine)
+    engine.cancel_flags[run["id"]]=asyncio.Event();engine.locks[run["id"]]=asyncio.Lock()
+    run["manifest"]["budget"]["max_tokens"]=10
+    profile=next(p for p in run["manifest"]["models"] if p["role"]=="reviewer")
+    async def denied_generate(profile,system,payload,policy):
+        try: await policy["request_hook"]()
+        except Exception: raise providers.ProviderError("Model request denied by the policy reservation hook",code="request_denied",usage={"tokens":0}) from None
+    monkeypatch.setattr(providers,"generate_json",denied_generate)
+    with pytest.raises(PolicyError,match="Insufficient token budget"):
+        await engine.model(run,profile,"x",{"y":1})
 
 
 async def test_provided_cases_leave_uncovered_threats_as_gaps(engine):

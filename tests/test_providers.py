@@ -570,3 +570,33 @@ def test_tokenizer_loader_rejects_unknown_network_assets():
     with pytest.raises(providers.ProviderError) as error:
         tiktoken.load.read_file_cached("https://unapproved.example/tokenizer", "abc")
     assert error.value.code == "tokenizer_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_contract_rules_beyond_the_schema_get_the_same_bounded_retry(profile, policy, fake_provider):
+    calls, answers = fake_provider
+    answers[:] = [response('{"ok":true}'), response('{"ok":true}')]
+    seen = []
+    def check(data):
+        seen.append(data)
+        if len(seen) == 1:
+            raise ValueError("A challenge needs counterevidence or missing evidence")
+    policy["contract_check"] = check
+    result = await providers.generate_json(profile, "Review", {}, policy)
+    assert len(calls) == len(seen) == 2 and result["data"] == {"ok": True}
+
+
+@pytest.mark.asyncio
+async def test_cancel_between_attempts_still_reports_the_billed_attempt(profile, policy, fake_provider):
+    calls, answers = fake_provider
+    answers[:] = [response('{"wrong":true}')]
+    count = 0
+    async def reserve():
+        nonlocal count
+        count += 1
+        if count == 2:
+            raise asyncio.CancelledError()
+    policy["request_hook"] = reserve
+    with pytest.raises(providers.ProviderError) as error:
+        await providers.generate_json(profile, "Review", {}, policy)
+    assert error.value.code == "cancelled" and error.value.usage["tokens"] == 15

@@ -24,8 +24,10 @@ def default_catalog_root() -> Path:
 
 
 def _read_checked(root: Path, relative: str, expected: str) -> bytes:
-    path = (root / relative).resolve()
-    if not path.is_relative_to(root.resolve()) or path.is_symlink():
+    unresolved = root / relative
+    # resolve() follows links, so the link check has to look at the path as written.
+    path = unresolved.resolve()
+    if not path.is_relative_to(root.resolve()) or unresolved.is_symlink():
         raise CatalogError("Catalog path escapes its configured root")
     try:
         data = path.read_bytes()
