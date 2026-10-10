@@ -513,16 +513,17 @@ class WorkerRuntime:
                 stop.set()
                 if beat: await asyncio.gather(beat,return_exceptions=True)
                 if proc.stdin and not proc.stdin.is_closing(): proc.stdin.close()
-                try: await asyncio.wait_for(asyncio.shield(proc.wait()),25)
+                try: await asyncio.wait_for(asyncio.shield(proc.wait()),TEARDOWN_BUDGET)
                 except TimeoutError: pass  # Independent guardian remains responsible for teardown.
                 if errors: errors.cancel();await asyncio.gather(errors,return_exceptions=True)
                 self.active.pop(cap["task_id"],None)
-            if result is None or not isinstance(result,dict):
+            # Without a result the supervisor is still the guardian tearing its container down, so it is not killed.
+            delivered=isinstance(result,dict)
+            if not delivered:
                 await self._revoke(cap,"No verified supervisor result")
                 result={"status":"outcome_unknown","reason":"No complete worker result; do not replay","cleanup_confirmed":False,"task_id":cap["task_id"]}
-            if proc.returncode is None:
-                # The supervisor delivered its result but outlived the grace period
-                # (its own teardown may wait up to ~30s on a stalled daemon):
+            if delivered and proc.returncode is None:
+                # The supervisor delivered its result but outlived the grace period:
                 # nothing of value remains and a lingering broker socket or task
                 # file must not stay on disk. When cleanup was never confirmed the
                 # outcome is already unknown and demands reconciliation, so an

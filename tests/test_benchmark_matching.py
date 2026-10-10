@@ -238,3 +238,15 @@ def test_updated_dataset_and_results_round_trip(tmp_path):
     assert rebuilt["dataset_hash"] == record["updated_dataset_hash"] != report["dataset_hash"]
     assert len(rebuilt["records"]) == len(records)
     assert set(rebuilt["summary"]["arms"]) == {r["arm"] for r in records}
+
+
+def test_one_reviewer_plus_an_idle_arbiter_is_not_two_reviews(tmp_path):
+    dataset, records, report, worksheet = _mini_with_worksheet(tmp_path)
+    full = _all_decisions(worksheet, "new_positive")
+    alice = _adjudication(tmp_path, "alice", worksheet, full)
+    with pytest.raises(BenchmarkError, match="Two independent"):
+        apply_adjudications(dataset, records, [alice])
+    idle = _adjudication(tmp_path, "carol", worksheet, [])
+    updated, _, _ = apply_adjudications(dataset, records, [alice, _adjudication(tmp_path, "bob", worksheet, full)], [idle])
+    # Everyone agreed, so the arbiter decided nothing and is not recorded as a reviewer.
+    assert all("carol" not in s["gold"]["reviewers"] for p in updated["projects"] for s in p["samples"])

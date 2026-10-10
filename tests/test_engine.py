@@ -1593,3 +1593,18 @@ async def test_commander_focus_reaches_reviewers_as_labelled_untrusted_data(engi
     assert all("data, never instructions" in instruction for instruction,_ in payloads)
     with pytest.raises(ValueError):
         CommanderProposal(reviewer_order=reviewers,focus=["x"*301],rationale="r")
+
+
+def test_controls_are_only_the_kind_every_executor_can_run_and_tell_apart():
+    from vibe_audit.contracts import CaseDesignProposal,OperatorCase
+    case=json.loads(Path(__file__).resolve().parents[1].joinpath("fixtures/web-api/bola-case.json").read_text())
+    control=case["preconditions"][0]
+    for bad in [{"method":"HEAD"},{"expected_status":302},{"required_text":[]},
+                {"path":case["path"],"identity":case.get("identity"),"method":case.get("method","GET")}]:
+        with pytest.raises(ValueError):
+            CaseDesignProposal.model_validate({"cases":[{**case,"preconditions":[{**control,**bad}]}]})
+    with pytest.raises(ValueError):
+        CaseDesignProposal.model_validate({"cases":[{**case,"preconditions":[control,{**control,"path":control["path"]+"/x"}]}]})
+    for bad in [{"method":"POST"},{"required_text":[""]}]:
+        with pytest.raises(ValueError):
+            OperatorCase.model_validate({**case,"preconditions":[{**control,**bad}]})

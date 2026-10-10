@@ -182,3 +182,21 @@ async def test_real_tools_network_none_through_broker(tmp_path, tool, vulnerable
     finally:
         runtime.leases.close()
         target.shutdown(); target.server_close(); thread.join(timeout=2)
+
+
+async def test_tool_and_fixture_tasks_stay_inside_the_run_time_budget():
+    from vibe_audit.tool_runners import run_tool
+    calls = []
+    class Runtime:
+        async def execute_tool(self, spec, **kwargs):
+            calls.append(spec)
+            return {"status":"blocked","reason":"stop here","cleanup_confirmed":True,"observations":[],"broker_observations":[]}
+    async def allow(**kwargs): return None
+    await run_tool(Runtime(), "playwright", {"run_id":"r","budget":{"max_seconds":30}}, case(),
+                   cancel_event=asyncio.Event(), request_hook=allow)
+    assert calls and all(spec["timeout_seconds"] <= 30 for spec in calls)
+
+
+def test_playwright_sends_every_body_as_json_like_the_supervisor_expects():
+    from vibe_audit.tool_runners import _PLAYWRIGHT
+    assert "data:c.body===null?undefined:JSON.stringify(c.body)" in _PLAYWRIGHT

@@ -129,7 +129,7 @@ async def _sequence(runtime, manifest, case, steps, *, cancel_event, request_hoo
     if any((s["method"], s["path"], s.get("identity")) not in permitted for s in steps):
         raise ValueError("Fixture lifecycle request was not sealed into case scope")
     spec = {"operation": "request_sequence", "tool_id": "request_sequence", "phase": "blackbox",
-            "cases": [case], "requests": steps, "timeout_seconds": 60, "max_output_bytes": 262144,
+            "cases": [case], "requests": steps, "timeout_seconds": min(60, manifest.get("budget", {}).get("max_seconds", 60)), "max_output_bytes": 262144,
             "max_requests": len(steps), "task_stage": task_stage}
     return await runtime.execute_tool(spec, manifest=manifest, cancel_event=cancel_event,
         request_hook=request_hook, lease_hook=lease_hook, repetition=repetition)

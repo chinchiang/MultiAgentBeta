@@ -205,7 +205,8 @@ def test_order_and_repetition_of_findings_carry_nothing():
 
 def test_osv_ids_come_from_the_provisioned_archives(tmp_path):
     import zipfile
-    for ecosystem, names in [("PyPI", ["PYSEC-2024-1.json", "GHSA-2222-3333-4444.json"]), ("npm", ["MAL-2025-7.json", "README"])]:
+    for ecosystem, names in [("PyPI", ["PYSEC-2024-1.json", "GHSA-2222-3333-4444.json"]), ("npm", ["MAL-2025-7.json", "README"]),
+                             ("Go", ["GO-2025-9.json"])]:
         archive = tmp_path / "osv-scanner" / ecosystem / "all.zip"
         archive.parent.mkdir(parents=True)
         with zipfile.ZipFile(archive, "w") as bundle:
@@ -213,3 +214,29 @@ def test_osv_ids_come_from_the_provisioned_archives(tmp_path):
                 bundle.writestr(name, "{}")
     assert sandbox.osv_database_ids(tmp_path) == {"PYSEC-2024-1", "GHSA-2222-3333-4444", "MAL-2025-7"}
     assert sandbox.osv_database_ids(tmp_path / "missing") == frozenset()
+
+
+def test_an_unverified_ecosystem_beside_the_pinned_databases_is_refused(tmp_path):
+    import pytest
+    from vibe_audit.resource_manifest import file_hash, resource_manifest
+    entries = []
+    for ecosystem in ("PyPI", "npm", "Go"):
+        archive = tmp_path / "osv-scanner" / ecosystem / "all.zip"
+        archive.parent.mkdir(parents=True)
+        archive.write_bytes(ecosystem.encode())
+        if ecosystem != "Go":
+            entries.append({"ecosystem": ecosystem, "bytes": archive.stat().st_size, "sha256": file_hash(archive)})
+    (tmp_path / "manifest.json").write_text(json.dumps({"schema_version": 1, "scanner_version": "2.3.5", "ecosystems": entries}))
+    with pytest.raises(ValueError, match="unverified"):
+        resource_manifest({"offline_db_dir": str(tmp_path)}, ["osv"])
+    import shutil
+    shutil.rmtree(tmp_path / "osv-scanner" / "Go")
+    assert resource_manifest({"offline_db_dir": str(tmp_path)}, ["osv"])["offline_database"]["ecosystems"] == entries
+
+
+def test_osv_without_any_package_source_is_a_gap_not_a_scanner_failure():
+    import pytest
+    findings, gaps = sandbox._parse("osv", b"", 128)
+    assert findings == [] and gaps and "not checked" in gaps[0]
+    with pytest.raises(ValueError):
+        sandbox._parse("gitleaks", b"", 128)

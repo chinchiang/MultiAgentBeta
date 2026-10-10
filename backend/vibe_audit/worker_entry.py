@@ -34,9 +34,10 @@ MAX_FRAME = 64*1024*1024
 # A broker request carries at most a 64 KiB body; nothing larger is buffered before the token check.
 BROKER_FRAME = 256*1024
 MAX_BODY = 256*1024
-# One relayed request, from broker lock to the last response byte, ends within this; the relay waits a little longer.
-BROKER_DEADLINE = 25
-RELAY_TIMEOUT = 30
+# One relayed request, from broker lock to the last response byte, ends within this; the relay and the
+# bundled tool clients (10s each) wait a little longer, so no answer arrives after its client gave up.
+BROKER_DEADLINE = 9
+RELAY_TIMEOUT = 10
 # Must equal worker_runtime.CREATE_BUDGET, which sizes the lease around this step.
 CREATE_BUDGET = 45
 # Must equal worker_runtime.SUPERVISED_FIELDS; this file also runs standalone inside the container.
@@ -537,7 +538,7 @@ class Supervisor:
             name=self.task["container_name"]
             if args==( "kill",name):method,path="POST",f"/containers/{name}/kill?signal=SIGKILL"
             elif args==("wait",name):method,path="POST",f"/containers/{name}/wait?condition=not-running"
-            elif args==("rm","--force",name):method,path="DELETE",f"/containers/{name}?force=true&v=false"
+            elif args==("rm","--force",name):method,path="DELETE",f"/containers/{name}?force=true&v=true"
             else:return False
             status,_=docker_api(method,path,timeout=10)
             return status in {200,204,404}
@@ -725,7 +726,7 @@ def container_worker(task):
     elif operation=="request_sequence":
         results=[];sequence_ok=True
         for step in spec.get("requests",[]):
-            conn=http.client.HTTPConnection("127.0.0.1",server.server_port,timeout=RELAY_TIMEOUT+5)
+            conn=http.client.HTTPConnection("127.0.0.1",server.server_port,timeout=RELAY_TIMEOUT+2)
             headers={**step.get("headers",{}),"X-Vibe-Case":step.get("case_id") or spec["cases"][0]["id"]}
             if step.get("identity"): headers["X-Vibe-Identity"]=step["identity"]
             body=json.dumps(step["body"]).encode() if step.get("body") is not None else None

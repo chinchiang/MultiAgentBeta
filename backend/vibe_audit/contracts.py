@@ -163,13 +163,13 @@ class CaseOracle(Contract):
 
 
 class CaseControl(Contract):
-    """A positive control only reads the fixture it proves."""
+    """A positive control only reads the fixture it proves: every executor requires a GET, a 2xx and a marker."""
     name: str = Field(min_length=1, max_length=100)
-    method: Literal["GET", "HEAD"] = "GET"
+    method: Literal["GET"] = "GET"
     path: str = Field(pattern=r"^/", max_length=2000)
     identity: str | None = Field(default=None, max_length=100)
-    expected_status: int = Field(ge=100, le=599)
-    required_text: list[OracleText] = Field(default_factory=list, max_length=20)
+    expected_status: int = Field(ge=200, le=299)
+    required_text: list[OracleText] = Field(min_length=1, max_length=20)
     headers: dict[str, str] = Field(default_factory=dict, max_length=24)
 
 
@@ -192,6 +192,15 @@ class CaseProposal(Contract):
     repetitions: int = Field(default=1, ge=1, le=20)
     observation_mode: Literal["external_observation", "instrumented_observation"] = "external_observation"
 
+    @model_validator(mode="after")
+    def distinct_controls(self):
+        # The supervisor tells a control from the case it proves, and controls apart, by method, path and identity.
+        keys = [(self.method, self.path, self.identity)] + [(c.method, c.path, c.identity) for c in self.preconditions if not isinstance(c, str)]
+        names = [c.name for c in self.preconditions if not isinstance(c, str)]
+        if len(set(keys)) != len(keys) or len(set(names)) != len(names):
+            raise ValueError("Each positive control needs its own name and a request different from its case and other controls")
+        return self
+
 
 class CaseDesignProposal(Contract):
     cases: list[CaseProposal] = Field(default_factory=list, max_length=100)
@@ -200,8 +209,7 @@ class CaseDesignProposal(Contract):
 
 class OperatorControl(CaseControl):
     model_config = ConfigDict(extra="allow")
-    method: Literal["GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"] = "GET"
-    required_text: list[str] = Field(default_factory=list, max_length=20)
+    required_text: list[Annotated[str, Field(min_length=1)]] = Field(min_length=1, max_length=20)
 
 
 class OperatorOracle(CaseOracle):

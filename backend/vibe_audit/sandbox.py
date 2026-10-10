@@ -114,7 +114,9 @@ def gitleaks_rule_ids():
 def osv_database_ids(offline_db_dir):
     """Vulnerability IDs in the provisioned offline databases: each all.zip holds one <ID>.json per record."""
     ids = frozenset()
-    for archive in sorted(Path(offline_db_dir).glob("osv-scanner/*/all.zip")):
+    # Only the ecosystems resource_manifest hash-checks.
+    for archive in [Path(offline_db_dir)/"osv-scanner"/name/"all.zip" for name in ("PyPI","npm")]:
+        if not archive.is_file(): continue
         info = archive.stat()
         ids |= _archive_ids(str(archive), info.st_size, info.st_mtime_ns)
     return ids
@@ -151,6 +153,9 @@ def _finding(scanner_id, rule, path, line, known=()):
 
 def _parse(scanner_id, output, exit_code, osv_ids=frozenset()):
     """Import one scanner's JSON. osv_ids are the provisioned database's IDs; an OSV ID outside them is unrecognized."""
+    if scanner_id == "osv" and exit_code == 128:
+        # OSV-Scanner v2 exits 128 when the repository has no lockfile or manifest it reads: a coverage gap, not a failure.
+        return [], ["OSV-Scanner found no supported lockfile or manifest; dependency vulnerabilities were not checked."]
     if exit_code not in {0, 1}:
         raise ValueError("scanner exit failure")
     data = json.loads(output)
