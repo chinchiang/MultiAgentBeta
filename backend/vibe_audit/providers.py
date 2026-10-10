@@ -465,8 +465,8 @@ async def generate_json(profile: dict, system: str, payload: dict, policy: dict)
     library = _load_litellm()
     usage = {"model_calls": 0, "tokens": 0, "prompt_tokens": 0, "completion_tokens": 0, "tokens_known": True}
     max_attempts = min(MAX_ATTEMPTS, max_calls)
-    # The profile allows up to 300 seconds; a silent lower cap would make slow local models fail unexplained.
-    timeout = min(max(float(policy.get("timeout_seconds", 30)), 1), 300)
+    # The profile allows up to 1800 seconds, for local reasoning models on modest hardware; a silent lower cap would make them fail unexplained.
+    timeout = min(max(float(policy.get("timeout_seconds", 30)), 1), 1800)
     for attempt in range(max_attempts):
         remaining = budget - usage["tokens"]
         if remaining <= 0:
