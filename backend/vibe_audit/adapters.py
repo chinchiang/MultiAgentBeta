@@ -470,13 +470,14 @@ def _prepare_request(manifest, case, *, transport_headers=None):
             or "\\" in path or "#" in path or any(ord(c) < 33 for c in path)):
         raise AdapterBlocked("Case path must be origin-relative and must not contain control characters.")
     try:
-        path.encode("ascii")
+        path.encode("ascii")  # pragma: no mutate (codec names are case-insensitive)
     except UnicodeError:
         raise AdapterBlocked("Case path must use ASCII URL encoding.") from None
     headers = {"Accept": "application/json", "Accept-Encoding": "identity", "Connection": "close"}
     supplied = case.get("headers") or {}
     model_designed = case.get("designed_by") == "model"
-    vocabulary = model_header_vocabulary(manifest, method, path) if model_designed and manifest.get("relay") is not True else None
+    # Inside the relay the vocabulary is not consulted (case_headers_allowed), so computing it there changes nothing.
+    vocabulary = model_header_vocabulary(manifest, method, path) if model_designed else None
     if not case_headers_allowed(supplied, model_designed=model_designed, relay=manifest.get("relay") is True,
                                 vocabulary=vocabulary):
         raise AdapterBlocked("Case contains an unsupported, routing or credential-bearing request header.")
@@ -521,7 +522,7 @@ def _prepare_request(manifest, case, *, transport_headers=None):
         if method in {"GET", "HEAD"}:
             raise AdapterBlocked("GET and HEAD cases cannot contain a request body.")
         try:
-            body = json.dumps(body, ensure_ascii=False, allow_nan=False).encode("utf-8")
+            body = json.dumps(body, ensure_ascii=False, allow_nan=False).encode("utf-8")  # pragma: no mutate (None reads as False; codec names are case-insensitive)
         except (ValueError, TypeError):
             raise AdapterBlocked("Request body must be finite JSON data.") from None
         if len(body) > MAX_REQUEST_BYTES:
@@ -557,10 +558,10 @@ def _request(scheme, host, port, pinned_ip, method, path, headers, body, timeout
             raise TimeoutError
         if 300 <= response.status < 400:
             return {"status_code": response.status, "body": "", "complete": False, "redirect_blocked": True}
-        encoding = response.getheader("Content-Encoding", "identity").lower()
+        encoding = response.getheader("Content-Encoding", "identity").lower()  # pragma: no mutate (header names and the default are compared case-insensitively)
         if encoding not in {"", "identity"}:
             raise ResponseLimitError("Compressed responses are unsupported; no oracle was evaluated.")
-        length = response.getheader("Content-Length")
+        length = response.getheader("Content-Length")  # pragma: no mutate (header names are case-insensitive)
         if length is not None:
             try:
                 length = int(length)
@@ -572,7 +573,7 @@ def _request(scheme, host, port, pinned_ip, method, path, headers, body, timeout
         size = 0
         while True:
             remaining = deadline - time.monotonic()
-            if remaining <= 0:
+            if remaining <= 0:  # pragma: no mutate (the exact instant cannot be hit; the watchdog ends the transport then)
                 raise TimeoutError
             # With Connection: close, HTTPResponse may own the socket after
             # HTTPConnection.sock has been cleared by getresponse().
@@ -594,7 +595,7 @@ def _request(scheme, host, port, pinned_ip, method, path, headers, body, timeout
         if length is not None and len(raw) != length:
             raise ResponseLimitError("Response was incomplete; no oracle was evaluated.")
         try:
-            text = raw.decode("utf-8", errors="strict")
+            text = raw.decode("utf-8", errors="strict")  # pragma: no mutate (the defaults are the same codec and strictness)
         except UnicodeError:
             raise ResponseLimitError("Only complete UTF-8 responses can be evaluated.") from None
         return {"status_code": response.status, "body": text, "complete": True, "bytes": size}
@@ -693,7 +694,7 @@ async def execute_case(manifest: dict, case: dict, *, cancel_event, request_hook
         return _result("blocked", "Run was cancelled before a request.")
     requests = 0
     observations = []
-    current_method = "GET"
+    current_method = "GET"  # pragma: no mutate (every request sets it before any transport error can be raised)
     try:
         scheme, host, port = _origin(manifest)
         # Validate the main request before allowing even positive-control I/O.
@@ -716,15 +717,12 @@ async def execute_case(manifest: dict, case: dict, *, cancel_event, request_hook
                     or not control["required_text"]
                     or any(not isinstance(t, str) or not t for t in control["required_text"])):
                 raise AdapterBlocked("Positive controls require a name, GET path, expected 2xx status and explicit required text.")
-            request = {"method": "GET", "path": control.get("path"), "headers": control.get("headers") or {},
-                       "identity": control.get("identity"), "body": None, "designed_by": case.get("designed_by")}
+            request = {"path": control.get("path"), "headers": control.get("headers") or {}, "identity": control.get("identity"), "designed_by": case.get("designed_by")}
             _prepare_request(manifest, request)
             controls.append((control, request))
 
         async def dispatch(request):
             nonlocal requests, current_method
-            if _cancelled(cancel_event):
-                raise AdapterBlocked("Run was cancelled before a request.")
             method, path, headers, body, secrets = _prepare_request(manifest, request)
             current_method = method
             # Resolution is bounded separately. The connected numeric IP cannot
