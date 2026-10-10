@@ -1647,16 +1647,23 @@ async def test_a_linked_retest_writes_its_outcome_back_and_only_a_full_pass_reso
     # The synthetic vulnerable case fails again, so the violation stands.
     assert again["state"]=="validated_dynamic" and again["retests"][-1]["outcome"]=="fail"
     # Every case testing the finding's threats passed: the parent finding is resolved, with the retest on record.
-    child=engine.store.get(retest["id"])
-    child["executions"]=[{**e,"status":"pass"} for e in child["executions"]]
-    engine.record_retest(child)
-    resolved=next(f for f in engine.store.get(parent["id"])["findings"] if f["id"]==observed["id"])
-    assert resolved["state"]=="resolved_in_retest" and [r["outcome"] for r in resolved["retests"]]==["fail","pass"]
+    def finding():
+        return next(f for f in engine.store.get(parent["id"])["findings"] if f["id"]==observed["id"])
+    failed=engine.store.get(retest["id"])
+    second={**failed,"id":"second-retest","executions":[{**e,"status":"pass"} for e in failed["executions"]]}
+    engine.record_retest(second)
+    assert finding()["state"]=="resolved_in_retest" and [r["outcome"] for r in finding()["retests"]]==["fail","pass"]
     assert report_sarif(engine.store.get(parent["id"]))["runs"][0]["results"]
-    # A case that did not run leaves the outcome inconclusive.
-    child["executions"]=[e for e in child["executions"] if e["case_id"]!="C-002"]
-    engine.record_retest(child)
-    assert next(f for f in engine.store.get(parent["id"])["findings"] if f["id"]==observed["id"])["retests"][-1]["outcome"]=="inconclusive"
+    # Finishing the same retest again replaces its entry; a case that did not run makes it inconclusive.
+    second["executions"]=[e for e in second["executions"] if e["case_id"]!="C-002"]
+    engine.record_retest(second)
+    # Its pass is gone, so the earlier fail is again the latest decisive outcome.
+    assert [r["outcome"] for r in finding()["retests"]]==["fail","inconclusive"] and finding()["state"]=="validated_dynamic"
+    # A later retest that observes the violation again undoes a resolution.
+    engine.record_retest({**second,"id":"third-retest","executions":[{**e,"status":"pass"} for e in failed["executions"]]})
+    assert finding()["state"]=="resolved_in_retest"
+    engine.record_retest({**failed,"id":"fourth-retest"})
+    assert finding()["state"]=="validated_dynamic" and finding()["retests"][-1]["outcome"]=="fail"
 
 
 def test_retested_findings_need_their_parent_run():
@@ -1694,3 +1701,19 @@ def test_markdown_defangs_bare_urls_and_shows_challenges():
     text=report_markdown(run)
     assert "https://" not in text and "www.evil" not in text
     assert "Challenger counterevidence: guarded upstream" in text
+
+
+async def test_a_cancel_between_attempts_stays_a_cancel_and_charges_what_was_reserved(engine,monkeypatch):
+    from vibe_audit import providers
+    run=await finished_demo(engine)
+    engine.cancel_flags[run["id"]]=asyncio.Event();engine.locks[run["id"]]=asyncio.Lock()
+    profile=next(p for p in run["manifest"]["models"] if p["role"]=="reviewer")
+    before=run["usage"]["tokens"]
+    async def generate(profile,system,payload,policy):
+        await policy["request_hook"]()  # attempt 1 is reserved and billed
+        engine.cancel_flags[run["id"]].set()
+        await policy["request_hook"]()  # the run stops before attempt 2
+    monkeypatch.setattr(providers,"generate_json",generate)
+    with pytest.raises(asyncio.CancelledError):
+        await engine.model(run,profile,"x",{"y":1})
+    assert run["usage"]["tokens"]>before and run["usage"]["tokens_estimated"] is True and run.get("reserved_tokens",0)==0

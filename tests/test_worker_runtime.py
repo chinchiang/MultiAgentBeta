@@ -901,7 +901,7 @@ async def test_the_supervisor_enforces_the_worker_time_limit_inside_a_longer_lea
     assert time.monotonic()-started<20
     # The lease is sized for creation and teardown around the worker's own limit.
     from vibe_audit.worker_runtime import task_budget
-    assert task_budget(5)==5+5+40
+    assert task_budget(5)==15+5+5+40
 
 
 @pytest.mark.parametrize("server,expected",[("1.47","/v1.47/info"),("1.53","/v1.52/info"),("1.43",None),("",None)])

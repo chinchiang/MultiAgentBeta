@@ -205,14 +205,16 @@ def _step_unmet(step,record):
             or bool(step.get("capture_session")) and record.get("capture_success") is not True)
 
 
-# Container create (at most 45s), then a stop on a stalled daemon: kill, wait and rm at 10s each plus reader joins.
+# Supervisor start and broker setup, container create (at most 45s), then a stop on a stalled daemon:
+# kill, wait and rm at 10s each plus reader joins.
+STARTUP_BUDGET=15
 CREATE_BUDGET=45
 TEARDOWN_BUDGET=40
 
 
 def task_budget(timeout):
     """Seconds from lease issue until a supervisor that honors its own limits has journaled its result."""
-    return timeout+min(CREATE_BUDGET,timeout)+TEARDOWN_BUDGET
+    return STARTUP_BUDGET+timeout+min(CREATE_BUDGET,timeout)+TEARDOWN_BUDGET
 
 
 def decode_artifacts(value):

@@ -21,7 +21,7 @@ All routes start with /api; with a session, an unknown /api path is a JSON 404. 
 | GET | /runs/{id}/trace | Persisted entities, links and history |
 | GET | /runs/{id}/evidence/{artifact_id} | Run-bound, hash-verified envelope |
 | GET | /runs/{id}/report?format=json or markdown or sarif | Verified export |
-| POST | /runs/{id}/retest | New run linked to original findings (trace `retests` links, Markdown and SARIF note the parent). Only the parent cases testing the selected findings' threats are copied (all cases when none of them has threat links). When the retest finishes, each parent finding gets a `retests` entry (pass/fail/inconclusive/untraced); a validated_dynamic finding becomes resolved_in_retest only when every case testing its threats ran and passed |
+| POST | /runs/{id}/retest | New run linked to original findings (trace `retests` links, Markdown and SARIF note the parent). Only the parent cases testing the selected findings' threats are copied (all cases when none of them has threat links). When the retest finishes, each parent finding gets a `retests` entry (pass/fail/inconclusive/untraced); a validated_dynamic finding becomes resolved_in_retest only when every case testing its threats ran and passed, and returns to validated_dynamic when a later retest observes the violation again |
 | POST | /runs/{id}/reconcile | Operator attestation of worker cleanup; closes a cancelling run, which stays unresumable |
 | POST | /runs/{id}/findings/{finding_id}/decision | Evidence-backed refuted/inconclusive decision: cited black-box executions must test the finding's threats (the operator names them for a finding without threat links); refuting needs a pass and no failure of those threats in the run; a validated_dynamic finding is cleared only by a linked retest |
 | GET | /openapi.json | OpenAPI schema at /api/openapi.json (session and CSRF token required; no interactive docs page) |
@@ -79,7 +79,7 @@ See docs/LINUX_SETUP.md, docs/VALIDATION.md and docs/DELIVERY.md.
 | GET | /runs/{id}/trace | 持久化的實體、連結與歷史 |
 | GET | /runs/{id}/evidence/{artifact_id} | 綁定於 run、經雜湊驗證的信封 |
 | GET | /runs/{id}/report?format=json or markdown or sarif | 經驗證的匯出 |
-| POST | /runs/{id}/retest | 建立連結到原始發現的新 run（trace 記錄 `retests` 連結，Markdown 與 SARIF 會標註父項）。只複製測試所選發現之威脅的上層案例（所選發現都沒有威脅連結時複製全部）。複測完成後，每個上層發現都會新增一筆 `retests`（pass/fail/inconclusive/untraced）；validated_dynamic 的發現只有在測試其威脅的每個案例都執行且 pass 時，才會變成 resolved_in_retest |
+| POST | /runs/{id}/retest | 建立連結到原始發現的新 run（trace 記錄 `retests` 連結，Markdown 與 SARIF 會標註父項）。只複製測試所選發現之威脅的上層案例（所選發現都沒有威脅連結時複製全部）。複測完成後，每個上層發現都會新增一筆 `retests`（pass/fail/inconclusive/untraced）；validated_dynamic 的發現只有在測試其威脅的每個案例都執行且 pass 時，才會變成 resolved_in_retest；之後的複測再次觀測到違規時，會回到 validated_dynamic |
 | POST | /runs/{id}/reconcile | 操作者對 worker 清理的證明；關閉處於 cancelling 狀態的 run，該 run 仍不可恢復（unresumable） |
 | POST | /runs/{id}/findings/{finding_id}/decision | 以證據為依據的 refuted／inconclusive 決策：被引用的黑箱執行必須測試該發現的威脅（若該發現沒有威脅連結，由操作者命名這些威脅）；要駁回（refute）需要一次 pass，且該 run 中這些威脅沒有任何失敗；validated_dynamic 狀態的發現只能透過已連結的 retest 清除 |
 | GET | /openapi.json | 位於 /api/openapi.json 的 OpenAPI schema（需要 session 與 CSRF token；不提供互動式文件頁面） |

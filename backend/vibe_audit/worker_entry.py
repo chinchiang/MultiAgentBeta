@@ -403,12 +403,20 @@ class Supervisor:
             if self.revoked.is_set(): sock.close();raise NotSent("Egress revoked before the request was sent")
             self.sockets.add(sock)
         conn=None
+        expired=threading.Event()
         def expire():
             # Per-operation timeouts let a target trickle bytes forever; the deadline bounds the whole exchange.
+            expired.set()
             with self.socket_lock:
                 try: sock.shutdown(socket.SHUT_RDWR)
                 except OSError: pass
-        watchdog=threading.Timer(max(0,(deadline or time.monotonic()+BROKER_DEADLINE)-time.monotonic()),expire);watchdog.daemon=True
+        remaining=(deadline or time.monotonic()+BROKER_DEADLINE)-time.monotonic()
+        if remaining<=0:
+            with self.socket_lock: self.sockets.discard(sock)
+            sock.close();raise NotSent("The request deadline passed before the request was sent")
+        # A connect cannot outlast the deadline either; a shutdown before it connects would not stop it.
+        sock.settimeout(min(5,remaining))
+        watchdog=threading.Timer(remaining,expire);watchdog.daemon=True
         watchdog.start()
         try:
             try:
@@ -420,8 +428,12 @@ class Supervisor:
                         if self.revoked.is_set(): sock.close();raise NotSent("Egress revoked before the request was sent")
                         self.sockets.add(sock)
                     secure.do_handshake()
+                sock.settimeout(5)
             except OSError:
                 raise NotSent("Target connection failed before the request was sent") from None
+            if expired.is_set():
+                # The deadline passed while connecting; nothing has been sent yet.
+                raise NotSent("The request deadline passed before the request was sent")
             conn=http.client.HTTPConnection(host,port,timeout=5)
             # The TLS socket is set by hand, so the Host header must not name the default HTTPS port.
             conn.default_port=443 if scheme=="https" else 80

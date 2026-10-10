@@ -309,7 +309,8 @@ def _origin(manifest):
 _METADATA_IPS = frozenset(ipaddress.ip_address(item) for item in ("169.254.169.254", "fd00:ec2::254", "100.100.100.200"))
 
 
-_NAT64 = (ipaddress.ip_network("64:ff9b::/96"), ipaddress.ip_network("64:ff9b:1::/48"))
+# RFC 6052 /96 prefixes, which embed the IPv4 address in the last 32 bits; other prefix lengths are not decoded.
+_NAT64 = (ipaddress.ip_network("64:ff9b::/96"), ipaddress.ip_network("64:ff9b:1::/96"))
 
 
 def _unmapped(address):

@@ -421,9 +421,7 @@ async def generate_json(profile: dict, system: str, payload: dict, policy: dict)
             try:
                 await hook()
             except asyncio.CancelledError:
-                if usage["model_calls"]:
-                    # An earlier attempt was billed: the caller must still count it.
-                    raise ProviderError("Run cancelled between model attempts", code="cancelled", usage=usage.copy()) from None
+                # Cancellation stays cancellation; the caller charges every attempt it reserved.
                 raise
             except Exception:
                 raise ProviderError("Model request denied by the policy reservation hook", code="request_denied", usage=usage.copy()) from None

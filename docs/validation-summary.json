@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-10T09:46:24.293604+00:00",
+  "generated_at": "2026-10-10T10:07:52.908033+00:00",
   "model_endpoints_tested": false,
   "efficacy_established": false,
   "note": "Suites overlap; do not add counts as distinct tests. JUnit successful records include subtests where emitted. Docker, database and synthetic model contracts are separate evidence.",
@@ -11,9 +11,9 @@
       "errors": 0,
       "skipped": 1,
       "passed": 92,
-      "seconds": 98.28,
+      "seconds": 98.144,
       "timestamp": [
-        "2026-10-10T17:44:26.448658+08:00"
+        "2026-10-10T18:06:14.515099+08:00"
       ],
       "skip_reasons": [
         "Windows redirector process-tree fallback"
@@ -78,9 +78,9 @@
       "errors": 0,
       "skipped": 22,
       "passed": 578,
-      "seconds": 152.179,
+      "seconds": 153.396,
       "timestamp": [
-        "2026-10-10T17:41:38.828828+08:00"
+        "2026-10-10T18:03:24.339143+08:00"
       ],
       "skip_reasons": [
         "Explicit pinned Docker tool image required",
