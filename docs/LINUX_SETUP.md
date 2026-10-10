@@ -68,6 +68,17 @@ sh scripts/start-local.sh 8000
 
 填入使用者提供的來源、staging、允許 IP、每個 METHOD/path、業務需求、帳號 reference、fixtures、部署識別/header，以及時間/請求/模型上限。允許 IP 不能是雲端 metadata、link-local、unspecified 或 multicast 位址，目標也不能是本控制台或其資料庫的 host:port。帳號 reference 指向的 VIBEAUDIT_* 憑證，須在啟動控制台的環境以 `VIBEAUDIT_TARGET_CREDENTIAL_ORIGINS='VIBEAUDIT_ALICE_TOKEN=https://staging.example.test'` 綁定到目標 origin（多筆以逗號分隔），未綁定時預檢會拒絕。只有勾選「允許模型設計的案例使用此身分」的測試身分可被模型設計的案例使用；高權限帳號請勿勾選。來源目錄存的是通過 VIBEAUDIT_SOURCE_ROOTS 檢查、解析後的路徑；含 `..` 的路徑不會被讀取。正控制、reset、cleanup 也必須列在 scope 中；空 scope 禁止所有黑箱請求。預檢不進行漏洞探測。
 
+### AWS Bedrock 模型
+
+Bedrock 模型（provider `bedrock`）不使用金鑰變數，而是以操作者的 AWS profile 簽章，例如 SSO 登入：
+
+1. 先登入：`aws sso login --profile <profile>`。登入過期時，模型呼叫會在送出前就被拒絕，並提示重新登入。
+2. 把允許使用的 profile 列在 `VIBEAUDIT_BEDROCK_PROFILES`，多個時以逗號分隔。沒有列出的 profile 一律拒絕。
+3. 端點填 `https://bedrock-runtime.<region>.amazonaws.com`，簽章區域取自端點；資料政策選「允許指定雲端模型」，並把同一個 origin 加入模型 origin allowlist。
+4. model_id 填 Bedrock 的模型或 inference profile ID，例如 `global.anthropic.claude-haiku-5-5`；temperature 留空。
+
+請求經 Converse API 送出，同樣只連往釘選的 IP、不跟隨 redirect、不重試。取得 SSO 暫時憑證時，boto3 可能會連 AWS SSO；這次連線不帶任何模型資料。
+
 ## 6. 自有 Target Adapter
 
 VIBEAUDIT_FIXTURE_CONFIG 可指向管理者編寫的 JSON registry。每個 profile 宣告 reset/session_reset/setup/cleanup、repetitions 及可選 collector_binding/collector_requests；case sealing 前會計算完整 lifecycle scope 與 profile hash。
@@ -152,6 +163,17 @@ sh scripts/start-local.sh 8000
 Open the `http://127.0.0.1:8000/#token=…` URL printed by the terminal; without the token no session can be created. Refreshing the same tab needs no token; a new tab must reopen that URL. To pin a token, set `VIBEAUDIT_SESSION_TOKEN` first (32–256 URL-safe characters). Confirm the tool inventory first, then configure the exact endpoint/model ID/family for the Commander and the three reviewers. For keys, enter the environment variable name — for example VIBEAUDIT_ANTHROPIC_API_KEY (the default name when Anthropic is selected in the UI) — never a value. This tool's own settings such as VIBEAUDIT_DATABASE_URL and VIBEAUDIT_SESSION_TOKEN, variables whose values are identical to theirs, and variables whose values are URLs, must never be used as model or target credentials. Some reasoning models (e.g. gpt-5, the o-series) accept only the default temperature; leave that field empty. The probe reports unsupported_parameter before submission, with no billing and no usage lockout. cloud_allowed still requires each origin to be listed individually; local_only accepts only explicit loopback model endpoints. Before startup, also bind each model key to its origins in VIBEAUDIT_MODEL_CREDENTIAL_ORIGINS, for example `VIBEAUDIT_GATEWAY_KEY=https://llm.example.com,VIBEAUDIT_LOCAL_KEY=http://127.0.0.1:8001`; VIBEAUDIT_OPENAI_API_KEY and VIBEAUDIT_ANTHROPIC_API_KEY are bound to their vendors' endpoints by default and can be rebound there. Local endpoints without a key need no binding.
 
 Fill in the user-provided sources, staging, allowed IPs, every METHOD/path, business requirements, account references, fixtures, deployment identifiers/headers, and the time/request/model limits. Allowed IPs cannot be cloud metadata, link-local, unspecified or multicast addresses, and the target cannot be this console's or its database's host:port. The VIBEAUDIT_* credential an account reference names must be bound to the target origin in the console's environment, for example `VIBEAUDIT_TARGET_CREDENTIAL_ORIGINS='VIBEAUDIT_ALICE_TOKEN=https://staging.example.test'` (comma-separate several entries); preflight refuses an unbound one. Only test identities marked to allow model-designed cases can be used by them; never mark a privileged account. A run keeps the resolved source path that passed the VIBEAUDIT_SOURCE_ROOTS check; a path containing `..` is never read. Positive controls, resets, and cleanups must also be listed in scope; an empty scope forbids all black-box requests. The pre-check performs no vulnerability probing.
+
+### AWS Bedrock models
+
+A Bedrock model (provider `bedrock`) uses no key variable. Its requests are signed with the operator's AWS profile, for example an SSO login:
+
+1. Sign in first: `aws sso login --profile <profile>`. When the login has expired, a model call is refused before anything is sent and tells you to sign in again.
+2. List the profiles that may be used in `VIBEAUDIT_BEDROCK_PROFILES`, comma-separated. Any profile not listed is refused.
+3. Set the endpoint to `https://bedrock-runtime.<region>.amazonaws.com`; the signing region comes from the endpoint. Choose the data policy that allows named cloud models, and add the same origin to the model origin allowlist.
+4. Set model_id to a Bedrock model or inference profile ID, such as `global.anthropic.claude-haiku-5-5`, and leave temperature empty.
+
+Requests go through the Converse API and, like every model call, only to the pinned IP, without redirects or retries. Fetching temporary SSO credentials may make boto3 contact AWS SSO; that connection carries no model data.
 
 ## 6. Your own target adapter
 

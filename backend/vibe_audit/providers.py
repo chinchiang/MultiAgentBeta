@@ -29,7 +29,10 @@ from .adapters import CREDENTIAL_ORIGINS_ENV, DEFAULT_CREDENTIAL_ORIGINS, creden
 MAX_ATTEMPTS = 2
 MAX_RESPONSE_BYTES = 512 * 1024
 MAX_PAYLOAD_BYTES = 512 * 1024
-_PROVIDERS = {"openai", "anthropic", "nvidia_nim", "openai_compatible"}
+_PROVIDERS = {"openai", "anthropic", "nvidia_nim", "openai_compatible", "bedrock"}
+# The only Bedrock endpoints a profile may name, so AWS-signed requests can reach nothing but Bedrock itself.
+_BEDROCK_ENDPOINT = re.compile(r"https://bedrock-runtime(?:-fips)?\.((?:[a-z]{2}(?:-gov)?-[a-z]+-\d))\.amazonaws\.com/?")
+BEDROCK_PROFILES_ENV = "VIBEAUDIT_BEDROCK_PROFILES"
 _TOKENIZERS = {
     "https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken": "223921b76ee99bde995b7ff738513eef100fb51d18c93597a113bcffe865b2a7",
     "https://openaipublic.blob.core.windows.net/encodings/o200k_base.tiktoken": "446a9538cb6c348e3516120d7c08b09f57c36495e2acfffe59a5bf8b0cfb1a2d",
@@ -132,6 +135,8 @@ def _validate_profile(profile: dict, policy: dict) -> tuple[str, str, str]:
         raise ProviderError("Model endpoint origin is not explicitly allowed", code="origin_denied")
     if not local and not endpoint.startswith("https://"):
         raise ProviderError("Non-loopback model endpoints require HTTPS", code="invalid_endpoint")
+    if provider == "bedrock":
+        return endpoint, origin, _bedrock_signing(profile, endpoint)
     credential_env = profile.get("credential_env", "")
     if credential_env and not credential_env_allowed(credential_env):
         raise ProviderError("credential_env must be a VIBEAUDIT_ prefixed environment name that is not a Vibe Audit setting", code="invalid_credential_reference")
@@ -145,6 +150,42 @@ def _validate_profile(profile: dict, policy: dict) -> tuple[str, str, str]:
         raise ProviderError("Cloud model calls require an explicit credential reference", code="missing_credential")
     # A nonempty inert local key prevents upstream ambient API-key discovery.
     return endpoint, origin, credential or "vibeaudit-local-no-auth"
+
+
+def bedrock_profiles(environ=None) -> set[str]:
+    """The AWS profiles the operator allows Bedrock models to sign with, comma-separated in VIBEAUDIT_BEDROCK_PROFILES.
+
+    A run names its own profile, so without this list a session holder could bill any profile this account can use."""
+    environ = os.environ if environ is None else environ
+    return {name.strip() for name in environ.get(BEDROCK_PROFILES_ENV, "").split(",") if name.strip()}
+
+
+def _bedrock_signing(profile: dict, endpoint: str) -> dict:
+    match = _BEDROCK_ENDPOINT.fullmatch(endpoint)
+    if not match:
+        raise ProviderError("A Bedrock endpoint must be https://bedrock-runtime.<region>.amazonaws.com", code="invalid_endpoint")
+    if profile.get("credential_env"):
+        raise ProviderError("A Bedrock model signs with an AWS profile, not a credential variable", code="invalid_credential_reference")
+    aws_profile = profile.get("aws_profile", "")
+    if not isinstance(aws_profile, str) or not re.fullmatch(r"[A-Za-z0-9_.@+-]{1,128}", aws_profile):
+        raise ProviderError("A Bedrock model needs an AWS profile name", code="missing_credential")
+    if aws_profile not in bedrock_profiles():
+        raise ProviderError(f"AWS profile {aws_profile} is not allowed; list it in {BEDROCK_PROFILES_ENV}", code="credential_origin_denied")
+    return {"aws_profile": aws_profile, "region": match.group(1)}
+
+
+def _aws_credentials(aws_profile: str) -> dict:
+    """Short-lived credentials of an AWS profile, resolved before any model request so the SDK looks up nothing itself.
+
+    An SSO profile reads its cached login and may exchange it with AWS SSO; that call carries no model data."""
+    try:
+        import boto3
+        frozen = boto3.Session(profile_name=aws_profile).get_credentials().get_frozen_credentials()
+    except Exception:
+        raise _NotSent(f"AWS credentials for profile {aws_profile} are unavailable; sign in with: aws sso login --profile {aws_profile}", code="missing_credential") from None
+    if not frozen.access_key or not frozen.secret_key:
+        raise _NotSent(f"AWS credentials for profile {aws_profile} are unavailable; sign in with: aws sso login --profile {aws_profile}", code="missing_credential")
+    return {"aws_access_key_id": frozen.access_key, "aws_secret_access_key": frozen.secret_key, "aws_session_token": frozen.token}
 
 
 def _install_offline_tokenizer_loader():
@@ -290,7 +331,7 @@ async def _resolve_model_ip(endpoint: str) -> str:
         raise _NotSent("Model DNS resolution failed", code="endpoint_unavailable") from None
 
 
-async def _invoke(library, profile: dict, endpoint: str, origin: str, credential: str, messages: list[dict], output_limit: int, timeout: float):
+async def _invoke(library, profile: dict, endpoint: str, origin: str, credential: str | dict, messages: list[dict], output_limit: int, timeout: float):
     provider = "openai" if profile["provider"] == "openai_compatible" else profile["provider"]
     transport = None
     try:
@@ -308,7 +349,27 @@ async def _invoke(library, profile: dict, endpoint: str, origin: str, credential
 
 
 async def _complete(library, profile, provider, endpoint, credential, messages, output_limit, timeout, transport):
+    if provider == "bedrock":
+        signing = {**credential, **await asyncio.to_thread(_aws_credentials, credential["aws_profile"])}
     async with httpx.AsyncClient(transport=transport, follow_redirects=False, trust_env=False, timeout=timeout, headers={"Accept-Encoding": "identity"}) as http_client:
+        if provider == "bedrock":
+            from litellm.llms.custom_httpx.http_handler import AsyncHTTPHandler
+            client = AsyncHTTPHandler(timeout=timeout)
+            await client.client.aclose()
+            client.client = http_client
+            # The Converse API, signed with the profile's credentials, sent to the pinned regional endpoint only.
+            return await library.acompletion(
+                model="converse/" + profile["model_id"], custom_llm_provider="bedrock", client=client,
+                aws_access_key_id=signing["aws_access_key_id"], aws_secret_access_key=signing["aws_secret_access_key"],
+                aws_session_token=signing["aws_session_token"], aws_region_name=signing["region"],
+                aws_bedrock_runtime_endpoint=endpoint.rstrip("/"),
+                messages=messages, response_format={"type": "json_object"},
+                **({} if profile.get("temperature") is None else {"temperature": profile["temperature"]}),
+                max_tokens=output_limit, timeout=timeout, stream=False, num_retries=0, max_retries=0,
+                fallbacks=None, drop_params=False, caching=False,
+                # No per-call callback lists: LiteLLM's Bedrock transform forwards unknown keywords to the model
+                # as request fields. The module-level callback lists are already empty (_load_litellm).
+            )
         if provider == "anthropic":
             from litellm.llms.custom_httpx.http_handler import AsyncHTTPHandler
             client = AsyncHTTPHandler(timeout=timeout)

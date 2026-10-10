@@ -413,7 +413,19 @@ ZH.update({
     "Reporter ordering skipped: the finding summaries exceed the model payload limit; findings keep their recorded order": "略過報告排序：發現摘要超過模型 payload 上限；發現維持原本記錄的順序",
 })
 
+
+# Bedrock provider.
+ZH.update({
+    "A Bedrock endpoint must be https://bedrock-runtime.<region>.amazonaws.com": "Bedrock 端點必須是 https://bedrock-runtime.<region>.amazonaws.com",
+    "A Bedrock model signs with an AWS profile, not a credential variable": "Bedrock 模型以 AWS profile 簽章，不使用憑證變數",
+    "A Bedrock model needs an AWS profile name": "Bedrock 模型需要 AWS profile 名稱",
+    "A Bedrock model names an AWS profile and no credential variable": "Bedrock 模型要指定 AWS profile，且不能指定憑證變數",
+    "Only a Bedrock model uses an AWS profile": "只有 Bedrock 模型會使用 AWS profile",
+})
+
 PATTERNS = [
+    (r"AWS profile (.+) is not allowed; list it in (\w+)", "AWS profile {0} 未獲允許；請把它列在 {1}"),
+    (r"AWS credentials for profile (.+) are unavailable; sign in with: aws sso login --profile (.+)", "AWS profile {0} 沒有可用的憑證；請先登入：aws sso login --profile {1}"),
     (r"This retest's outcome could not be written back to the parent assessment \((\w+)\)", "這次複測的結果無法寫回上層評估（{0}）"),
     (r"Source could not be read \((\w+)\); check its permissions", "無法讀取原始碼（{0}）；請檢查權限"),
     (r"(\w+): the controller failed after the worker started; do not replay", "{0}：worker 啟動後 controller 失敗；請勿重播"),

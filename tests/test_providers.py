@@ -652,3 +652,93 @@ async def test_contract_rules_beyond_the_schema_get_the_same_bounded_retry(profi
     policy["contract_check"] = check
     result = await providers.generate_json(profile, "Review", {}, policy)
     assert len(calls) == len(seen) == 2 and result["data"] == {"ok": True}
+
+
+def bedrock_profile():
+    return {"id": "reviewer-c", "provider": "bedrock", "model_id": "global.anthropic.claude-haiku-5-5", "family": "claude",
+            "endpoint": "https://bedrock-runtime.ap-southeast-1.amazonaws.com", "credential_env": "", "aws_profile": "synthetic-sso",
+            "max_output_tokens": 256, "temperature": None}
+
+
+def bedrock_policy():
+    return {"data_policy": "cloud_allowed", "allowed_model_origins": ["https://bedrock-runtime.ap-southeast-1.amazonaws.com"], "max_tokens": 1000,
+            "response_schema": {"type": "object", "properties": {"ok": {"type": "boolean"}}, "required": ["ok"], "additionalProperties": False}}
+
+
+@pytest.mark.parametrize("change,code", [
+    ({"endpoint": "https://bedrock-runtime.ap-southeast-1.amazonaws.com.evil.example"}, "origin_denied"),
+    ({"endpoint": "https://evil.example"}, "origin_denied"),
+    ({"aws_profile": "other-profile"}, "credential_origin_denied"),
+    ({"aws_profile": ""}, "missing_credential"),
+    ({"credential_env": "VIBEAUDIT_SOME_KEY"}, "invalid_credential_reference"),
+])
+def test_bedrock_signs_only_for_a_listed_profile_and_a_bedrock_endpoint(monkeypatch, change, code):
+    monkeypatch.setenv("VIBEAUDIT_BEDROCK_PROFILES", "synthetic-sso")
+    profile, policy = {**bedrock_profile(), **change}, bedrock_policy()
+    # An allowlist entry for the bad host must not be what lets it through.
+    if "endpoint" in change:
+        policy["allowed_model_origins"].append(change["endpoint"])
+    with pytest.raises(providers.ProviderError) as error:
+        providers._validate_profile(profile, policy)
+    assert error.value.code in {code, "invalid_endpoint"}
+    monkeypatch.delenv("VIBEAUDIT_BEDROCK_PROFILES")
+    with pytest.raises(providers.ProviderError, match="VIBEAUDIT_BEDROCK_PROFILES"):
+        providers._validate_profile(bedrock_profile(), bedrock_policy())
+
+
+def test_bedrock_profile_contract():
+    from vibe_audit.domain import ModelProfile
+    base = {**bedrock_profile(), "role": "reviewer"}
+    assert ModelProfile.model_validate(base).aws_profile == "synthetic-sso"
+    for bad in [{"aws_profile": ""}, {"credential_env": "VIBEAUDIT_KEY"}, {"provider": "openai_compatible"}]:
+        with pytest.raises(ValueError):
+            ModelProfile.model_validate({**base, **bad})
+
+
+@pytest.mark.asyncio
+async def test_bedrock_converse_through_the_guarded_transport(monkeypatch):
+    """The installed LiteLLM Bedrock transform, SigV4-signed, through the pinned transport; synthetic HTTP only."""
+    import socket
+    monkeypatch.setenv("VIBEAUDIT_BEDROCK_PROFILES", "synthetic-sso")
+    monkeypatch.setattr(providers, "_aws_credentials", lambda name: {"aws_access_key_id": "AKIASYNTHETIC0000000", "aws_secret_access_key": "synthetic-secret", "aws_session_token": "synthetic-token"})
+    async def resolved(endpoint):
+        return "52.0.0.1"
+    monkeypatch.setattr(providers, "_resolve_model_ip", resolved)
+    def reject_socket(*args, **kwargs):
+        raise AssertionError("An unguarded socket connection was attempted")
+    monkeypatch.setattr(socket.socket, "connect", reject_socket)
+    captured = []
+    def handler(request):
+        captured.append(request)
+        body = {"output": {"message": {"role": "assistant", "content": [{"text": '{"ok":true}'}]}}, "stopReason": "end_turn",
+                "usage": {"inputTokens": 10, "outputTokens": 5, "totalTokens": 15}, "metrics": {"latencyMs": 1}}
+        return httpx.Response(200, headers={"content-type": "application/json"}, stream=httpx.ByteStream(json.dumps(body).encode()))
+    def init(transport, origin, pinned_ip):
+        transport.origin, transport.pinned_ip, transport.dispatched = origin, pinned_ip, False
+        transport.inner = httpx.MockTransport(handler)
+    monkeypatch.setattr(providers._OriginTransport, "__init__", init)
+    result = await providers.generate_json(bedrock_profile(), "Return JSON.", {}, bedrock_policy())
+    assert result["data"] == {"ok": True} and result["usage"]["tokens"] == 15
+    assert len(captured) == 1
+    request = captured[0]
+    assert request.url.host == "52.0.0.1" and request.headers["host"] == "bedrock-runtime.ap-southeast-1.amazonaws.com"
+    assert request.url.path.endswith("/converse") and "global.anthropic.claude-haiku-5-5" in request.url.path
+    assert request.headers["authorization"].startswith("AWS4-HMAC-SHA256") and "ap-southeast-1/bedrock" in request.headers["authorization"]
+    body = json.loads(request.content)
+    assert "temperature" not in body.get("inferenceConfig", {})
+    # Nothing of the call's own plumbing may reach the model as a request field.
+    assert not set(body.get("additionalModelRequestFields", {})) & {"input_callback", "success_callback", "failure_callback", "caching", "fallbacks"}
+
+
+@pytest.mark.asyncio
+async def test_bedrock_without_a_login_sends_nothing_and_costs_nothing(monkeypatch):
+    monkeypatch.setenv("VIBEAUDIT_BEDROCK_PROFILES", "synthetic-sso")
+    def no_login(name):
+        raise providers._NotSent("AWS credentials for profile synthetic-sso are unavailable; sign in with: aws sso login --profile synthetic-sso", code="missing_credential")
+    monkeypatch.setattr(providers, "_aws_credentials", no_login)
+    async def resolved(endpoint):
+        return "52.0.0.1"
+    monkeypatch.setattr(providers, "_resolve_model_ip", resolved)
+    with pytest.raises(providers.ProviderError) as error:
+        await providers.generate_json(bedrock_profile(), "Return JSON.", {}, bedrock_policy())
+    assert error.value.code == "missing_credential" and error.value.usage["tokens_known"] is True and "aws sso login" in str(error.value)
