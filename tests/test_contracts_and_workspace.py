@@ -244,6 +244,8 @@ async def test_graph_and_job_commit_rollback_is_atomic(tmp_path,monkeypatch,back
         return execute(sql,args)
     monkeypatch.setattr(store,"_execute",fail)
     run["name"]="must rollback"
+    # A save writes only versions it has not written yet, so the failure needs a changed entity.
+    run["findings"][0]["title"]="must rollback"
     with pytest.raises(RuntimeError,match="Injected"):
         store.finish_job(job,{"status":"pass"},run)
     assert store.get(run["id"])["name"]==original["name"]
@@ -402,3 +404,60 @@ def test_unreadable_entries_are_recorded_as_omitted_not_silently_dropped(tmp_pat
     finally:
         os.chmod(source / "locked", 0o755)
         os.chmod(source / "nope.py", 0o644)
+
+
+def test_a_retest_takes_only_the_cases_testing_the_selected_findings(tmp_path):
+    app = create_app(tmp_path, testing=True)
+    with TestClient(app) as client:
+        client.headers["X-CSRF-Token"] = client.get("/api/session", headers={"X-VibeAudit-Token": app.state.session_token}).json()["csrf_token"]
+        _, run = client.portal.call(demo, app.state.store)
+        observed = next(f for f in run["findings"] if f["state"] == "validated_dynamic")
+        body = {"name": "Fix check", "source_path": "", "deployment_id": "fixed-v2", "finding_ids": [observed["id"]]}
+        child = client.post(f"/api/runs/{run['id']}/retest", json=body)
+        assert child.status_code == 201, child.text
+        cases = child.json()["manifest"]["cases"]
+        assert cases and all(set(c["threat_ids"]) & set(observed["threat_ids"]) for c in cases)
+        assert len(cases) < len(run["cases"])
+
+
+def test_a_decision_on_tampered_evidence_is_a_conflict_not_a_crash(tmp_path):
+    app = create_app(tmp_path, testing=True)
+    with TestClient(app) as client:
+        client.headers["X-CSRF-Token"] = client.get("/api/session", headers={"X-VibeAudit-Token": app.state.session_token}).json()["csrf_token"]
+        _, run = client.portal.call(demo, app.state.store)
+        hypothesis = next(f for f in run["findings"] if f["state"] == "hypothesis")
+        passed = next(e for e in run["executions"] if e["status"] == "pass")
+        record = next(a for a in run["artifacts"] if a["id"] == passed["evidence_id"])
+        stored = app.state.store.artifacts / record["filename"]
+        stored.chmod(0o644)
+        stored.write_text(json.dumps({"run_id": run["id"], "content": {"result": {"status": "pass"}}}), encoding="utf-8")
+        body = {"decision": "refuted", "rationale": "x", "evidence_ids": [passed["evidence_id"]], "threat_ids": hypothesis.get("threat_ids") or ["T-001"]}
+        response = client.post(f"/api/runs/{run['id']}/findings/{hypothesis['id']}/decision", json=body)
+        assert response.status_code == 409, response.text
+
+
+@pytest.mark.parametrize("backend",["sqlite","postgres"])
+async def test_a_save_writes_only_new_versions_and_survives_a_lost_connection(tmp_path,monkeypatch,backend):
+    url=os.getenv("VIBEAUDIT_TEST_DATABASE_URL") if backend=="postgres" else None
+    if backend=="postgres" and not url:
+        pytest.skip("Provide dedicated PostgreSQL integration database")
+    store=Store(tmp_path,url)
+    _,run=await demo(store)
+    execute=store._execute
+    inserts=[]
+    def count(sql,args=()):
+        if sql.startswith(("INSERT INTO entity_versions","INSERT INTO relations")): inserts.append(sql)
+        return execute(sql,args)
+    monkeypatch.setattr(store,"_execute",count)
+    store.save(run)
+    assert inserts==[]
+    run["findings"][0]["title"]="a new version"
+    store.save(run)
+    assert 0<len(inserts)<5
+    monkeypatch.setattr(store,"_execute",execute)
+    if backend=="postgres":
+        store.conn.close()
+        run["name"]="after reconnect"
+        store.save(run)
+        assert store.get(run["id"])["name"]=="after reconnect"
+    store.close()

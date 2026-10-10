@@ -58,13 +58,12 @@ class Store:
         private_dirs(self.root, self.artifacts)
         self.lock = threading.RLock()
         self.postgres = bool(database_url)
+        self.database_url = database_url
+        self.depth = 0
+        # Entity versions and links already written; a save only writes what changed since.
+        self.written = {}
         if database_url:
-            import psycopg
-            self.conn = psycopg.connect(database_url, autocommit=True)
-            # A SQL_ASCII database or client encoding hands every text column back as undecoded bytes.
-            if self.conn.info.parameter_status("server_encoding") != "UTF8" or self.conn.info.encoding != "utf-8":
-                self.conn.close()
-                raise ValueError("The PostgreSQL database and connection must use UTF8 encoding")
+            self.conn = self._connect()
         else:
             self.conn = sqlite3.connect(str(self.root / "demo.sqlite3"), check_same_thread=False, isolation_level=None)
             self.conn.execute("PRAGMA journal_mode=WAL")
@@ -74,23 +73,43 @@ class Store:
         self._execute("CREATE TABLE IF NOT EXISTS relations (run_id TEXT NOT NULL, version TEXT NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(run_id,version))")
         self._execute("CREATE TABLE IF NOT EXISTS settings (kind TEXT NOT NULL, id TEXT NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(kind,id))")
 
+    def _connect(self):
+        import psycopg
+        conn = psycopg.connect(self.database_url, autocommit=True)
+        # A SQL_ASCII database or client encoding hands every text column back as undecoded bytes.
+        if conn.info.parameter_status("server_encoding") != "UTF8" or conn.info.encoding != "utf-8":
+            conn.close()
+            raise ValueError("The PostgreSQL database and connection must use UTF8 encoding")
+        return conn
+
     def _execute(self, sql, args=()):
+        if self.postgres and self.depth == 0 and (self.conn.closed or self.conn.broken):
+            # A restarted database must not break every later save; inside a transaction the failure stands.
+            with self.lock:
+                self.conn = self._connect()
+                self.written.clear()
         return self.conn.execute(sql.replace("?", "%s") if self.postgres else sql, args)
 
     @contextmanager
     def transaction(self):
         """Nested callers share the outer atomic boundary under the same lock."""
         with self.lock:
-            active = self.conn.info.transaction_status != 0 if self.postgres else self.conn.in_transaction
+            active = self.depth > 0
             if not active:
                 self._execute("BEGIN")
+            self.depth += 1
             try:
                 yield
+                self.depth -= 1
                 if not active:
                     self._execute("COMMIT")
             except BaseException:
+                self.depth = max(0, self.depth - 1) if active else 0
                 if not active:
-                    self._execute("ROLLBACK")
+                    # A connection lost mid-transaction has nothing left to roll back.
+                    try: self._execute("ROLLBACK")
+                    except Exception: pass
+                    self.written.clear()
                 raise
 
     def save(self, run: dict):
@@ -106,10 +125,17 @@ class Store:
             self._execute("INSERT INTO runs (id,payload,updated) VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,updated=excluded.updated", (run["id"], payload, run["updated_at"]))
             from .traceability import entities_and_links
             entities, links = entities_and_links(run)
+            written = self.written.setdefault(run["id"], set())
             for item in entities:
-                self._execute("INSERT INTO entity_versions VALUES (?,?,?,?,?) ON CONFLICT DO NOTHING", (run["id"],item["kind"],item["id"],item["version"],json.dumps(item["value"],ensure_ascii=False)))
+                key = ("entity", item["kind"], item["id"], item["version"])
+                if key not in written:
+                    self._execute("INSERT INTO entity_versions VALUES (?,?,?,?,?) ON CONFLICT DO NOTHING", (run["id"],item["kind"],item["id"],item["version"],json.dumps(item["value"],ensure_ascii=False)))
+                    written.add(key)
             for item in links:
-                self._execute("INSERT INTO relations VALUES (?,?,?) ON CONFLICT DO NOTHING", (run["id"],digest(item),json.dumps(item,ensure_ascii=False)))
+                key = ("link", digest(item))
+                if key not in written:
+                    self._execute("INSERT INTO relations VALUES (?,?,?) ON CONFLICT DO NOTHING", (run["id"],key[1],json.dumps(item,ensure_ascii=False)))
+                    written.add(key)
 
     def trace(self, run_id: str):
         from .traceability import entities_and_links

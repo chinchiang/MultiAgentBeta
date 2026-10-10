@@ -89,9 +89,17 @@ def workspace_router(store, engine, source_roots, *, session):
         manifest.update(name=data.name, source_path=data.source_path, deployment_id=data.deployment_id,
                         parent_run_id=run_id, parent_finding_ids=data.finding_ids)
         # Original operator cases retain their assertions; new evidence receives new IDs/hashes.
-        if parent["cases"]:
+        cases = parent["cases"]
+        selected = [f for f in parent["findings"] if f["id"] in set(data.finding_ids)]
+        threats = {t for f in selected for t in f.get("threat_ids") or []}
+        if threats:
+            # A retest re-checks what was selected: only the cases that test those findings' threats.
+            cases = [c for c in cases if threats & set(c.get("threat_ids", []))]
+            if not cases:
+                raise PolicyError("No case of the original assessment tests the selected findings' threats")
+        if cases:
             manifest["cases"] = [{k: v for k, v in case.items() if k not in
-                                  {"hash", "source_digest", "threat_model_hash"}} for case in parent["cases"]]
+                                  {"hash", "source_digest", "threat_model_hash"}} for case in cases]
         model = RunInput.model_validate(manifest)
         if model.mode == "live":
             path = Path(model.source_path).resolve()
@@ -109,7 +117,7 @@ def workspace_router(store, engine, source_roots, *, session):
         if finding is None:
             raise HTTPException(404, "Finding not found")
         # A pass of another case, or a later pass of the same one, does not undo an observed violation.
-        if finding["state"] == "validated_dynamic":
+        if finding["state"] in {"validated_dynamic", "resolved_in_retest"}:
             raise PolicyError("An observed violation stands; verify the fix in a linked retest run")
         records = {a["id"]: a for a in run["artifacts"]}
         if not set(data.evidence_ids) <= records.keys():
@@ -133,7 +141,11 @@ def workspace_router(store, engine, source_roots, *, session):
         executions = {e.get("evidence_id"): e for e in run["executions"]}
         if not all(tests_threats(executions.get(key, {})) for key in data.evidence_ids):
             raise PolicyError("Counterevidence must come from a case that tests the finding's threats")
-        statuses = [store.evidence(records[key], run_id)["content"]["result"]["status"] for key in data.evidence_ids]
+        try:
+            statuses = [store.evidence(records[key], run_id)["content"]["result"]["status"] for key in data.evidence_ids]
+        except (ValueError, OSError):
+            # The same integrity refusal the evidence and report endpoints give.
+            raise HTTPException(409, "Evidence integrity check failed") from None
         if data.decision == "refuted" and "pass" not in statuses:
             raise PolicyError("Refuting a finding needs an execution in which the security property held")
         if data.decision == "refuted" and any(e["status"] == "fail" for e in run["executions"] if tests_threats(e)):

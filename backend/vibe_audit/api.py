@@ -71,6 +71,8 @@ def create_app(data_dir=None, database_url=None, testing=False, session_token=No
     engine=Engine(store,database_url)
     sessions={}
     token_failures=deque()
+    # Wrong guesses wait in turn, so parallel requests cannot share one delay.
+    token_gate=asyncio.Lock()
     default_origins={"http://127.0.0.1:8000","http://localhost:8000","http://[::1]:8000"}
     configured={s.rstrip("/") for s in os.getenv("VIBEAUDIT_UI_ORIGINS","").split(",") if s}
     # Configured origins (the launcher adds the port it listens on) replace the :8000 defaults, so another
@@ -202,8 +204,9 @@ def create_app(data_dir=None, database_url=None, testing=False, session_token=No
             token_failures.popleft()
         if not secrets.compare_digest(startup.encode(),app.state.session_token.encode()):
             if startup:
-                token_failures.append(moment)
-                await pause(min(TOKEN_FAILURE_DELAY_MAX,TOKEN_FAILURE_DELAY*len(token_failures)))
+                async with token_gate:
+                    token_failures.append(moment)
+                    await pause(min(TOKEN_FAILURE_DELAY_MAX,TOKEN_FAILURE_DELAY*len(token_failures)))
             return JSONResponse({"detail":"Startup token required: open the URL printed when the local service started"},status_code=401)
         for sid in [sid for sid,entry in sessions.items() if entry["expires"]<moment or entry["last_seen"]+SESSION_IDLE_SECONDS<moment]:
             del sessions[sid]
