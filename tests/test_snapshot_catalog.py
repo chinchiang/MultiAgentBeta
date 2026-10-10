@@ -2,6 +2,7 @@
 import hashlib
 import json
 import os
+from pathlib import Path
 import shutil
 import types
 
@@ -155,6 +156,118 @@ def test_binary_non_utf8_bom_and_redacted_files(tmp_path):
     assert result["files"][1]["content_sha256"] == hashlib.sha256(b'{"password": "[REDACTED]"}\n').hexdigest()
     assert result["gaps"] == ["Binary content omitted: bin.py", "Secret-like literals redacted: config.py", "Non-UTF-8 file omitted: latin.py"]
     gaps_read_in_chinese(result)
+
+
+def test_a_directory_that_changes_or_cannot_be_read_is_a_gap_and_the_walk_goes_on(tmp_path, monkeypatch):
+    write(tmp_path, "a/a.py", "a = 1\n")
+    write(tmp_path, "b/b.py", "b = 1\n")
+    write(tmp_path, "c/c.py", "c = 1\n")
+    real_safe, real_scandir = snapshot._safe_ancestors, os.scandir
+    monkeypatch.setattr(snapshot, "_safe_ancestors", lambda path: path != tmp_path / "c" and real_safe(path))
+
+    def scandir(path):
+        if Path(path) == tmp_path / "b":
+            raise PermissionError
+        return real_scandir(path)
+    monkeypatch.setattr(snapshot.os, "scandir", scandir)
+    result = snapshot_source(str(tmp_path))
+    # Directories are taken from the stack last-first: c changed, b is unreadable, a is still read.
+    assert result["gaps"] == ["Skipped linked/reparse directory.", "Unreadable directory omitted."]
+    assert [f["path"] for f in result["files"]] == ["a/a.py"]
+    gaps_read_in_chinese(result)
+
+
+def test_entry_counts_accumulate_across_directories(tmp_path, monkeypatch):
+    monkeypatch.setattr(snapshot, "MAX_ENTRIES", 4)
+    write(tmp_path, "a.py")
+    write(tmp_path, "sub1/p.py")
+    for name in "xy":
+        write(tmp_path, f"sub2/{name}.py")
+    result = snapshot_source(str(tmp_path))
+    # The root's three entries count; sub2 may add one more, then the limit stops the walk before sub1.
+    paths = [f["path"] for f in result["files"]]
+    assert paths[0] == "a.py" and len(paths) == 2 and paths[1] in ("sub2/x.py", "sub2/y.py")  # the directory order is the OS's
+    assert result["gaps"] == ["Directory entry limit reached; directory truncated.", "Snapshot limit reached; remaining source was not inspected."]
+
+
+def test_depth_counts_each_directory_once(tmp_path, monkeypatch):
+    monkeypatch.setattr(snapshot, "MAX_DEPTH", 2)
+    write(tmp_path, "d1/d2/ok.py")
+    write(tmp_path, "d1/d2/d3/deep.py")
+    result = snapshot_source(str(tmp_path))
+    assert [f["path"] for f in result["files"]] == ["d1/d2/ok.py"] and result["gaps"] == ["Depth limit: d1/d2/d3"]
+
+
+def test_the_file_limit_is_inclusive_within_one_directory(tmp_path, monkeypatch):
+    monkeypatch.setattr(snapshot, "MAX_FILES", 1)
+    write(tmp_path, "a.py")
+    write(tmp_path, "b.py")
+    result = snapshot_source(str(tmp_path))
+    assert [f["path"] for f in result["files"]] == ["a.py"] and result["gaps"] == ["File/byte limit omitted: b.py"]
+
+
+def test_files_are_opened_without_following_links_and_checked_before_during_and_after_the_read(tmp_path, monkeypatch):
+    for name in "abcdefg":
+        write(tmp_path, f"{name}.py", f"{name} = 1\n")
+    real_open, real_fstat, real_safe = os.open, os.fstat, snapshot._safe_ancestors
+    flags_seen, calls = [], {}
+
+    def opened(path, flags, *args):
+        flags_seen.append(flags)
+        if Path(path).name == "g.py":
+            raise OSError("gone")
+        return real_open(path, flags, *args)
+
+    def fstat(fd):
+        info = real_fstat(fd)
+        name = Path(os.readlink(f"/proc/self/fd/{fd}")).name
+        calls[name] = calls.get(name, 0) + 1
+        fields = dict(st_dev=info.st_dev, st_ino=info.st_ino, st_nlink=info.st_nlink, st_size=info.st_size, st_mtime_ns=info.st_mtime_ns)
+        if name == "b.py":
+            fields["st_ino"] += 1
+        if name == "c.py":
+            fields["st_nlink"] = 2
+        if name == "d.py" and calls[name] == 2:
+            fields["st_mtime_ns"] += 1
+        return types.SimpleNamespace(**fields)
+    monkeypatch.setattr(snapshot.os, "open", opened)
+    monkeypatch.setattr(snapshot.os, "fstat", fstat)
+    monkeypatch.setattr(snapshot, "_safe_ancestors", lambda path: path.name != "e.py" and real_safe(path))
+    result = snapshot_source(str(tmp_path))
+    assert flags_seen and all(flags == os.O_RDONLY | os.O_NOFOLLOW for flags in flags_seen)
+    assert [f["path"] for f in result["files"]] == ["a.py", "f.py"]
+    assert result["gaps"] == ["File changed before read: b.py", "File changed before read: c.py", "File changed during read: d.py",
+                              "Path changed before read: e.py", "Unreadable file omitted: g.py"]
+    gaps_read_in_chinese(result)
+
+
+def test_a_file_that_grew_past_a_limit_since_it_was_listed_is_omitted(tmp_path, monkeypatch):
+    monkeypatch.setattr(snapshot, "MAX_FILE_BYTES", 10)
+    monkeypatch.setattr(snapshot, "MAX_TOTAL_BYTES", 12)
+    write(tmp_path, "a.py", "x" * 5)
+    write(tmp_path, "b.py", "y" * 8)
+    write(tmp_path, "c.py", "z" * 11)
+    write(tmp_path, "d.py", "w" * 5)
+    real_lstat = Path.lstat
+
+    def lstat(self):
+        info = real_lstat(self)
+        if self.name in ("b.py", "c.py"):
+            return types.SimpleNamespace(st_mode=info.st_mode, st_nlink=info.st_nlink, st_size=5, st_dev=info.st_dev, st_ino=info.st_ino, st_mtime_ns=info.st_mtime_ns)
+        return info
+    monkeypatch.setattr(Path, "lstat", lstat)
+    result = snapshot_source(str(tmp_path))
+    # b fits the file limit but not the total; c exceeds the file limit; both were listed as 5 bytes.
+    assert [f["path"] for f in result["files"]] == ["a.py", "d.py"] and result["bytes_read"] == 10
+    assert result["gaps"] == ["Growing/oversized file omitted: b.py", "Growing/oversized file omitted: c.py"]
+    gaps_read_in_chinese(result)
+
+
+def test_an_unreadable_encoding_does_not_end_the_directory(tmp_path):
+    write(tmp_path, "latin.py", b"caf\xe9 = 1\n")
+    write(tmp_path, "z.py", "z = 1\n")
+    result = snapshot_source(str(tmp_path))
+    assert [f["path"] for f in result["files"]] == ["z.py"] and result["gaps"] == ["Non-UTF-8 file omitted: latin.py"]
 
 
 def test_routes_are_capped_per_file_and_per_snapshot(tmp_path):

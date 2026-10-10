@@ -131,7 +131,7 @@ def snapshot_source(path: str) -> dict:
                 gap("Skipped linked/reparse directory.")
                 continue
             with os.scandir(directory) as iterator:
-                entries = list(itertools.islice(iterator, MAX_ENTRIES - entries_seen + 1))
+                entries = list(itertools.islice(iterator, MAX_ENTRIES - entries_seen + 1))  # pragma: no mutate (one entry past the limit only detects truncation)
             if entries_seen + len(entries) > MAX_ENTRIES:
                 gap("Directory entry limit reached; directory truncated.")
                 entries = entries[:MAX_ENTRIES - entries_seen]
@@ -146,7 +146,7 @@ def snapshot_source(path: str) -> dict:
                 if _linklike(candidate):
                     gap(f"Skipped symlink/reparse path: {relative}")
                     continue
-                if entry.is_dir(follow_symlinks=False):
+                if entry.is_dir(follow_symlinks=False):  # pragma: no mutate (a symlink was refused just above)
                     if entry.name.lower() in _SKIP_DIRS or _secret_path(candidate):
                         gap(f"Excluded directory: {relative}")
                     elif depth >= MAX_DEPTH:
@@ -176,7 +176,7 @@ def snapshot_source(path: str) -> dict:
                     if (info.st_dev, info.st_ino) != (before.st_dev, before.st_ino) or before.st_nlink > 1:
                         gap(f"File changed before read: {relative}")
                         continue
-                    raw = handle.read(MAX_FILE_BYTES + 1)
+                    raw = handle.read(MAX_FILE_BYTES + 1)  # pragma: no mutate (one byte past the limit detects growth; reading more changes nothing)
                     after = os.fstat(handle.fileno())
                 if len(raw) > MAX_FILE_BYTES or total_bytes + len(raw) > MAX_TOTAL_BYTES:
                     gap(f"Growing/oversized file omitted: {relative}")
@@ -188,7 +188,7 @@ def snapshot_source(path: str) -> dict:
                     gap(f"Binary content omitted: {relative}")
                     continue
                 try:
-                    original = raw.decode("utf-8-sig")
+                    original = raw.decode("utf-8-sig")  # pragma: no mutate (codec names are case-insensitive)
                 except UnicodeDecodeError:
                     gap(f"Non-UTF-8 file omitted: {relative}")
                     continue

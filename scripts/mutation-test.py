@@ -12,7 +12,9 @@ tests/mutation-baseline.json records how many such mutants each module, and each
 accepted, so a full run fails when a module's count rises and a --changed run fails when a touched function's count
 rises: a change that loosens a test or adds untested logic. A function the baseline does not name (new code) must
 leave none. Lower a ceiling by adding tests, then --update-baseline; it never goes up by itself. mutmut keeps its
-working copy and results in mutants/ (ignored by git); delete it to start afresh.
+working copy and results in mutants/ (ignored by git) and reuses a result whose mutant text is unchanged, even
+when the tests changed, so a full run starts from an empty mutants/ and runs every mutant; a --changed or named run
+re-runs the mutants it names.
 
 mutmut maps src/<package>/<module>.py to the module <package>.<module> that the tests import, so the run links
 src -> backend and removes the link afterwards. mutmut remembers which tests reach each function
@@ -25,6 +27,7 @@ import ast
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tomllib
@@ -33,7 +36,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 LINK = ROOT / "src"
 BASELINE = ROOT / "tests" / "mutation-baseline.json"
-TEST_MAP = ROOT / "mutants" / "mutmut-stats.json"
+MUTANTS = ROOT / "mutants"
+TEST_MAP = MUTANTS / "mutmut-stats.json"
 ESCAPED = ("survived", "no tests")
 HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", re.M)
 
@@ -154,6 +158,9 @@ def main(argv):
         print("Changed functions: " + ", ".join(name.removesuffix("__mutmut_*") for name in mutant_names))
         # The remembered test map does not learn which existing tests reach a changed function (see the module docstring).
         TEST_MAP.unlink(missing_ok=True)
+    if not mutant_names:
+        # A kept result would stand for a mutant the new tests never met (see the module docstring).
+        shutil.rmtree(MUTANTS, ignore_errors=True)
     if (code := with_link(lambda: mutmut("run", *mutant_names))) != 0:
         return code
     if mutant_names and ref is None:

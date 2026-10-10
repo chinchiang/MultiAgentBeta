@@ -89,8 +89,8 @@ class LeaseStore:
             if not self.database_path:
                 raise LeaseError("A durable lease database is required")
             self.conn = sqlite3.connect(self.database_path, isolation_level=None, check_same_thread=False, timeout=10)
-            self.conn.execute("PRAGMA journal_mode=WAL")
-            self.conn.execute("PRAGMA synchronous=FULL")
+            self.conn.execute("PRAGMA journal_mode=WAL")  # pragma: no mutate (SQLite keywords are case-insensitive)
+            self.conn.execute("PRAGMA synchronous=FULL")  # pragma: no mutate (SQLite keywords are case-insensitive)
         for name in ("create_leases", "create_tasks", "create_dispatches"):
             self._sql(self.sql[name])
 
@@ -99,7 +99,7 @@ class LeaseStore:
         return self.conn.execute(query, args)
 
     def _now(self):
-        return float(self._sql("SELECT EXTRACT(EPOCH FROM clock_timestamp())").fetchone()[0]) if self.postgres else float(self.clock())
+        return float(self._sql("SELECT EXTRACT(EPOCH FROM clock_timestamp())").fetchone()[0]) if self.postgres else float(self.clock())  # pragma: no mutate (SQL keywords are case-insensitive; the test clock is time.time under PostgreSQL)
 
     @contextmanager
     def _transaction(self):
@@ -113,7 +113,7 @@ class LeaseStore:
                 raise
 
     def _row(self, lease_id, *, lock=False):
-        row = self._sql(self.sql["lease"] + (" FOR UPDATE" if lock and self.postgres else ""), (lease_id,)).fetchone()
+        row = self._sql(self.sql["lease"] + (" FOR UPDATE" if lock and self.postgres else ""), (lease_id,)).fetchone()  # pragma: no mutate (SQL keywords are case-insensitive)
         if not row:
             raise LeaseError("Worker lease not found")
         return dict(zip(("token_hash", "renew_hash", "binding", "expires", "deadline", "max_requests", "used_requests", "worker_id", "state"), row))

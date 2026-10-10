@@ -15,8 +15,8 @@ import pytest
 
 from vibe_audit import adapters
 from vibe_audit.adapters import (AdapterBlocked, ResponseLimitError, _origin, _pinned_address, _prepare_request,
-                                 _request, _result, evaluate_oracle, execute_case, secret_forms,
-                                 target_credential_origins, unbound_target_credentials)
+                                 _request, _result, case_headers_allowed, evaluate_oracle, execute_case, secret_forms,
+                                 state_changing, target_credential_origins, unbound_target_credentials)
 
 HEADERS = {"Accept": "application/json", "Accept-Encoding": "identity", "Connection": "close"}
 ORIGINS = adapters.TARGET_CREDENTIAL_ORIGINS_ENV
@@ -120,8 +120,8 @@ def test_declared_length_is_bounded_and_must_be_met(listen):
     with patch.object(adapters, "MAX_RESPONSE_BYTES", 32):
         assert fetch(listen(response(200, b"A" * 32)))["bytes"] == 32
         assert fetch(listen(response(204, b"")))["bytes"] == 0
-        for length in [33, -1]:
-            server = listen(f"HTTP/1.1 200 X\r\nContent-Length: {length}\r\nConnection: close\r\n\r\n".encode() + b"A" * 40)
+        for length, sent in [(33, 40), (-1, 40), (-1, 5)]:
+            server = listen(f"HTTP/1.1 200 X\r\nContent-Length: {length}\r\nConnection: close\r\n\r\n".encode() + b"A" * sent)
             with pytest.raises(ResponseLimitError, match="^Response exceeds the configured byte limit.$"):
                 fetch(server)
     with pytest.raises(ResponseLimitError, match="^Invalid response length; no oracle was evaluated.$"):
@@ -153,9 +153,36 @@ def test_slow_headers_are_cut_at_the_deadline_and_count_as_a_timeout(listen):
             conn.sendall(f"X-Line-{index}: 1\r\n".encode())
         conn.sendall(b"\r\n")
     started = time.monotonic()
-    with pytest.raises(TimeoutError):
-        fetch(listen(dribble), timeout=0.3)
-    assert time.monotonic() - started < 1.5
+    timers = []
+    real_timer = threading.Timer
+    with patch.object(adapters.threading, "Timer", lambda *a, **k: timers.append(real_timer(*a, **k)) or timers[-1]):
+        with pytest.raises(TimeoutError):
+            fetch(listen(dribble), timeout=0.3)
+    # The watchdog, not the per-byte socket timeout, ends the transport at the deadline; it never keeps the process alive.
+    assert time.monotonic() - started < 0.8
+    assert len(timers) == 1 and timers[0].daemon is True
+
+
+def test_body_reads_are_given_the_remaining_time_and_a_bounded_size(listen):
+    import http.client
+    timeouts, sizes = [], []
+    real_settimeout, real_read1 = socket.socket.settimeout, http.client.HTTPResponse.read1
+
+    def read1(self, size=-1):
+        chunk = real_read1(self, size)
+        sizes.append((size, len(chunk)))
+        return chunk
+    with patch.object(adapters, "MAX_RESPONSE_BYTES", 8192 * 2 + 5), patch.object(socket.socket, "settimeout", lambda s, v: timeouts.append(v) or real_settimeout(s, v)), \
+            patch.object(http.client.HTTPResponse, "read1", read1):
+        assert fetch(listen(response(200, b"C" * (8192 * 2 + 5))), timeout=2.0)["bytes"] == 8192 * 2 + 5
+    # With Connection: close the response owns the socket; it still gets the time the deadline leaves before each read.
+    remaining = [value for value in timeouts if value != 2]  # the connect() timeout and the listener's own are 2
+    assert len(remaining) >= 3 and all(0 < value < 2.0 for value in remaining)
+    total = 0
+    for size, got in sizes:
+        assert size == min(8192, 8192 * 2 + 5 + 1 - total)
+        total += got
+    assert sizes[-1] == (1, 0)
 
 
 def test_a_refused_connection_raises_instead_of_answering():
@@ -332,6 +359,22 @@ def test_credential_helpers_read_the_environment_they_are_given():
     manifest = {"models": ["x", {"credential_env": 5}, {"credential_env": "VIBEAUDIT_M"}], "auth_profiles": [{"credential_env": "VIBEAUDIT_T"}]}
     assert adapters.shared_credentials(manifest, {"VIBEAUDIT_M": "", "VIBEAUDIT_T": ""}) == []
     assert adapters.shared_credentials(manifest, {"VIBEAUDIT_M": "k", "VIBEAUDIT_T": "k"}) == ["VIBEAUDIT_T"]
+
+
+def test_case_headers_are_bounded_in_count_length_and_character_set():
+    assert case_headers_allowed(None) is True and case_headers_allowed(["Accept"]) is False
+    assert case_headers_allowed({f"X-H{index}": "v" for index in range(24)}) is True
+    assert case_headers_allowed({f"X-H{index}": "v" for index in range(25)}) is False
+    assert case_headers_allowed({"X-H": "v" * 4096}) is True and case_headers_allowed({"X-H": "v" * 4097}) is False
+    assert case_headers_allowed({"X-H": " ~"}) is True
+    for value in ["\x1f", "\x7f", "é"]:
+        assert case_headers_allowed({"X-H": value}) is False, value
+
+
+def test_a_case_without_a_method_is_a_get_for_the_side_effect_check():
+    assert state_changing({}) is False and state_changing({}, operator_case=False) is False
+    assert state_changing({"method": "post"}) is False and state_changing({"method": "post"}, operator_case=False) is True
+    assert state_changing({"method": "GET", "side_effects": True}) is True
 
 
 def test_model_header_lists_are_checked_with_their_exact_reasons():
@@ -655,3 +698,122 @@ async def test_execute_case_results_carry_their_exact_reasons(listen):
     hung = Target(listen)
     hung.listener.reply = b"HTTP/1.1 200 X\r\nContent-Length: 5\r\nConnection: close\r\n\r\nab"
     assert (await run(hung, live_case()))["reason"] == "Response was incomplete; no oracle was evaluated."
+
+
+class Replies(Target):
+    """A target whose answers are chosen per path: raw bytes, a callable, or the inherited fixture answers."""
+
+    def __init__(self, listen, **by_path):
+        super().__init__(listen)
+        self.by_path = by_path
+
+    def answer(self, conn, request):
+        line = request.split(b"\r\n", 1)[0].decode()
+        method, path, _ = line.split(" ")
+        reply = self.by_path.get(path)
+        if reply is None:
+            return super().answer(conn, request)
+        self.seen.append((method, path))
+        reply(conn, request) if callable(reply) else conn.sendall(reply)
+
+
+GOOD = {"name": "fixture_exists", "method": "GET", "path": "/leak", "expected_status": 200, "required_text": [CANARY]}
+
+
+@pytest.mark.asyncio
+async def test_execute_case_observations_and_evidence_are_exact(listen):
+    import asyncio
+    import json
+    target = Target(listen)
+    target.manifest["run_id"] = "run-1"
+    # A string precondition is a named requirement the oracle checks, not a request; the control after it still runs.
+    result = await run(target, live_case(preconditions=["fixture_exists", GOOD], repetitions=2))
+    assert (result["status"], result["requests"]) == ("pass", 4)
+    control = {"kind": "precondition", "name": "fixture_exists", "value": True, "provenance": "adapter.http", "case_id": "c1", "run_id": "run-1",
+               "status_code": 200, "repetition": 1, "matched_text_sha256": [DIGEST]}
+    answer = {"status_code": 200, "body": "safe fixture", "complete": True, "bytes": 12, "peer_ip": "127.0.0.1", "forbidden_text_sha256_observed": [],
+              "kind": "http_response", "provenance": "adapter.http", "case_id": "c1", "run_id": "run-1", "repetition": 1}
+    assert result["observations"] == [control, answer, {**control, "repetition": 2}, {**answer, "repetition": 2}]
+    assert result["evidence"] == [{"id": f"http-c1-{i + 1}", "kind": obs["kind"], "sha256": hashlib.sha256(json.dumps(obs, sort_keys=True).encode()).hexdigest(), "observation_index": i}
+                                  for i, obs in enumerate(result["observations"])]
+    assert target.seen == [("GET", "/leak"), ("GET", "/ok")] * 2
+    anonymous = await run(target, {k: v for k, v in live_case().items() if k != "id"})
+    assert [e["id"] for e in anonymous["evidence"]] == ["http-case-1"] and anonymous["observations"][0]["case_id"] is None
+    # The allowlist is read by name: a manifest without one authorizes no address.
+    manifest = {k: v for k, v in target.manifest.items() if k != "allowed_target_ips"}
+    assert await execute_case(manifest, live_case(), cancel_event=asyncio.Event(), request_hook=hook) == _result("blocked", "No target IP addresses were explicitly authorized.")
+
+
+@pytest.mark.asyncio
+async def test_execute_case_redacts_every_reflected_credential_longest_first(listen):
+    target = Replies(listen, **{"/echo": lambda conn, request: conn.sendall(response(200, target.listener.requests[-1].partition(b"\r\n\r\n")[2]))})
+    target.manifest.update(auth_profiles=[{"id": "r", "credential_env": "VIBEAUDIT_ECHO_A"}, {"id": "none"}],
+                           models=[{"id": "m", "credential_env": "VIBEAUDIT_ECHO_B"}, {"id": "odd", "credential_env": 5}, {"id": "lower", "credential_env": "vibeaudit_x"}])
+    with patch.dict(os.environ, {"VIBEAUDIT_ECHO_A": "zzz", "VIBEAUDIT_ECHO_B": "azzz", "vibeaudit_x": "safe"}):
+        result = await run(target, live_case(method="POST", path="/echo", body={"a": "azzz", "b": "zzz", "c": "safe fixture"}))
+    # The longer secret is replaced before the shorter one it contains, and the body was sent as given.
+    assert result["observations"][0]["body"] == '{"a": "[REDACTED_CREDENTIAL]", "b": "[REDACTED_CREDENTIAL]", "c": "safe fixture"}'
+
+
+@pytest.mark.asyncio
+async def test_execute_case_cancellation_and_hook_refusals_keep_what_was_dispatched(listen):
+    import asyncio
+    target = Target(listen)
+    calls = []
+
+    async def recording(**context):
+        calls.append(context)
+    cancelled = asyncio.Event()
+    cancelled.set()
+    assert await execute_case(target.manifest, live_case(), cancel_event=cancelled, request_hook=recording) == _result("blocked", "Run was cancelled before a request.")
+    assert calls == [] and target.seen == []
+    event = asyncio.Event()
+
+    async def cancelling(**context):
+        calls.append(context)
+        event.set()
+    assert await execute_case(target.manifest, live_case(), cancel_event=event, request_hook=cancelling) == _result("blocked", "Run was cancelled before a request.")
+    assert calls == [{"method": "GET", "path": "/ok"}] and target.seen == []
+
+    async def refusing(**context):
+        raise RuntimeError("budget")
+    assert await execute_case(target.manifest, live_case(), cancel_event=asyncio.Event(), request_hook=refusing) == _result("blocked", "The request budget or lease hook refused execution.")
+
+    async def cancelling_task(**context):
+        raise asyncio.CancelledError
+    assert await execute_case(target.manifest, live_case(), cancel_event=asyncio.Event(), request_hook=cancelling_task) == \
+        _result("blocked", "Execution was cancelled; dispatched requests are not automatically replayed.")
+    # A cancellation that lands while the request is on the wire leaves its outcome unknown, with the request counted.
+    during = asyncio.Event()
+
+    def answer_and_cancel(conn, request):
+        during.set()
+        conn.sendall(response(200, b"safe fixture"))
+    answered = Replies(listen, **{"/ok": answer_and_cancel})
+    assert await execute_case(answered.manifest, live_case(), cancel_event=during, request_hook=hook) == \
+        _result("outcome_unknown", "Execution was cancelled; dispatched requests are not automatically replayed.", [], 1)
+    with patch.object(adapters, "REQUEST_TIMEOUT_SECONDS", 0.2), patch.object(adapters, "_pinned_address", lambda *a: time.sleep(0.5) or "127.0.0.1"):
+        assert await run(target, live_case()) == _result("execution_error", "Target transport timed out; no success was inferred.")
+
+
+@pytest.mark.asyncio
+async def test_execute_case_failures_after_a_control_keep_its_observation(listen):
+    def stall(conn, request):
+        time.sleep(0.5)
+    replies = {"/redirect": response(302, b"", ["Location: http://elsewhere.invalid/"]), "/broken": b"not http at all\r\n\r\n",
+               "/hung": b"HTTP/1.1 200 X\r\nContent-Length: 5\r\nConnection: close\r\n\r\nab", "/stall": stall}
+    target = Replies(listen, **replies)
+    expected = [("/redirect", "GET", "blocked", "Target returned a redirect; redirects are never followed."),
+                ("/redirect", "POST", "outcome_unknown", "Target answered a state-changing request with a redirect; its effect is unverified and redirects are never followed."),
+                ("/broken", "GET", "execution_error", "Target transport failed; no success was inferred."),
+                ("/broken", "POST", "outcome_unknown", "Target transport failed; no success was inferred."),
+                ("/hung", "GET", "inconclusive", "Response was incomplete; no oracle was evaluated."),
+                ("/stall", "GET", "execution_error", "Target transport timed out; no success was inferred."),
+                ("/stall", "POST", "outcome_unknown", "Target transport timed out; no success was inferred.")]
+    with patch.object(adapters, "REQUEST_TIMEOUT_SECONDS", 0.2):
+        for path, method, status, reason in expected:
+            result = await run(target, live_case(method=method, path=path, preconditions=[GOOD], **({"body": {}} if method == "POST" else {})))
+            assert (result["status"], result["reason"], result["requests"]) == (status, reason, 2), path
+            assert [obs["kind"] for obs in result["observations"]] == ["precondition"] and result["evidence"] == [], path
+            if path == "/stall":
+                time.sleep(0.6)  # the listener answers one connection at a time; let the stalled one end

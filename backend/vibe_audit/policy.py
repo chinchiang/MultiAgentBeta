@@ -72,7 +72,7 @@ class Policy:
         if not requirements or len(requirements)!=len(tm["requirements"]):
             raise PolicyError("Threat model requires unique security requirement objects")
         for requirement in requirements.values():
-            self.standards(requirement.get("standard_ids",[]),run.get("catalog_manifest"))
+            self.standards(requirement.get("standard_ids",[]))  # the catalog version was checked once above
             if not requirement.get("statement") or not requirement.get("source"):
                 raise PolicyError("Security requirement lacks statement or provenance")
         tids=set()
