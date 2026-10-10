@@ -902,3 +902,20 @@ async def test_the_supervisor_enforces_the_worker_time_limit_inside_a_longer_lea
     # The lease is sized for creation and teardown around the worker's own limit.
     from vibe_audit.worker_runtime import task_budget
     assert task_budget(5)==5+5+40
+
+
+@pytest.mark.parametrize("server,expected",[("1.47","/v1.47/info"),("1.53","/v1.52/info"),("1.43",None),("",None)])
+def test_docker_api_version_is_negotiated_with_the_daemon(monkeypatch,server,expected):
+    import vibe_audit.worker_entry as module
+    calls=[]
+    def fake(method,path,timeout):
+        calls.append(path)
+        return (200,{"ApiVersion":server}) if path=="/version" else (200,{})
+    monkeypatch.setattr(module,"_docker_request",fake)
+    monkeypatch.setattr(module,"_docker_api_version",None)
+    if expected is None:
+        with pytest.raises(ValueError,match="1.44"):
+            module.docker_api("GET","/info")
+    else:
+        module.docker_api("GET","/info");module.docker_api("GET","/info")
+        assert calls==["/version",expected,expected]

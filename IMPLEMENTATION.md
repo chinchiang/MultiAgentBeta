@@ -15,32 +15,33 @@ All routes start with /api; with a session, an unknown /api path is a JSON 404. 
 | POST | /models/probe | Explicit endpoint contract with policy/budget |
 | GET / POST | /runs | List/create immutable manifests |
 | GET | /runs/{id} | State, usage, gaps and findings |
-| POST | /runs/{id}/start, /cancel, /resume | Lifecycle transitions |
+| POST | /runs/{id}/start, /cancel, /resume | Lifecycle transitions; /cancel on an awaiting_approval run declines its model-designed cases (status cancelled, nothing sent; a resume brings them back for review) |
+| POST | /runs/{id}/approve-cases | Operator approval of the exact sealed case set ({receipt}: the run's gate_receipts.cases), recorded as an operator-attestation artifact; then resumes into black-box execution |
 | GET | /runs/{id}/events | SSE progress events |
 | GET | /runs/{id}/trace | Persisted entities, links and history |
 | GET | /runs/{id}/evidence/{artifact_id} | Run-bound, hash-verified envelope |
 | GET | /runs/{id}/report?format=json or markdown or sarif | Verified export |
-| POST | /runs/{id}/retest | New run linked to original findings (trace `retests` links, Markdown and SARIF note the parent) |
+| POST | /runs/{id}/retest | New run linked to original findings (trace `retests` links, Markdown and SARIF note the parent). Only the parent cases testing the selected findings' threats are copied (all cases when none of them has threat links). When the retest finishes, each parent finding gets a `retests` entry (pass/fail/inconclusive/untraced); a validated_dynamic finding becomes resolved_in_retest only when every case testing its threats ran and passed |
 | POST | /runs/{id}/reconcile | Operator attestation of worker cleanup; closes a cancelling run, which stays unresumable |
 | POST | /runs/{id}/findings/{finding_id}/decision | Evidence-backed refuted/inconclusive decision: cited black-box executions must test the finding's threats (the operator names them for a finding without threat links); refuting needs a pass and no failure of those threats in the run; a validated_dynamic finding is cleared only by a linked retest |
 | GET | /openapi.json | OpenAPI schema at /api/openapi.json (session and CSRF token required; no interactive docs page) |
 
 Stages: a new run is recorded at stage `intake` before any work; the executed graph is preflight → whitebox → adjudication → threat_model → case_design → blackbox → report → complete.
-Run status: created/running/cancelling/cancelled/completed/incomplete/blocked/failed.
-Finding state: hypothesis/corroborated_static/validated_dynamic/refuted/inconclusive.
+Run status: created/awaiting_approval/running/cancelling/cancelled/completed/incomplete/blocked/failed. A live run whose cases were designed by a model stops at awaiting_approval before any black-box request.
+Finding state: hypothesis/corroborated_static/validated_dynamic/resolved_in_retest/refuted/inconclusive.
 Execution state: pass/fail/inconclusive/blocked/execution_error/outcome_unknown. Tool completion does not imply security pass. A fail whose target reset, or a later dispatch, is unconfirmed keeps its finding and carries target_state_confirmed=false; like outcome_unknown it stops the run and blocks resume. A deployment-identity change stops the run (deployment_changed=true) and blocks resume; each scheduled repetition sends the case once. Model-designed cases must match a strict case contract, and supplied cases are type-checked when the run is created. Runs with supplied or retest cases record automated threats those cases leave out as gaps; the threat model must keep every threat ID such a case tests. Worker results are rebuilt from supervisor fields and records, so extra keys a worker returns cannot set a verdict, observations or step labels; every content oracle needs a verified positive control that showed each forbidden canary, whatever executor ran the case. On resume, a task the lease journal shows finished returns its recorded, paid result instead of replaying or demanding reconciliation; prepared or sent tasks are never replayed and keep their reconciliation path.
 
 ## Modules
 
-- service: LangGraph orchestration, frozen manifests, sealed reviews, static evidence union, gates, journaled execution/report.
-- providers: LiteLLM, explicit origins/credentials, schema/refusal/truncation validation, bounded retries, no fallback, unknown-usage latch.
+- service: LangGraph orchestration, frozen manifests, sealed reviews, static evidence union, gates, journaled execution/report. Every model payload is fitted to the 512 KiB limit: past it, the largest files no finding cites lose their text first and the omission is a gap. A resumed stage reuses a paid challenger, mapper, threat-modeler or test-designer answer when it would ask the same question. A budget or time refusal reaches the run as itself (blocked), not as a generic provider failure.
+- providers: LiteLLM, explicit origins/credentials, schema/refusal/truncation validation, contract checks a JSON schema cannot state (inside the same bounded retry), no fallback, unknown-usage latch.
 - staging/snapshot: bounded raw private scanner input and separately redacted model context; repository config cannot control commands.
-- worker_runtime/worker_entry: controller, independent trusted supervisor, isolated worker and Unix socket relay. Docker has no direct egress; process_test is explicitly unisolated and unavailable in production profile loading. The controller's result deadline covers the supervisor's bounded container-create budget plus teardown, so a slow daemon cannot invent an unknown outcome for a healthy worker.
-- lease: persistent capability binding, reservation ledger, renewal/expiry, unknown outcomes. Controller EOF or expiry revokes sockets before termination. Renewals run off the controller event loop; the worker guardian and controller heartbeat tolerate isolated transient lease-database errors (three consecutive failures) but fail closed immediately on real expiry or revocation.
+- worker_runtime/worker_entry: controller, independent trusted supervisor, isolated worker and Unix socket relay. Docker has no direct egress; process_test is explicitly unisolated, and a runtime profile can only select the Docker backend. The supervisor limits the worker to timeout_seconds from its start; the lease and the controller's result deadline also cover the bounded container-create budget and teardown, so a slow daemon cannot invent an unknown outcome for a healthy worker. Once the supervisor has started, any controller-side failure is outcome_unknown, never "nothing sent"; a malformed worker result is execution_error and keeps the supervisor's records, so a recorded leak still fails. Fields only the supervisor or controller set are dropped from the worker's JSON. One relayed request, broker lock to last byte, ends within 9 seconds, before the 10-second relay and tool clients give up, and the target receives the sealed body bytes.
+- lease: persistent capability binding, reservation ledger, renewal/expiry, unknown outcomes. Controller EOF or expiry revokes sockets before termination. Renewals run off the controller event loop, four per TTL; the worker guardian and controller heartbeat tolerate two consecutive transient lease-database errors, end the worker on the third, and fail closed immediately on real expiry or revocation. A journaled result is reused only for the exact binding, spec hash included.
 - tool_runners: fixed input/argv compilation → isolated execution → bounded artifact collection → normalized observations → oracle over broker evidence. No arbitrary shell/scripts.
 - fixture_protocol: hashed reviewed reset/setup/cleanup, session capture, administrator-registered generic profiles; built-ins are synthetic.
 - effect_collector: independent sequenced events and sink receipts, HMAC-bound under a per-call key that exists only while the collector verifies them (stored bundles are evidence records, not re-verifiable signatures); target JSON cannot confer provenance.
-- store/traceability: PostgreSQL production, SQLite demo, atomic job/run commits, versioned entities/evidence links.
+- store/traceability: PostgreSQL production, SQLite demo, atomic job/run commits, versioned entities/evidence links. A lost PostgreSQL connection is reopened outside a transaction; a save writes only entity versions it has not written yet.
 - catalog: pinned canonical IDs, version/source checks; category membership is not test coverage or certification.
 - benchmark: seven comparative arms, common budgets/tool evidence, independent ground truth and incomplete accounting. Synthetic runs verify plumbing only.
 
@@ -72,32 +73,33 @@ See docs/LINUX_SETUP.md, docs/VALIDATION.md and docs/DELIVERY.md.
 | POST | /models/probe | 明確的端點契約，含 policy／預算 |
 | GET / POST | /runs | 列出／建立不可變的 manifest |
 | GET | /runs/{id} | 狀態、用量、缺口與發現 |
-| POST | /runs/{id}/start, /cancel, /resume | 生命週期轉換 |
+| POST | /runs/{id}/start, /cancel, /resume | 生命週期轉換；對 awaiting_approval 的 run 呼叫 /cancel 即退回模型設計的案例（狀態改為 cancelled，不送出任何請求；之後 resume 會重新交付審視） |
+| POST | /runs/{id}/approve-cases | 操作者核准確切的封存案例集（{receipt}：run 的 gate_receipts.cases），記錄為 operator-attestation 證據後恢復進入黑箱執行 |
 | GET | /runs/{id}/events | SSE 進度事件 |
 | GET | /runs/{id}/trace | 持久化的實體、連結與歷史 |
 | GET | /runs/{id}/evidence/{artifact_id} | 綁定於 run、經雜湊驗證的信封 |
 | GET | /runs/{id}/report?format=json or markdown or sarif | 經驗證的匯出 |
-| POST | /runs/{id}/retest | 建立連結到原始發現的新 run（trace 記錄 `retests` 連結，Markdown 與 SARIF 會標註父項） |
+| POST | /runs/{id}/retest | 建立連結到原始發現的新 run（trace 記錄 `retests` 連結，Markdown 與 SARIF 會標註父項）。只複製測試所選發現之威脅的上層案例（所選發現都沒有威脅連結時複製全部）。複測完成後，每個上層發現都會新增一筆 `retests`（pass/fail/inconclusive/untraced）；validated_dynamic 的發現只有在測試其威脅的每個案例都執行且 pass 時，才會變成 resolved_in_retest |
 | POST | /runs/{id}/reconcile | 操作者對 worker 清理的證明；關閉處於 cancelling 狀態的 run，該 run 仍不可恢復（unresumable） |
 | POST | /runs/{id}/findings/{finding_id}/decision | 以證據為依據的 refuted／inconclusive 決策：被引用的黑箱執行必須測試該發現的威脅（若該發現沒有威脅連結，由操作者命名這些威脅）；要駁回（refute）需要一次 pass，且該 run 中這些威脅沒有任何失敗；validated_dynamic 狀態的發現只能透過已連結的 retest 清除 |
 | GET | /openapi.json | 位於 /api/openapi.json 的 OpenAPI schema（需要 session 與 CSRF token；不提供互動式文件頁面） |
 
 Stages（階段）：新 run 在任何工作開始前會先記錄於 `intake` 階段；實際執行的圖為 preflight → whitebox → adjudication → threat_model → case_design → blackbox → report → complete。
-Run 狀態：created/running/cancelling/cancelled/completed/incomplete/blocked/failed。
-Finding（發現）狀態：hypothesis/corroborated_static/validated_dynamic/refuted/inconclusive。
+Run 狀態：created/awaiting_approval/running/cancelling/cancelled/completed/incomplete/blocked/failed。案例由模型設計的 live run 會在送出任何黑箱請求前停在 awaiting_approval。
+Finding（發現）狀態：hypothesis/corroborated_static/validated_dynamic/resolved_in_retest/refuted/inconclusive。
 Execution（執行）狀態：pass/fail/inconclusive/blocked/execution_error/outcome_unknown。工具執行完成不代表通過安全性檢驗（security pass）。若 fail 的目標重置或其後的 dispatch 未經確認，該發現會保留並標記 target_state_confirmed=false；與 outcome_unknown 一樣，它會停止 run 並阻止 resume。部署識別變更會停止 run（deployment_changed=true）並阻止 resume；每次排定的重複執行只會送出該 case 一次。模型設計的 case 必須符合嚴格的 case contract，而提供的 case 會在 run 建立時做型別檢查。含 supplied 或 retest case 的 run 會把這些 case 未涵蓋的自動化威脅記錄為 gap；威脅模型必須保留每個此類 case 所測試的威脅 ID。Worker 的結果會由 supervisor 的欄位與記錄重建，因此 worker 回傳的多餘鍵無法設定 verdict、observations 或步驟標籤；不論由哪個 executor 執行 case，每個內容 oracle 都需要一個已驗證的 positive control，且該 control 顯示過每個禁止的 canary。在 resume 時，lease journal 顯示已完成的工作會直接回傳其已記錄且已計費的結果，而非重播或要求 reconciliation；prepared 或 sent 狀態的工作永不重播，並保留其 reconciliation 路徑。
 
 ## 模組（Modules）
 
-- service：LangGraph 編排、凍結的 manifest、已封存（sealing）的審查、靜態證據聯集、閘門（gate）、含日誌（journal）的執行／報告。
-- providers：LiteLLM、明確的 origins／憑證、schema／拒答／截斷驗證、有界的重試、無 fallback、unknown-usage 鎖存。
+- service：LangGraph 編排、凍結的 manifest、已封存（sealing）的審查、靜態證據聯集、閘門（gate）、含日誌（journal）的執行／報告。每個模型 payload 都依 512 KiB 上限裁切：超過時，先省略沒有發現引用的最大檔案文字，並記為缺口。恢復的階段若會問同一個問題，就重用已付費的 challenger、mapper、threat modeler 或 test designer 答案。預算或時間拒絕以原本的原因呈現（blocked），不會變成一般的 provider 失敗。
+- providers：LiteLLM、明確的 origins／憑證、schema／拒答／截斷驗證、JSON schema 無法表達的合約檢查（同樣在有界重試內）、無 fallback、unknown-usage 鎖存。
 - staging/snapshot：有界的原始私密掃描器輸入，以及另外去識別化（redacted）的模型情境；儲存庫設定無法控制命令。
-- worker_runtime/worker_entry：controller、獨立且受信任的 supervisor、隔離的 worker 與 Unix socket relay。Docker 沒有直接對外連線（egress）；process_test 明確不隔離，且在 production profile 載入時不可用。controller 的結果期限涵蓋 supervisor 有界的容器建立預算加上 teardown，因此緩慢的 daemon 無法為健康的 worker 憑空捏造 unknown 結果。
-- lease：持久的 capability 綁定、保留（reservation）帳本、續約／到期、unknown 結果。controller EOF 或到期會在終止前先撤銷 socket。續約在 controller 事件迴圈之外執行；worker guardian 與 controller 心跳可以容忍個別的暫時性 lease 資料庫錯誤（連續三次失敗），但遇到真正的到期或撤銷時會立即 fail closed。
+- worker_runtime/worker_entry：controller、獨立且受信任的 supervisor、隔離的 worker 與 Unix socket relay。Docker 沒有直接對外連線（egress）；process_test 明確不隔離，runtime profile 只能選用 Docker 後端。supervisor 從 worker 啟動起以 timeout_seconds 限制 worker；lease 與 controller 的結果期限另涵蓋有界的容器建立預算與 teardown，因此緩慢的 daemon 無法為健康的 worker 憑空捏造 unknown 結果。supervisor 啟動之後，controller 端的任何失敗都是 outcome_unknown，不會回報「未送出」；worker 回傳格式錯誤時為 execution_error，並保留 supervisor 的紀錄，已記錄的外洩仍判 fail。只有 supervisor 或 controller 能設定的欄位會從 worker 的 JSON 中丟棄。一次轉送請求（從 broker lock 到最後一個位元組）在 9 秒內結束，早於 relay 與工具 client 的 10 秒逾時；目標收到的是封存的 body 位元組。
+- lease：持久的 capability 綁定、保留（reservation）帳本、續約／到期、unknown 結果。controller EOF 或到期會在終止前先撤銷 socket。續約在 controller 事件迴圈之外執行，每個 TTL 四次；worker guardian 與 controller 心跳可容忍連續兩次暫時性 lease 資料庫錯誤，第三次即結束 worker，遇到真正的到期或撤銷時立即 fail closed。journal 的結果只在 binding（含 spec hash）完全相同時重用。
 - tool_runners：固定的 input／argv 編譯 → 隔離執行 → 有界的 artifact 收集 → 正規化的 observations → 以 broker 證據為本的 oracle。不允許任意的 shell／腳本。
 - fixture_protocol：經審查且具雜湊的 reset/setup/cleanup、session 擷取、由管理員註冊的通用 profile；內建者皆為合成。
 - effect_collector：獨立排序的事件與 sink 收執，以僅在 collector 驗證期間存在的 per-call 金鑰進行 HMAC 綁定（儲存的 bundle 是證據記錄，而非可重新驗證的簽章）；目標的 JSON 無法賦予來源證明（provenance）。
-- store/traceability：正式環境用 PostgreSQL、示範用 SQLite、atomic 的 job/run 提交、版本化的實體／證據連結。
+- store/traceability：正式環境用 PostgreSQL、示範用 SQLite、atomic 的 job/run 提交、版本化的實體／證據連結。PostgreSQL 連線中斷時，在交易外自動重連；save 只寫入尚未寫過的實體版本。
 - catalog：釘選的標準 ID、版本／來源檢查；類別歸屬不等於測試涵蓋或認證。
 - benchmark：七個比較臂（arm）、共用的預算／工具證據、獨立的 ground truth 與不完整項目的計量。合成 run 僅驗證管線本身。
 

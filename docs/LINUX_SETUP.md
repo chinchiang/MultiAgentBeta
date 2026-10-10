@@ -2,7 +2,7 @@
 
 ## 執行需求
 
-Python 3.12+、Node 24（建置 UI／TS fixture）、PostgreSQL、支援 recursive read-only bind mount 的 Linux kernel/Docker（supervisor 直接呼叫 Docker Engine API v1.52，需要 Docker 29 以上），以及授權 staging。實際驗收版本見 VALIDATION.md。Windows 原生控制台可跑 demo；live 控制程序和 Docker workers 一起放在 Linux/WSL2。
+Python 3.12+、Node 24（建置 UI／TS fixture）、PostgreSQL、支援 recursive read-only bind mount 的 Linux kernel/Docker（Docker 25 以上；supervisor 直接呼叫 Docker Engine API，與 daemon 協商版本，最高使用 1.52、最低需要 1.44），以及授權 staging。實際驗收版本見 VALIDATION.md。Windows 原生控制台可跑 demo；live 控制程序和 Docker workers 一起放在 Linux/WSL2。
 
 模型、靶場與憑證不由安裝程序自動建立。以下下載與建置是管理者的明確 provisioning；評估期間不安裝套件、不拉取映像。
 
@@ -87,7 +87,7 @@ promptfoo/PyRIT 等外部工具可在 setup、正控制、主測試、collector�
 
 ## Prerequisites
 
-Python 3.12+, Node 24 (to build the UI / TS fixtures), PostgreSQL, a Linux kernel/Docker that supports recursive read-only bind mounts (the supervisor calls the Docker Engine API v1.52 directly, so Docker 29 or newer is required), and an authorized staging area. See VALIDATION.md for the actual validated versions. The native Windows console can run the demo; the live control program and the Docker workers are placed together on Linux/WSL2.
+Python 3.12+, Node 24 (to build the UI / TS fixtures), PostgreSQL, a Linux kernel/Docker that supports recursive read-only bind mounts (Docker 25 or newer; the supervisor calls the Docker Engine API directly and negotiates its version with the daemon, using at most 1.52 and needing at least 1.44), and an authorized staging area. See VALIDATION.md for the actual validated versions. The native Windows console can run the demo; the live control program and the Docker workers are placed together on Linux/WSL2.
 
 Models, targets, and credentials are not created automatically by the installation procedure. The downloads and builds below are explicit provisioning by the administrator; no packages are installed and no images are pulled during an evaluation.
 

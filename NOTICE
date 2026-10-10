@@ -1,4 +1,4 @@
-Vibe Audit 0.2.0
+Vibe Audit 0.2.1
 Core source is provided under Apache License 2.0.
 
 This distribution integrates third-party dependencies listed in requirements.lock.txt
@@ -24,7 +24,7 @@ archive. Captured dependency locks are in deploy/worker/locks; each dependency
 retains its own license. Semgrep/Gitleaks/OSV/ZAP/Schemathesis/Playwright/promptfoo/
 PyRIT versions and image IDs are recorded in docs/runtime-images.json.
 ---
-Vibe Audit 0.2.0
+Vibe Audit 0.2.1
 核心原始碼係依 Apache License 2.0 提供。
 
 本散布版本整合了 requirements.lock.txt 與 frontend/package-lock.json 所列的

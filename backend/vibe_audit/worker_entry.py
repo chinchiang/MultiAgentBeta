@@ -44,17 +44,38 @@ CREATE_BUDGET = 45
 SUPERVISED_FIELDS = ("broker_observations","cleanup_confirmed","deployment_changed","isolation","lifecycle","task_id","simulated","work_dir_removed","resumed_from_journal")
 
 
-def docker_api(method,path,timeout=5):
-    """Fixed local Docker Engine API; never follows remote contexts/proxies."""
+# The newest Engine API this code was written against, and the oldest: Docker 25 (API 1.44) is the first
+# with the recursive read-only bind mounts every worker gets.
+DOCKER_API_MAX = (1,52)
+DOCKER_API_MIN = (1,44)
+_docker_api_version = None
+
+
+def _docker_request(method,path,timeout):
     sock=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);sock.settimeout(timeout)
     conn=http.client.HTTPConnection("localhost",timeout=timeout)
     try:
         sock.connect("/var/run/docker.sock");conn.sock=sock
-        conn.request(method,"/v1.52"+path)
+        conn.request(method,path)
         response=conn.getresponse();body=response.read(1024*1024+1)
         if len(body)>1024*1024: raise ValueError("Docker response exceeded its bound")
         return response.status,json.loads(body) if body else None
     finally:conn.close();sock.close()
+
+
+def docker_api(method,path,timeout=5):
+    """Fixed local Docker Engine API; never follows remote contexts/proxies.
+
+    The version is negotiated once, as the docker CLI does: an older daemon refuses a newer version prefix outright."""
+    global _docker_api_version
+    if _docker_api_version is None:
+        status,info=_docker_request("GET","/version",timeout)
+        try: server=tuple(int(part) for part in str((info or {}).get("ApiVersion","")).split("."))
+        except ValueError: server=()
+        if status!=200 or len(server)!=2 or server<DOCKER_API_MIN:
+            raise ValueError("Docker Engine API 1.44 (Docker 25) or newer is required")
+        _docker_api_version="v%d.%d"%min(server,DOCKER_API_MAX)
+    return _docker_request(method,"/"+_docker_api_version+path,timeout)
 
 
 def packed(value):

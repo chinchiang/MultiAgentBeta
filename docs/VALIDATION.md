@@ -1,8 +1,40 @@
-# 0.2.0 本地驗證紀錄
+# 0.2.1 本地驗證紀錄
 
-驗證日期：2026-09-24；審查後續修正後於 2026-10-02 重跑 Windows 全套回歸與前端建置；2026-10-03 深入審查的修正完成後，在 WSL2/Linux 重跑全套回歸（含 PostgreSQL 整合與 Node 24 fixture）、前端型別檢查與 production build、真 API + React SSR 契約檢查，並以 Docker 29.1.3 執行含全部 Docker 整合的 Linux 全套回歸；2026-10-04 第三輪審查修正（controller 狀態回收、worker 生命週期 teardown 與期限對齊、lease 日誌 result/request 綁定與已完成任務重用、死碼清理等，PR #6）合併後，在 Linux 重跑兩份全套回歸、前端型別檢查與 production build，Docker 整合包含隔離 worker、三種離線掃描器、五種動態工具與完整 pipeline，並以現行程式碼重跑 SSR/API 契約檢查（含 fetch 版 SSE 與下載）；2026-10-05 加入盲審 matching 工具與裁定檔範例後，重跑兩份 Linux 全套回歸、Windows 全套回歸、前端型別檢查與 production build、SSR/API 契約與 Edge 真實瀏覽器檢查，並在 Windows Python 3.12.10 以 `--require-hashes` 驗證全新 venv 安裝；同日完成 reviewer 名稱正規化與 worksheet 理由只取獨立階段的安全強化後，上述全部收據再次刷新。依使用者指定，本次完成工程及不需要模型憑證的本地整合。**未呼叫真實 Claude、OpenAI 或 Nemotron；未證明多模型減偏、漏洞檢出率或成本改善。**
+驗證日期：2026-09-24；審查後續修正後於 2026-10-02 重跑 Windows 全套回歸與前端建置；2026-10-03 深入審查的修正完成後，在 WSL2/Linux 重跑全套回歸（含 PostgreSQL 整合與 Node 24 fixture）、前端型別檢查與 production build、真 API + React SSR 契約檢查，並以 Docker 29.1.3 執行含全部 Docker 整合的 Linux 全套回歸；2026-10-04 第三輪審查修正（controller 狀態回收、worker 生命週期 teardown 與期限對齊、lease 日誌 result/request 綁定與已完成任務重用、死碼清理等，PR #6）合併後，在 Linux 重跑兩份全套回歸、前端型別檢查與 production build，Docker 整合包含隔離 worker、三種離線掃描器、五種動態工具與完整 pipeline，並以當日程式碼重跑 SSR/API 契約檢查（含 fetch 版 SSE 與下載）；2026-10-05 加入盲審 matching 工具與裁定檔範例後，重跑兩份 Linux 全套回歸、Windows 全套回歸、前端型別檢查與 production build、SSR/API 契約與 Edge 真實瀏覽器檢查，並在 Windows Python 3.12.10 以 `--require-hashes` 驗證全新 venv 安裝；同日完成 reviewer 名稱正規化與 worksheet 理由只取獨立階段的安全強化後，上述全部收據再次刷新。依使用者指定，本次完成工程及不需要模型憑證的本地整合。**未呼叫真實 Claude、OpenAI 或 Nemotron；未證明多模型減偏、漏洞檢出率或成本改善。**
 
 本次已實際使用 Windows 控制台、WSL2/Linux、Docker 29.1.3、PostgreSQL 18.6 及固定版本的八種安全工具。09-24 原始驗證主機的 Windows 收據為 Python 3.12.14；10-05 的 Windows 收據為 Python 3.13.15（另以 Windows Python 3.12.10 驗證雜湊鎖定安裝），Linux 測試 venv 為 Python 3.14.4，Node 為 24.19.0。完整 Python/npm 依賴與工具映像鎖定檔隨原始碼交付。映像與離線 OSV 資料本身不放進 ZIP。
+
+## 2026-10-10 深入審查修正
+
+這一輪修正了一次全面審查找到的問題（分支 fix/deep-review-2026-10-10）。表中標「當日程式碼」的列，代表的是該列日期當時的程式碼，不是這一輪之後的程式碼。
+
+- 這一輪重跑的：
+  - Linux 全套回歸：574 passed、22 skipped、4 subtests passed（linux-regression-2026-10-10.xml）。環境是 Python 3.12.15、PostgreSQL 18.6（CI 釘選的 digest）、Node 24.21.0；PostgreSQL 整合與 Node 24 Web fixture 都有實際執行。
+  - 以真 Docker 執行的隔離測試：88 passed、1 skipped、4 subtests passed（docker-isolation-2026-10-10.xml）。環境是 Docker 29.1.3（Engine API 1.52）。worker 映像由 deploy/worker/Dockerfile 以 CI 使用的 python digest 建置，涵蓋隔離 worker、supervisor、Docker 後端的 fixture protocol 與 Node 24 Web fixture。
+  - 前端型別檢查與 production build：以 Node 22 與 Node 24 各建置一次，產物與 frontend/dist 逐位元組相同。
+  - 真 API 加上 React SSR 的契約 smoke：通過。
+  - 依賴稽核：以釘選的 osv-scanner 檢查 requirements.lock.txt 與 frontend/package-lock.json，沒有已知漏洞；前端的 source-map-js 已由 1.2.1 升到 1.2.2。
+- 這一輪沒有重跑的：
+  - 三種離線掃描器、五種動態工具、完整 pipeline（test_real_scanners、test_tool_runners、test_local_pipeline）：這台主機沒有 provision 掃描器、工具與 ZAP 映像。這幾項以 2026-10-05 與 2026-10-06 的收據為準，但那兩份收據早於本輪對 supervisor、OSV 與 Playwright runner 的修改。
+  - Windows 回歸與 Edge 真實瀏覽器檢查。
+- 已知、尚未處理：deploy/worker/locks 的工具映像依賴有 14 筆已知漏洞，分布在 11 個套件（osv.dev 2026-10-10），來自 promptfoo 0.123.1 與 PyRIT 的相依套件，例如 simple-git、basic-ftp、sharp、werkzeug。其中幾筆在上游還沒有修正版。要處理必須更新工具版本、重建 tools 映像並重新驗收工具整合，所以這一輪沒有改動。CI 的 dependencies job 只回報這部分，不擋 build。
+- 修正內容（詳見 git log）：
+  - supervisor 啟動後，controller 端的任何失敗都回報 outcome_unknown。
+  - worker 回傳格式錯誤時，supervisor 已記錄的外洩仍判 fail。
+  - supervisor 丟棄 worker 自行宣告的 supervisor 欄位。
+  - runtime profile 不能選用 process_test。
+  - broker 請求設有整體期限。
+  - lease 期限涵蓋容器建立與 teardown。
+  - journal 重用時比對 spec hash。
+  - 模型 payload 依上限裁切。
+  - 預算拒絕以原因呈現。
+  - 複測只帶入相關案例，結果會寫回上層發現。
+  - 待核准的案例可以退回。
+  - 恢復時重用已付費的模型答案。
+  - Store 斷線後自動重連。
+  - Docker API 版本改為協商（需要 Docker 25 以上）。
+  - 控制台的無障礙與錯誤顯示。
+  - docs/run-input.schema.json 與程式碼一致，並由測試檢查；版本字串統一為 0.2.1，同樣由測試檢查。
 
 ## 驗收結果
 
@@ -10,10 +42,12 @@
 
 | 驗收 | 實際結果 | 證據 |
 |---|---|---|
-| Linux 全套回歸（2026-10-05，現行程式碼） | 363 passed、21 skipped、4 subtests passed；PostgreSQL 18.6 整合（原子回滾、checkpoint 與 resume、lease 並行 claim）與 Node 24 Web fixture 皆實際執行；skips 為 20 項需要 Docker 映像的整合及 1 項 Windows 專屬 | linux-regression.xml |
-| Linux 全套回歸含 Docker 整合（2026-10-05，現行程式碼） | 383 passed、1 skipped、4 subtests passed；隔離 worker、三種離線掃描器、五種動態工具、以 Docker 後端執行的 fixture protocol 與完整 pipeline 皆實際執行，另含 PostgreSQL 18.6 整合與 Node 24 Web fixture；唯一的 skip 為 Windows 專屬。盲審 matching 工具的 10 項測試也在此收據範圍內 | linux-docker-integration.xml |
-| Linux 全套回歸含 Docker 整合（2026-10-06，現行程式碼） | 508 passed、15 skipped、4 subtests passed；Python 3.12.3、Docker 29.6.2、PostgreSQL 16.14、Node 24.21.0。隔離 worker、白箱容器不掛 broker、黑箱 http_case 固定序列、三種離線掃描器、以 Docker 後端執行的 fixture protocol（含 supervisor 紀錄判定）與完整 pipeline 皆實際執行。14 項 skip 是這台主機沒有建置 tools 與 ZAP 映像，所以五種動態工具這次沒有重驗，以 10-05 收據為準；另 1 項為 Windows 專屬 | linux-docker-integration-2026-10-06.xml |
-| Windows 全套回歸（2026-10-05，現行程式碼） | 359 passed、25 skipped、4 subtests passed | windows-regression.xml |
+| Linux 全套回歸（2026-10-10，本輪修正後） | 574 passed、22 skipped、4 subtests passed；PostgreSQL 18.6 與 Node 24 實際執行；skip 為需要掃描器／工具映像或完整 runtime profile 的整合與 1 項 Windows 專屬 | linux-regression-2026-10-10.xml |
+| 真 Docker 隔離測試（2026-10-10，本輪修正後） | 88 passed、1 skipped、4 subtests passed；Docker 29.1.3，worker 映像以 CI 的 python digest 建置 | docker-isolation-2026-10-10.xml |
+| Linux 全套回歸（2026-10-05，當日程式碼） | 363 passed、21 skipped、4 subtests passed；PostgreSQL 18.6 整合（原子回滾、checkpoint 與 resume、lease 並行 claim）與 Node 24 Web fixture 皆實際執行；skips 為 20 項需要 Docker 映像的整合及 1 項 Windows 專屬 | linux-regression.xml |
+| Linux 全套回歸含 Docker 整合（2026-10-05，當日程式碼） | 383 passed、1 skipped、4 subtests passed；隔離 worker、三種離線掃描器、五種動態工具、以 Docker 後端執行的 fixture protocol 與完整 pipeline 皆實際執行，另含 PostgreSQL 18.6 整合與 Node 24 Web fixture；唯一的 skip 為 Windows 專屬。盲審 matching 工具的 10 項測試也在此收據範圍內 | linux-docker-integration.xml |
+| Linux 全套回歸含 Docker 整合（2026-10-06，當日程式碼） | 508 passed、15 skipped、4 subtests passed；Python 3.12.3、Docker 29.6.2、PostgreSQL 16.14、Node 24.21.0。隔離 worker、白箱容器不掛 broker、黑箱 http_case 固定序列、三種離線掃描器、以 Docker 後端執行的 fixture protocol（含 supervisor 紀錄判定）與完整 pipeline 皆實際執行。14 項 skip 是這台主機沒有建置 tools 與 ZAP 映像，所以五種動態工具這次沒有重驗，以 10-05 收據為準；另 1 項為 Windows 專屬 | linux-docker-integration-2026-10-06.xml |
+| Windows 全套回歸（2026-10-05，當日程式碼） | 359 passed、25 skipped、4 subtests passed | windows-regression.xml |
 | PostgreSQL、隔離 worker、完整工作流 | 27 passed、4 deselected | postgres-pipeline-integration.xml |
 | Fixture、重置、停止與故障路徑 | 24 passed、3 skipped、4 subtests passed | runtime-fixture-integration.xml |
 | 最終流程與政策檢查 | 45 passed、14 skipped | final-guards.xml |
@@ -21,11 +55,11 @@
 | Schemathesis header 修正 | 2 passed、25 deselected | schemathesis-header-regression.xml |
 | 三種離線掃描器的已知問題偵測 | 3 passed | scanner-integration-release.xml |
 | 前端型別檢查及 production build（2026-10-05） | 通過，32 modules；以鎖定依賴重建，產物與 frontend/dist 逐位元組相同 | frontend/dist |
-| Edge 真實瀏覽器（2026-10-05，現行程式碼） | Edge 154 headless：三種匯出、保存專案、追溯、建立複測；0 page errors、無水平溢位 | browser-validation.json |
-| 真 FastAPI + React SSR/API | 三份合成審查、fail/pass/inconclusive、七份證據、五分頁、三種匯出及 HTML 跳脫；2026-10-05 以現行程式碼重跑通過（含證據裁決控制台），另確認只帶 session cookie 時 /api/session 與 /api/runs 拒絕且不洩漏 CSRF token，並以 Node 驗證 fetch 版 SSE 與下載 | api-ssr-validation.json |
+| Edge 真實瀏覽器（2026-10-05，當日程式碼） | Edge 154 headless：三種匯出、保存專案、追溯、建立複測；0 page errors、無水平溢位 | browser-validation.json |
+| 真 FastAPI + React SSR/API | 三份合成審查、fail/pass/inconclusive、七份證據、五分頁、三種匯出及 HTML 跳脫；2026-10-05 以當日程式碼重跑通過（含證據裁決控制台），另確認只帶 session cookie 時 /api/session 與 /api/runs 拒絕且不洩漏 CSRF token，並以 Node 驗證 fetch 版 SSE 與下載 | api-ssr-validation.json |
 | Python 相依一致性 | pip check 通過；鎖定檔附 hash 後（2026-10-03；2026-10-04 重跑），以 `--require-hashes` 在全新 venv 安裝通過：Linux Python 3.14.4、Windows Python 3.13.15 與 Windows Python 3.12.10（2026-10-05）實際裝上的套件與鎖定檔逐項相同，Linux 那個 venv 不含 Docker 的測試為 350 passed、21 skipped | requirements.lock.txt |
 
-兩份 Linux 全套回歸（含與不含 Docker 整合）、前端建置、SSR/API 契約與 Windows 全套回歸都代表 2026-10-05 的現行程式碼。2026-10-06 在 G4 第 5–11 輪審查修正合併後，另以含 Docker 整合的 Linux 全套回歸重驗；取得收據前的失敗與原因見 DOCKER_INTEGRATION_TESTING.md 的「2026-10-06 遇到的問題」。其餘各列是 2026-09-24 的結果。隔離 worker、掃描器與動態工具整合在 10-03 的修正（session 協定、supervisor 失敗分類、staging 生命週期等）與 10-04 的修正（supervisor teardown 統一、控制器期限對齊、日誌重用、guardian 暫時性錯誤容忍等）之後，已由 linux-docker-integration.xml 重新驗證，表中 09-24 的分項收據保留作為當時的紀錄。取得 10-03 收據前的幾次執行有失敗：四項是測試本身依賴外部環境變數（已修正，見下方第 11 項），其餘來自測試主機的環境變數與 runtime profile 設定不完整，詳見 DOCKER_INTEGRATION_TESTING.md。Edge 真實瀏覽器檢查已於 10-05 以現行程式碼重跑通過（frontend/scripts/browser-smoke.cjs，系統 Edge 154 headless）；SSR/API 契約檢查（含 fetch 版 SSE 與下載）也已以現行程式碼重跑通過。Windows 的 skips 包含需要 Linux/Docker/PostgreSQL、POSIX 程序或平台 symlink 能力的案例；已另在 Linux 執行的部分以上述 Linux 報告為準。Fixture 那組的三個 skips 包含未設定的 PostgreSQL 測試條件及 Windows 專屬路徑；PostgreSQL 情境由另一組補驗。最終政策檢查中的十四項 Docker 整合另行執行，沒有把 skip 當成 pass。
+兩份 Linux 全套回歸（含與不含 Docker 整合）、前端建置、SSR/API 契約與 Windows 全套回歸都代表 2026-10-05 的當日程式碼。2026-10-06 在 G4 第 5–11 輪審查修正合併後，另以含 Docker 整合的 Linux 全套回歸重驗；取得收據前的失敗與原因見 DOCKER_INTEGRATION_TESTING.md 的「2026-10-06 遇到的問題」。其餘各列是 2026-09-24 的結果。隔離 worker、掃描器與動態工具整合在 10-03 的修正（session 協定、supervisor 失敗分類、staging 生命週期等）與 10-04 的修正（supervisor teardown 統一、控制器期限對齊、日誌重用、guardian 暫時性錯誤容忍等）之後，已由 linux-docker-integration.xml 重新驗證，表中 09-24 的分項收據保留作為當時的紀錄。取得 10-03 收據前的幾次執行有失敗：四項是測試本身依賴外部環境變數（已修正，見下方第 11 項），其餘來自測試主機的環境變數與 runtime profile 設定不完整，詳見 DOCKER_INTEGRATION_TESTING.md。Edge 真實瀏覽器檢查已於 10-05 以當日程式碼重跑通過（frontend/scripts/browser-smoke.cjs，系統 Edge 154 headless）；SSR/API 契約檢查（含 fetch 版 SSE 與下載）也已以當日程式碼重跑通過。Windows 的 skips 包含需要 Linux/Docker/PostgreSQL、POSIX 程序或平台 symlink 能力的案例；已另在 Linux 執行的部分以上述 Linux 報告為準。Fixture 那組的三個 skips 包含未設定的 PostgreSQL 測試條件及 Windows 專屬路徑；PostgreSQL 情境由另一組補驗。最終政策檢查中的十四項 Docker 整合另行執行，沒有把 skip 當成 pass。
 
 原始逐項名稱、耗時與 skip 原因見 XML；validation-summary.json 由 scripts/summarize-validation.py 自動讀取，沒有用 LLM 補造結果。收據中的主機名與使用者帳號已由 scripts/redact-receipts.py 遮罩（只改 hostname 屬性與家目錄的帳號段，測試、計數、耗時與原因不變）；先前 commit 的版本仍留在 git 歷史中。release-guards.xml、local-pipeline.xml、tool-integration.xml 為較早通過的重疊檢查，不另加計。
 
@@ -100,11 +134,43 @@ verify-linux.sh 只在設定 `VIBEAUDIT_JUNIT_XML` 時寫出 JUnit 收據；放�
 
 ---
 
-# 0.2.0 Local Validation Record
+# 0.2.1 Local Validation Record
 
-Validation date: 2026-09-24; after follow-up fixes from review, the full Windows regression and the frontend build were re-run on 2026-10-02; after the fixes from the in-depth review were completed on 2026-10-03, the full regression (including PostgreSQL integration and the Node 24 fixture), the frontend type check and production build, and the real API + React SSR contract checks were re-run on WSL2/Linux, and the full Linux regression including all Docker integrations was run with Docker 29.1.3; after the third-round review fixes (controller state reclamation, worker lifecycle teardown and deadline alignment, lease log result/request binding and completed-task reuse, dead-code cleanup, etc., PR #6) were merged on 2026-10-04, both full regression suites, the frontend type check and the production build were re-run on Linux; the Docker integrations covered the isolated worker, the three offline scanners, the five dynamic tools and the full pipeline, and the SSR/API contract checks (including fetch-based SSE and download) were re-run against the current code; on 2026-10-05, after the blind-review matching tool and adjudication-file examples were added, both full Linux regressions, the full Windows regression, the frontend type check and production build, the SSR/API contract and the Edge real-browser checks were re-run, and a fresh-venv install with `--require-hashes` was verified on Windows Python 3.12.10; the same day, after hardening reviewer-name normalization and restricting worksheet rationales to independent phases, all of the above receipts were refreshed again. As specified by the user, this round completed the engineering work and the local integrations that do not require model credentials. **Real Claude, OpenAI or Nemotron were NOT called; no multi-model bias reduction, vulnerability-detection-rate or cost improvement has been demonstrated.**
+Validation date: 2026-09-24; after follow-up fixes from review, the full Windows regression and the frontend build were re-run on 2026-10-02; after the fixes from the in-depth review were completed on 2026-10-03, the full regression (including PostgreSQL integration and the Node 24 fixture), the frontend type check and production build, and the real API + React SSR contract checks were re-run on WSL2/Linux, and the full Linux regression including all Docker integrations was run with Docker 29.1.3; after the third-round review fixes (controller state reclamation, worker lifecycle teardown and deadline alignment, lease log result/request binding and completed-task reuse, dead-code cleanup, etc., PR #6) were merged on 2026-10-04, both full regression suites, the frontend type check and the production build were re-run on Linux; the Docker integrations covered the isolated worker, the three offline scanners, the five dynamic tools and the full pipeline, and the SSR/API contract checks (including fetch-based SSE and download) were re-run against the the code of that date; on 2026-10-05, after the blind-review matching tool and adjudication-file examples were added, both full Linux regressions, the full Windows regression, the frontend type check and production build, the SSR/API contract and the Edge real-browser checks were re-run, and a fresh-venv install with `--require-hashes` was verified on Windows Python 3.12.10; the same day, after hardening reviewer-name normalization and restricting worksheet rationales to independent phases, all of the above receipts were refreshed again. As specified by the user, this round completed the engineering work and the local integrations that do not require model credentials. **Real Claude, OpenAI or Nemotron were NOT called; no multi-model bias reduction, vulnerability-detection-rate or cost improvement has been demonstrated.**
 
 This round actually used the Windows console, WSL2/Linux, Docker 29.1.3, PostgreSQL 18.6 and eight security tools at pinned versions. The original 2026-09-24 verification host's Windows receipts ran Python 3.12.14; the 2026-10-05 Windows receipts ran Python 3.13.15 (a hash-pinned install was also verified on Windows Python 3.12.10), the Linux test venv used Python 3.14.4, and Node was 24.19.0. The complete Python/npm dependency and tool image lockfiles are delivered with the source code. The images and the offline OSV data themselves are not packed into the ZIP.
+
+## 2026-10-10 In-Depth Review Fixes
+
+This round fixed the issues a full review found (branch fix/deep-review-2026-10-10). Rows in the table marked "the code of that date" describe the code as of that row's date, not the code after this round.
+
+- Re-run this round:
+  - Full Linux regression: 574 passed, 22 skipped, 4 subtests passed (linux-regression-2026-10-10.xml). The environment was Python 3.12.15, PostgreSQL 18.6 (the digest CI pins) and Node 24.21.0; the PostgreSQL integration and the Node 24 Web fixture actually ran.
+  - Isolation tests on real Docker: 88 passed, 1 skipped, 4 subtests passed (docker-isolation-2026-10-10.xml). The environment was Docker 29.1.3 (Engine API 1.52). The worker image was built from deploy/worker/Dockerfile on the python digest CI uses, and the tests cover the isolated worker, the supervisor, the fixture protocol on the Docker backend and the Node 24 Web fixture.
+  - Frontend type check and production build: built once with Node 22 and once with Node 24; the output is byte-identical to frontend/dist.
+  - Real API plus React SSR contract smoke: passed.
+  - Dependency audit: the pinned osv-scanner reports no known vulnerabilities in requirements.lock.txt or frontend/package-lock.json; the frontend's source-map-js moved from 1.2.1 to 1.2.2.
+- Not re-run this round:
+  - The three offline scanners, the five dynamic tools and the full pipeline (test_real_scanners, test_tool_runners, test_local_pipeline): this host had no provisioned scanner, tool or ZAP images. For these, the 2026-10-05 and 2026-10-06 receipts stand, but both predate this round's changes to the supervisor, OSV and the Playwright runner.
+  - The Windows regression and the real Edge browser check.
+- Known and not yet handled: the tool image dependencies in deploy/worker/locks carry 14 known vulnerabilities across 11 packages (osv.dev, 2026-10-10). They come from dependencies of promptfoo 0.123.1 and PyRIT, such as simple-git, basic-ftp, sharp and werkzeug, and some have no upstream fix yet. Handling them means updating tool versions, rebuilding the tools image and re-validating the tool integration, so this round left them unchanged. The CI dependencies job reports them without failing the build.
+- Fixes (see git log for details):
+  - Once the supervisor has started, any controller-side failure is reported as outcome_unknown.
+  - When the worker returns a malformed result, a leak the supervisor recorded still fails.
+  - The supervisor drops supervisor fields that the worker sets itself.
+  - A runtime profile cannot select process_test.
+  - Broker requests have an overall deadline.
+  - The lease deadline covers container creation and teardown.
+  - Journal reuse checks the spec hash.
+  - Model payloads are fitted to the limit.
+  - Budget refusals are reported with their reason.
+  - Retests take only the relevant cases, and their results are written back to the parent findings.
+  - Model-designed cases waiting for approval can be declined.
+  - A resume reuses model answers that were already paid for.
+  - The Store reconnects automatically after a lost connection.
+  - The Docker API version is negotiated (Docker 25 or newer is required).
+  - Console accessibility and error display.
+  - docs/run-input.schema.json matches the code, and a test checks it; version strings are unified at 0.2.1, also checked by a test.
 
 ## Acceptance Results
 
@@ -112,10 +178,12 @@ The test groups overlap one another; **do not add the rows together and treat th
 
 | Acceptance | Actual result | Evidence |
 |---|---|---|
-| Full Linux regression (2026-10-05, current code) | 363 passed, 21 skipped, 4 subtests passed; the PostgreSQL 18.6 integration (atomic rollback, checkpoint and resume, concurrent lease claim) and the Node 24 Web fixture were actually executed; the skips are 20 integrations requiring Docker images and 1 Windows-only case | linux-regression.xml |
-| Full Linux regression with Docker integration (2026-10-05, current code) | 383 passed, 1 skipped, 4 subtests passed; the isolated worker, the three offline scanners, the five dynamic tools, the fixture protocol executed with the Docker backend and the full pipeline were all actually executed, and this run also includes the PostgreSQL 18.6 integration and the Node 24 Web fixture; the only skip is Windows-specific. The 10 tests of the blind-review matching tool are also within this receipt's scope | linux-docker-integration.xml |
-| Full Linux regression with Docker integration (2026-10-06, current code) | 508 passed, 15 skipped, 4 subtests passed; Python 3.12.3, Docker 29.6.2, PostgreSQL 16.14, Node 24.21.0. The isolated worker, white-box containers without a broker, the fixed black-box http_case sequence, the three offline scanners, the fixture protocol on the Docker backend (including supervisor-record verdicts) and the full pipeline were all actually executed. 14 skips are because this host did not build the tools and ZAP images, so the five dynamic tools were not re-verified this time; the 10-05 receipt stands for them. The remaining skip is Windows-specific | linux-docker-integration-2026-10-06.xml |
-| Full Windows regression (2026-10-05, current code) | 359 passed, 25 skipped, 4 subtests passed | windows-regression.xml |
+| Full Linux regression (2026-10-10, after this round) | 574 passed, 22 skipped, 4 subtests passed; PostgreSQL 18.6 and Node 24 actually ran; the skips are integrations that need scanner/tool images or a complete runtime profile, plus 1 Windows-only test | linux-regression-2026-10-10.xml |
+| Isolation tests on real Docker (2026-10-10, after this round) | 88 passed, 1 skipped, 4 subtests passed; Docker 29.1.3, worker image built on the CI python digest | docker-isolation-2026-10-10.xml |
+| Full Linux regression (2026-10-05, the code of that date) | 363 passed, 21 skipped, 4 subtests passed; the PostgreSQL 18.6 integration (atomic rollback, checkpoint and resume, concurrent lease claim) and the Node 24 Web fixture were actually executed; the skips are 20 integrations requiring Docker images and 1 Windows-only case | linux-regression.xml |
+| Full Linux regression with Docker integration (2026-10-05, the code of that date) | 383 passed, 1 skipped, 4 subtests passed; the isolated worker, the three offline scanners, the five dynamic tools, the fixture protocol executed with the Docker backend and the full pipeline were all actually executed, and this run also includes the PostgreSQL 18.6 integration and the Node 24 Web fixture; the only skip is Windows-specific. The 10 tests of the blind-review matching tool are also within this receipt's scope | linux-docker-integration.xml |
+| Full Linux regression with Docker integration (2026-10-06, the code of that date) | 508 passed, 15 skipped, 4 subtests passed; Python 3.12.3, Docker 29.6.2, PostgreSQL 16.14, Node 24.21.0. The isolated worker, white-box containers without a broker, the fixed black-box http_case sequence, the three offline scanners, the fixture protocol on the Docker backend (including supervisor-record verdicts) and the full pipeline were all actually executed. 14 skips are because this host did not build the tools and ZAP images, so the five dynamic tools were not re-verified this time; the 10-05 receipt stands for them. The remaining skip is Windows-specific | linux-docker-integration-2026-10-06.xml |
+| Full Windows regression (2026-10-05, the code of that date) | 359 passed, 25 skipped, 4 subtests passed | windows-regression.xml |
 | PostgreSQL, isolated worker, full workflow | 27 passed, 4 deselected | postgres-pipeline-integration.xml |
 | Fixture, reset, stop and failure paths | 24 passed, 3 skipped, 4 subtests passed | runtime-fixture-integration.xml |
 | Final workflow and policy checks | 45 passed, 14 skipped | final-guards.xml |
@@ -123,11 +191,11 @@ The test groups overlap one another; **do not add the rows together and treat th
 | Schemathesis header fix | 2 passed, 25 deselected | schemathesis-header-regression.xml |
 | Known-issue detection by the three offline scanners | 3 passed | scanner-integration-release.xml |
 | Frontend type check and production build (2026-10-05) | Passed, 32 modules; rebuilt with the locked dependencies, the artifacts are byte-identical to frontend/dist | frontend/dist |
-| Edge real browser (2026-10-05, current code) | Edge 154 headless: three export types, saving a project, traceability, creating a retest; 0 page errors, no horizontal overflow | browser-validation.json |
-| Real FastAPI + React SSR/API | Three synthetic reviews, fail/pass/inconclusive, seven pieces of evidence, five tabs, three export types and HTML escaping; re-run and passed on 2026-10-05 against the current code (including the evidence adjudication console), also confirming that with only a session cookie /api/session and /api/runs are rejected without leaking the CSRF token, and fetch-based SSE and download were verified with Node | api-ssr-validation.json |
+| Edge real browser (2026-10-05, the code of that date) | Edge 154 headless: three export types, saving a project, traceability, creating a retest; 0 page errors, no horizontal overflow | browser-validation.json |
+| Real FastAPI + React SSR/API | Three synthetic reviews, fail/pass/inconclusive, seven pieces of evidence, five tabs, three export types and HTML escaping; re-run and passed on 2026-10-05 against the the code of that date (including the evidence adjudication console), also confirming that with only a session cookie /api/session and /api/runs are rejected without leaking the CSRF token, and fetch-based SSE and download were verified with Node | api-ssr-validation.json |
 | Python dependency consistency | pip check passed; after the lockfile carried hashes (2026-10-03; re-run 2026-10-04), installation with `--require-hashes` into fresh venvs passed: the packages actually installed on Linux Python 3.14.4, Windows Python 3.13.15 and Windows Python 3.12.10 (2026-10-05) match the lockfile item by item, and that Linux venv, excluding Docker, tested 350 passed, 21 skipped | requirements.lock.txt |
 
-The two full Linux regressions (with and without Docker integration), the frontend build, the SSR/API contract and the full Windows regression all represent the current code as of 2026-10-05. On 2026-10-06, after the fixes from G4 review rounds 5–11 were merged, the full Linux regression with Docker integration was re-verified separately; the failures before that receipt was obtained and their causes are in "Problems encountered on 2026-10-06" in DOCKER_INTEGRATION_TESTING.md. The remaining rows are results from 2026-09-24. After the 10-03 fixes (session protocol, supervisor failure classification, staging lifecycle, etc.) and the 10-04 fixes (unified supervisor teardown, controller deadline alignment, log reuse, guardian transient-error tolerance, etc.), the isolated worker, scanner and dynamic tool integrations have been re-verified by linux-docker-integration.xml; the itemized 09-24 receipts in the table are kept as records of that time. Several runs before the 10-03 receipts were obtained had failures: four were cases where the tests themselves depended on external environment variables (fixed, see item 11 below), and the rest came from incomplete environment variable and runtime profile configuration on the test host; see DOCKER_INTEGRATION_TESTING.md for details. The Edge real-browser checks were re-run on 10-05 against the current code and passed (frontend/scripts/browser-smoke.cjs with the system Edge 154 headless); the SSR/API contract checks (including fetch-based SSE and download) have also been re-run and passed against the current code. The Windows skips include cases requiring Linux/Docker/PostgreSQL, POSIX processes or platform symlink capability; for the parts also executed on Linux, the Linux reports above take precedence. The three skips in the fixture group include an unconfigured PostgreSQL test condition and Windows-specific paths; the PostgreSQL scenario is covered by a separate group. The fourteen Docker integrations in the final policy checks were executed separately; skips were never counted as passes.
+The two full Linux regressions (with and without Docker integration), the frontend build, the SSR/API contract and the full Windows regression all represent the the code of that date as of 2026-10-05. On 2026-10-06, after the fixes from G4 review rounds 5–11 were merged, the full Linux regression with Docker integration was re-verified separately; the failures before that receipt was obtained and their causes are in "Problems encountered on 2026-10-06" in DOCKER_INTEGRATION_TESTING.md. The remaining rows are results from 2026-09-24. After the 10-03 fixes (session protocol, supervisor failure classification, staging lifecycle, etc.) and the 10-04 fixes (unified supervisor teardown, controller deadline alignment, log reuse, guardian transient-error tolerance, etc.), the isolated worker, scanner and dynamic tool integrations have been re-verified by linux-docker-integration.xml; the itemized 09-24 receipts in the table are kept as records of that time. Several runs before the 10-03 receipts were obtained had failures: four were cases where the tests themselves depended on external environment variables (fixed, see item 11 below), and the rest came from incomplete environment variable and runtime profile configuration on the test host; see DOCKER_INTEGRATION_TESTING.md for details. The Edge real-browser checks were re-run on 10-05 against the the code of that date and passed (frontend/scripts/browser-smoke.cjs with the system Edge 154 headless); the SSR/API contract checks (including fetch-based SSE and download) have also been re-run and passed against the the code of that date. The Windows skips include cases requiring Linux/Docker/PostgreSQL, POSIX processes or platform symlink capability; for the parts also executed on Linux, the Linux reports above take precedence. The three skips in the fixture group include an unconfigured PostgreSQL test condition and Windows-specific paths; the PostgreSQL scenario is covered by a separate group. The fourteen Docker integrations in the final policy checks were executed separately; skips were never counted as passes.
 
 The original per-test names, durations and skip reasons are in the XML; validation-summary.json is read automatically by scripts/summarize-validation.py, and no LLM was used to fabricate results. Hostnames and user accounts in the receipts have been redacted by scripts/redact-receipts.py (only the hostname attributes and the account segments of home directories are changed; the tests, counts, durations and reasons are unchanged); previously committed versions remain in git history. release-guards.xml, local-pipeline.xml and tool-integration.xml are earlier overlapping checks that passed and are not counted additionally.
 

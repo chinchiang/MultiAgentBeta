@@ -143,9 +143,9 @@ MultiAgentBeta/
 │   ├── worker/                    #   worker Dockerfile、工具映像鎖定、runtime.example.json
 │   └── scanners/                  #   Gitleaks、OSV 映像
 ├── benchmarks/                    # 比較評估設計、synthetic-v1、examples/、results-local/、results-synthetic/
-├── docs/                          # ARCHITECTURE、LINUX_SETUP、DELIVERY、VALIDATION、SOURCES、schema、驗證紀錄（XML/JSON）、history/
+├── docs/                          # ARCHITECTURE、LINUX_SETUP、DELIVERY、VALIDATION、DOCKER_INTEGRATION_TESTING、VIBESEC_ADVISORIES、SOURCES、schema、驗證紀錄（XML/JSON）、history/
 ├── scripts/                       # setup/start-local、verify、provision-runtime/offline-db、package-release、hash-lock、refresh-catalog
-├── .github/workflows/ci.yml       # backend（pytest + PostgreSQL）與 frontend（typecheck）
+├── .github/workflows/ci.yml       # backend（pytest + PostgreSQL + SSR/API smoke）、frontend（typecheck、build、dist 比對、manifest）、依賴稽核、每週 Docker 隔離測試
 ├── IMPLEMENTATION.md              # API 與模組契約
 ├── README.md · LICENSE · NOTICE
 ├── pyproject.toml · requirements.lock.txt   # 固定依賴（hash 檢查）
@@ -331,9 +331,9 @@ MultiAgentBeta/
 │   ├── worker/                    #   worker Dockerfile, tool image locks, runtime.example.json
 │   └── scanners/                  #   Gitleaks and OSV images
 ├── benchmarks/                    # comparison design, synthetic-v1, examples/, results-local/, results-synthetic/
-├── docs/                          # ARCHITECTURE, LINUX_SETUP, DELIVERY, VALIDATION, SOURCES, schema, validation records (XML/JSON), history/
+├── docs/                          # ARCHITECTURE, LINUX_SETUP, DELIVERY, VALIDATION, DOCKER_INTEGRATION_TESTING, VIBESEC_ADVISORIES, SOURCES, schema, validation records (XML/JSON), history/
 ├── scripts/                       # setup/start-local, verify, provision-runtime/offline-db, package-release, hash-lock, refresh-catalog
-├── .github/workflows/ci.yml       # backend (pytest + PostgreSQL) and frontend (typecheck)
+├── .github/workflows/ci.yml       # backend (pytest + PostgreSQL + SSR/API smoke), frontend (typecheck, build, dist diff, manifest), dependency audit, weekly Docker isolation tests
 ├── IMPLEMENTATION.md              # API and module contracts
 ├── README.md · LICENSE · NOTICE
 ├── pyproject.toml · requirements.lock.txt   # pinned dependencies (hash-checked)
