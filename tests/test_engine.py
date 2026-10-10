@@ -650,10 +650,11 @@ def test_api_errors_stay_structured_instead_of_500(tmp_path,monkeypatch):
         assert client.post("/api/runs",json={"mode":"demo","parent_run_id":run["id"]}).status_code==409
         assert client.post(f"/api/runs/{run['id']}/retest",json={"name":"r","source_path":"","deployment_id":"d","finding_ids":["x"]}).status_code==409
         client.post(f"/api/runs/{run['id']}/start")
-        for _ in range(100):
-            current=client.get(f"/api/runs/{run['id']}").json()
-            if current["status"] not in {"created","running"}:break
+        # A slow runner gets more time; a run that never finishes fails here, not as an IndexError below.
+        deadline=time.monotonic()+60
+        while (current:=client.get(f"/api/runs/{run['id']}").json())["status"] in {"created","running"} and time.monotonic()<deadline:
             time.sleep(.05)
+        assert current["status"] not in {"created","running"} and current["artifacts"],current["status"]
         artifact=current["artifacts"][0]
         (tmp_path/"artifacts"/artifact["filename"]).unlink()
         response=client.get(f"/api/runs/{run['id']}/evidence/{artifact['id']}")
