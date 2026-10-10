@@ -1,7 +1,7 @@
-export type Provider = 'demo' | 'openai' | 'anthropic' | 'nvidia_nim' | 'openai_compatible';
+export type Provider = 'demo' | 'openai' | 'anthropic' | 'nvidia_nim' | 'openai_compatible' | 'bedrock';
 export interface ModelProfile {
   id: string; role: 'commander' | 'reviewer' | 'architecture_mapper' | 'challenger' | 'threat_modeler' | 'test_designer' | 'reporter'; provider: Provider; model_id: string;
-  family: string; endpoint: string; credential_env: string; temperature: number | null; max_output_tokens: number;
+  family: string; endpoint: string; credential_env: string; aws_profile?: string; json_mode?: 'json_object' | 'json_schema'; temperature: number | null; max_output_tokens: number;
   timeout_seconds?: number; prompt_version?: string;
 }
 export type HttpMethod = 'GET'|'POST'|'PUT'|'PATCH'|'DELETE'|'HEAD'|'OPTIONS';

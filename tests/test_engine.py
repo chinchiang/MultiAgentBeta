@@ -1717,3 +1717,10 @@ async def test_a_cancel_between_attempts_stays_a_cancel_and_charges_what_was_res
     with pytest.raises(asyncio.CancelledError):
         await engine.model(run,profile,"x",{"y":1})
     assert run["usage"]["tokens"]>before and run["usage"]["tokens_estimated"] is True and run.get("reserved_tokens",0)==0
+
+
+def test_markdown_shows_apostrophes_as_written_and_still_escapes_html():
+    run={"name":"r","id":"r","mode":"demo","status":"complete","gaps":["it's <b>bold</b>"],"executions":[],"limitations":[],
+         "findings":[{"id":"f","severity":"high","state":"hypothesis","title":"Bob's \"order\"","evidence_ids":[]}]}
+    text=report_markdown(run)
+    assert "Bob's" in text and "it's" in text and "&#x27;" not in text and "<b>" not in text

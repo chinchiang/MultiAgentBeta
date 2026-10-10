@@ -103,7 +103,8 @@
             "openai",
             "anthropic",
             "nvidia_nim",
-            "openai_compatible"
+            "openai_compatible",
+            "bedrock"
           ],
           "title": "Provider",
           "type": "string"
@@ -130,6 +131,22 @@
           "title": "Credential Env",
           "type": "string"
         },
+        "aws_profile": {
+          "default": "",
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.@+-]*$",
+          "title": "Aws Profile",
+          "type": "string"
+        },
+        "json_mode": {
+          "default": "json_object",
+          "enum": [
+            "json_object",
+            "json_schema"
+          ],
+          "title": "Json Mode",
+          "type": "string"
+        },
         "temperature": {
           "anyOf": [
             {
@@ -153,7 +170,7 @@
         },
         "timeout_seconds": {
           "default": 60,
-          "maximum": 300,
+          "maximum": 1800,
           "minimum": 5,
           "title": "Timeout Seconds",
           "type": "integer"

@@ -29,7 +29,10 @@ from .adapters import CREDENTIAL_ORIGINS_ENV, DEFAULT_CREDENTIAL_ORIGINS, creden
 MAX_ATTEMPTS = 2
 MAX_RESPONSE_BYTES = 512 * 1024
 MAX_PAYLOAD_BYTES = 512 * 1024
-_PROVIDERS = {"openai", "anthropic", "nvidia_nim", "openai_compatible"}
+_PROVIDERS = {"openai", "anthropic", "nvidia_nim", "openai_compatible", "bedrock"}
+# The only Bedrock endpoints a profile may name, so AWS-signed requests can reach nothing but Bedrock itself.
+_BEDROCK_ENDPOINT = re.compile(r"https://bedrock-runtime(?:-fips)?\.((?:[a-z]{2}(?:-gov)?-[a-z]+-\d))\.amazonaws\.com/?")
+BEDROCK_PROFILES_ENV = "VIBEAUDIT_BEDROCK_PROFILES"
 _TOKENIZERS = {
     "https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken": "223921b76ee99bde995b7ff738513eef100fb51d18c93597a113bcffe865b2a7",
     "https://openaipublic.blob.core.windows.net/encodings/o200k_base.tiktoken": "446a9538cb6c348e3516120d7c08b09f57c36495e2acfffe59a5bf8b0cfb1a2d",
@@ -132,6 +135,8 @@ def _validate_profile(profile: dict, policy: dict) -> tuple[str, str, str]:
         raise ProviderError("Model endpoint origin is not explicitly allowed", code="origin_denied")
     if not local and not endpoint.startswith("https://"):
         raise ProviderError("Non-loopback model endpoints require HTTPS", code="invalid_endpoint")
+    if provider == "bedrock":
+        return endpoint, origin, _bedrock_signing(profile, endpoint)
     credential_env = profile.get("credential_env", "")
     if credential_env and not credential_env_allowed(credential_env):
         raise ProviderError("credential_env must be a VIBEAUDIT_ prefixed environment name that is not a Vibe Audit setting", code="invalid_credential_reference")
@@ -145,6 +150,42 @@ def _validate_profile(profile: dict, policy: dict) -> tuple[str, str, str]:
         raise ProviderError("Cloud model calls require an explicit credential reference", code="missing_credential")
     # A nonempty inert local key prevents upstream ambient API-key discovery.
     return endpoint, origin, credential or "vibeaudit-local-no-auth"
+
+
+def bedrock_profiles(environ=None) -> set[str]:
+    """The AWS profiles the operator allows Bedrock models to sign with, comma-separated in VIBEAUDIT_BEDROCK_PROFILES.
+
+    A run names its own profile, so without this list a session holder could bill any profile this account can use."""
+    environ = os.environ if environ is None else environ
+    return {name.strip() for name in environ.get(BEDROCK_PROFILES_ENV, "").split(",") if name.strip()}
+
+
+def _bedrock_signing(profile: dict, endpoint: str) -> dict:
+    match = _BEDROCK_ENDPOINT.fullmatch(endpoint)
+    if not match:
+        raise ProviderError("A Bedrock endpoint must be https://bedrock-runtime.<region>.amazonaws.com", code="invalid_endpoint")
+    if profile.get("credential_env"):
+        raise ProviderError("A Bedrock model signs with an AWS profile, not a credential variable", code="invalid_credential_reference")
+    aws_profile = profile.get("aws_profile", "")
+    if not isinstance(aws_profile, str) or not re.fullmatch(r"[A-Za-z0-9_.@+-]{1,128}", aws_profile):
+        raise ProviderError("A Bedrock model needs an AWS profile name", code="missing_credential")
+    if aws_profile not in bedrock_profiles():
+        raise ProviderError(f"AWS profile {aws_profile} is not allowed; list it in {BEDROCK_PROFILES_ENV}", code="credential_origin_denied")
+    return {"aws_profile": aws_profile, "region": match.group(1)}
+
+
+def _aws_credentials(aws_profile: str) -> dict:
+    """Short-lived credentials of an AWS profile, resolved before any model request so the SDK looks up nothing itself.
+
+    An SSO profile reads its cached login and may exchange it with AWS SSO; that call carries no model data."""
+    try:
+        import boto3
+        frozen = boto3.Session(profile_name=aws_profile).get_credentials().get_frozen_credentials()
+    except Exception:
+        raise _NotSent(f"AWS credentials for profile {aws_profile} are unavailable; sign in with: aws sso login --profile {aws_profile}", code="missing_credential") from None
+    if not frozen.access_key or not frozen.secret_key:
+        raise _NotSent(f"AWS credentials for profile {aws_profile} are unavailable; sign in with: aws sso login --profile {aws_profile}", code="missing_credential")
+    return {"aws_access_key_id": frozen.access_key, "aws_secret_access_key": frozen.secret_key, "aws_session_token": frozen.token}
 
 
 def _install_offline_tokenizer_loader():
@@ -290,13 +331,13 @@ async def _resolve_model_ip(endpoint: str) -> str:
         raise _NotSent("Model DNS resolution failed", code="endpoint_unavailable") from None
 
 
-async def _invoke(library, profile: dict, endpoint: str, origin: str, credential: str, messages: list[dict], output_limit: int, timeout: float):
+async def _invoke(library, profile: dict, endpoint: str, origin: str, credential: str | dict, messages: list[dict], output_limit: int, timeout: float, schema: dict | None = None):
     provider = "openai" if profile["provider"] == "openai_compatible" else profile["provider"]
     transport = None
     try:
         pinned_ip = await _resolve_model_ip(endpoint)
         transport = _OriginTransport(origin, pinned_ip)
-        return await _complete(library, profile, provider, endpoint, credential, messages, output_limit, timeout, transport)
+        return await _complete(library, profile, provider, endpoint, credential, messages, output_limit, timeout, transport, schema)
     except asyncio.CancelledError:
         raise
     except Exception as exc:
@@ -307,8 +348,36 @@ async def _invoke(library, profile: dict, endpoint: str, origin: str, credential
         raise _unsent(exc) from None
 
 
-async def _complete(library, profile, provider, endpoint, credential, messages, output_limit, timeout, transport):
+def _response_format(profile: dict, schema: dict | None) -> dict:
+    """JSON mode by default; json_schema for servers that accept only a schema, such as LM Studio.
+
+    Either way the answer is still validated locally against the same schema."""
+    if profile.get("json_mode") == "json_schema":
+        return {"type": "json_schema", "json_schema": {"name": "response", "schema": schema or {"type": "object"}}}
+    return {"type": "json_object"}
+
+
+async def _complete(library, profile, provider, endpoint, credential, messages, output_limit, timeout, transport, schema=None):
+    if provider == "bedrock":
+        signing = {**credential, **await asyncio.to_thread(_aws_credentials, credential["aws_profile"])}
     async with httpx.AsyncClient(transport=transport, follow_redirects=False, trust_env=False, timeout=timeout, headers={"Accept-Encoding": "identity"}) as http_client:
+        if provider == "bedrock":
+            from litellm.llms.custom_httpx.http_handler import AsyncHTTPHandler
+            client = AsyncHTTPHandler(timeout=timeout)
+            await client.client.aclose()
+            client.client = http_client
+            # The Converse API, signed with the profile's credentials, sent to the pinned regional endpoint only.
+            return await library.acompletion(
+                model="converse/" + profile["model_id"], custom_llm_provider="bedrock", client=client,
+                aws_access_key_id=signing["aws_access_key_id"], aws_secret_access_key=signing["aws_secret_access_key"],
+                aws_session_token=signing["aws_session_token"], aws_region_name=signing["region"],
+                aws_bedrock_runtime_endpoint=endpoint.rstrip("/"),
+                messages=messages, response_format={"type": "json_object"},
+                **({} if profile.get("temperature") is None else {"temperature": profile["temperature"]}),
+                max_tokens=output_limit, timeout=timeout, stream=False, num_retries=0, max_retries=0,
+                fallbacks=None, drop_params=False, caching=False,
+                # No per-call callback lists, as below: they would reach the model as request fields.
+            )
         if provider == "anthropic":
             from litellm.llms.custom_httpx.http_handler import AsyncHTTPHandler
             client = AsyncHTTPHandler(timeout=timeout)
@@ -321,12 +390,13 @@ async def _complete(library, profile, provider, endpoint, credential, messages, 
         return await library.acompletion(
             model=profile["model_id"], custom_llm_provider=provider,
             api_base=endpoint, api_key=credential, client=client,
-            messages=messages, response_format={"type": "json_object"},
+            messages=messages, response_format=_response_format(profile, schema),
             # None leaves the provider default, which some reasoning models require.
             temperature=profile.get("temperature", 0), max_tokens=output_limit,
             timeout=timeout, stream=False, num_retries=0, max_retries=0,
             fallbacks=None, drop_params=False, caching=False,
-            success_callback=[], failure_callback=[], input_callback=[],
+            # No per-call callback lists: LiteLLM 1.104 forwards unknown keywords into the request body, which
+            # strict APIs (Gemini, Bedrock) reject. The module-level callback lists are already empty.
         )
 
 
@@ -342,6 +412,27 @@ def _usage(response: Any) -> dict:
     if any(type(x) is not int or x < 0 for x in (prompt, completion, total)) or total < prompt + completion:
         raise ProviderError("Provider did not return verifiable token usage", code="usage_unavailable")
     return {"prompt_tokens": prompt, "completion_tokens": completion, "tokens": total}
+
+
+def _validation_site(exc: BaseException) -> str:
+    """Where an answer failed validation: the schema path and rule, never the model's own text."""
+    from jsonschema.exceptions import ValidationError as SchemaViolation
+    from pydantic import ValidationError as ContractViolation
+    def path(parts):
+        text = ".".join(str(part) for part in parts)
+        return re.sub(r"[^A-Za-z0-9_.\-\[\]]", "", text)[:120] or "(root)"
+    if isinstance(exc, SchemaViolation):
+        return f"{path(exc.absolute_path)}: {exc.validator}"
+    if isinstance(exc, ContractViolation):
+        first = exc.errors()[0] if exc.errors() else {}
+        kind = re.sub(r'[^a-z_]', '', str(first.get('type', 'invalid')))[:40]
+        # A contract rule's own message is fixed text from contracts.py; anything else might quote the answer.
+        from .messages import ZH
+        reason = str(first.get("msg", "")).removeprefix("Value error, ")
+        return f"{path(first.get('loc', ()))}: {reason if kind == 'value_error' and reason in ZH else kind}"
+    if isinstance(exc, json.JSONDecodeError):
+        return "not valid JSON"
+    return "not a single JSON object"
 
 
 def _strict_json(content: str) -> dict:
@@ -395,8 +486,8 @@ async def generate_json(profile: dict, system: str, payload: dict, policy: dict)
     library = _load_litellm()
     usage = {"model_calls": 0, "tokens": 0, "prompt_tokens": 0, "completion_tokens": 0, "tokens_known": True}
     max_attempts = min(MAX_ATTEMPTS, max_calls)
-    # The profile allows up to 300 seconds; a silent lower cap would make slow local models fail unexplained.
-    timeout = min(max(float(policy.get("timeout_seconds", 30)), 1), 300)
+    # The profile allows up to 1800 seconds, for local reasoning models on modest hardware; a silent lower cap would make them fail unexplained.
+    timeout = min(max(float(policy.get("timeout_seconds", 30)), 1), 1800)
     for attempt in range(max_attempts):
         remaining = budget - usage["tokens"]
         if remaining <= 0:
@@ -411,7 +502,7 @@ async def generate_json(profile: dict, system: str, payload: dict, policy: dict)
                 raise ProviderError("Model request denied by the policy reservation hook", code="request_denied", usage=usage.copy()) from None
         usage["model_calls"] += 1
         try:
-            response = await asyncio.wait_for(_invoke(library, profile, endpoint, origin, credential, messages, min(output_limit, remaining), timeout), timeout=timeout + 1)
+            response = await asyncio.wait_for(_invoke(library, profile, endpoint, origin, credential, messages, min(output_limit, remaining), timeout, schema), timeout=timeout + 1)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -422,6 +513,12 @@ async def generate_json(profile: dict, system: str, payload: dict, policy: dict)
             # Unknown metering must never be represented as zero cost or retried.
             usage["tokens_known"] = False
             code = exc.code if isinstance(exc, ProviderError) else "provider_request_failed"
+            # The HTTP status names the cause (rate limit, overload, bad request) without any of the body.
+            status = getattr(exc, "status_code", None)
+            if not isinstance(exc, ProviderError) and type(status) is int and 400 <= status <= 599:
+                code = f"provider_http_{status}"
+            elif not isinstance(exc, ProviderError) and isinstance(exc, (TimeoutError, asyncio.TimeoutError)) or type(exc).__name__ in {"Timeout", "APITimeoutError"}:
+                code = "provider_timeout"
             raise ProviderError("Model request failed; response and error body withheld; billed usage may be unknown", code=code, usage=usage.copy()) from None
         try:
             metering = _usage(response)
@@ -453,11 +550,12 @@ async def generate_json(profile: dict, system: str, payload: dict, policy: dict)
             # Contract rules a JSON schema cannot state (cross-references, non-empty content) get the same retry.
             if check := policy.get("contract_check"):
                 check(data)
-        except Exception:
+        except Exception as exc:
+            where = _validation_site(exc)
             if attempt + 1 < max_attempts:
-                messages.append({"role": "user", "content": "The previous response did not validate. Return a JSON object satisfying the supplied schema. Do not add prose or code fences."})
+                messages.append({"role": "user", "content": f"The previous response did not validate ({where}). Return a JSON object satisfying the supplied schema. Do not add prose or code fences."})
                 continue
-            raise ProviderError("Model output failed local JSON/schema validation", code="schema_validation", usage=usage.copy()) from None
+            raise ProviderError(f"Model output failed local JSON/schema validation ({where})", code="schema_validation", usage=usage.copy()) from None
         return {"data": data, "usage": usage, "model_id": profile["model_id"], "provider": profile["provider"], "response_model_id": _get(response, "model"), "cost_usd": None, "cost_note": "Token usage is provider reported; monetary cost is not calculated or claimed.", "budget_note": "Output is capped; total input/output usage is checked after each response. Provider billing cannot be guaranteed in advance."}
     raise ProviderError("No model result", code="provider_error", usage=usage.copy())
 
@@ -466,6 +564,7 @@ async def probe_model(profile: dict, policy: dict) -> dict:
     probe_policy = dict(policy)
     probe_policy["response_schema"] = {"type": "object", "properties": {"probe": {"const": "vibeaudit"}, "ok": {"const": True}}, "required": ["probe", "ok"], "additionalProperties": False}
     probe_profile = dict(profile)
-    probe_profile["max_output_tokens"] = min(profile.get("max_output_tokens", 3000), 128)
+    # Reasoning models spend output tokens thinking first; 128 truncated a probe at random. 1024 still bounds its cost.
+    probe_profile["max_output_tokens"] = min(profile.get("max_output_tokens", 3000), 1024)
     result = await generate_json(probe_profile, "This is a harmless connectivity and JSON capability probe. Return {\"probe\":\"vibeaudit\",\"ok\":true}.", {"request": "probe"}, probe_policy)
     return {"id": profile.get("id"), "provider": profile["provider"], "model_id": profile["model_id"], "status": "verified", "available": True, "simulated": False, "capabilities": {"connectivity": "verified", "json_object": "verified", "local_schema_validation": "verified", "tool_calling": "not_tested", "parallel_tool_calling": "not_tested", "native_json_schema": "not_tested"}, "usage": result["usage"], "limitations": ["One successful probe does not establish security-review accuracy.", "Provider-native strict schema/tool calling were not tested.", "A local endpoint may itself forward data; operate it within a trusted egress boundary.", "No monetary cost claim; token accounting is provider reported."]}

@@ -1000,7 +1000,8 @@ def report_markdown(run:dict,lang:str="en")->str:
     text=_REPORT_TEXT[lang]
     # Escape untrusted values before Markdown consumers can interpret them.
     def safe(value):
-        value=html.escape(str(value),quote=True).replace("\r"," ").replace("\n"," ")
+        # quote=False: an apostrophe as &#x27; would have its # escaped below and show as raw entity text.
+        value=html.escape(str(value),quote=False).replace("\r"," ").replace("\n"," ")
         # GFM links a bare URL or www. name without any brackets, so those are defanged too.
         value=re.sub(r"(?i)\bwww\.","www[.]",value.replace("://","[:]//"))
         return "".join("\\"+c if c in "\\\x60*_{}[]()#!|" else c for c in value)

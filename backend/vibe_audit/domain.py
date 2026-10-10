@@ -42,15 +42,19 @@ class Budget(StrictModel):
 class ModelProfile(StrictModel):
     id: str = Field(min_length=1, max_length=80, pattern=r"^[a-zA-Z0-9_-]+$")
     role: Literal["commander", "reviewer", "architecture_mapper", "challenger", "threat_modeler", "test_designer", "reporter"]
-    provider: Literal["demo", "openai", "anthropic", "nvidia_nim", "openai_compatible"]
+    provider: Literal["demo", "openai", "anthropic", "nvidia_nim", "openai_compatible", "bedrock"]
     model_id: str = Field(min_length=1, max_length=200)
     family: str = Field(min_length=1, max_length=100)
     endpoint: str = ""
     credential_env: str = ""
+    # Bedrock signs each request with the operator's AWS profile (for example an SSO login) instead of a key.
+    aws_profile: str = Field(default="", max_length=128, pattern=r"^[A-Za-z0-9_.@+-]*$")
+    # How the endpoint is asked for JSON: json_object, or json_schema for servers that accept only a schema (LM Studio).
+    json_mode: Literal["json_object", "json_schema"] = "json_object"
     # None leaves the model's own default, which some reasoning models require.
     temperature: float | None = Field(default=0, ge=0, le=2)
     max_output_tokens: int = Field(default=3000, ge=256, le=16000)
-    timeout_seconds: int = Field(default=60, ge=5, le=300)
+    timeout_seconds: int = Field(default=60, ge=5, le=1800)
     prompt_version: str = Field(default="v2", min_length=1, max_length=80)
 
     @field_validator("credential_env")
@@ -61,6 +65,14 @@ class ModelProfile(StrictModel):
         if value in RESERVED_ENV:
             raise ValueError("Credentials cannot reference a Vibe Audit setting such as the database URL or session token")
         return value
+
+    @model_validator(mode="after")
+    def aws_signing(self):
+        if self.provider == "bedrock" and (not self.aws_profile or self.credential_env):
+            raise ValueError("A Bedrock model names an AWS profile and no credential variable")
+        if self.provider != "bedrock" and self.aws_profile:
+            raise ValueError("Only a Bedrock model uses an AWS profile")
+        return self
 
 
 class AuthProfile(StrictModel):

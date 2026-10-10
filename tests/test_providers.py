@@ -50,7 +50,7 @@ async def test_generation_uses_explicit_agent_and_metering(profile, policy, fake
     assert result["cost_usd"] is None
     assert len(calls) == 1
     assert calls[0][1]["id"] == "reviewer-a"
-    assert calls[0][-1] == 30
+    assert calls[0][7] == 30
 
 
 @pytest.mark.parametrize("endpoint,allow", [("https://api.example.com/v1", ["https://api.example.com"]), ("http://localhost:11434/v1", ["http://localhost:11434"]), ("http://192.168.1.5/v1", ["http://192.168.1.5"]), ("http://localhost:11434/v1", []), ("http://0.0.0.0:11434/v1", [])])
@@ -440,6 +440,8 @@ async def test_installed_litellm_sdk_uses_guarded_http_transport(profile, policy
     assert captured[0].headers["host"] == "127.0.0.1:11434"
     outbound = json.loads(captured[0].content)
     assert outbound["model"] == model
+    # Call plumbing must not reach the provider as request fields; strict APIs reject unknown ones.
+    assert not set(outbound) & {"input_callback", "success_callback", "failure_callback", "caching", "fallbacks", "num_retries"}
 
 
 @pytest.mark.asyncio
@@ -652,3 +654,150 @@ async def test_contract_rules_beyond_the_schema_get_the_same_bounded_retry(profi
     policy["contract_check"] = check
     result = await providers.generate_json(profile, "Review", {}, policy)
     assert len(calls) == len(seen) == 2 and result["data"] == {"ok": True}
+
+
+def bedrock_profile():
+    return {"id": "reviewer-c", "provider": "bedrock", "model_id": "global.anthropic.claude-haiku-5-5", "family": "claude",
+            "endpoint": "https://bedrock-runtime.ap-southeast-1.amazonaws.com", "credential_env": "", "aws_profile": "synthetic-sso",
+            "max_output_tokens": 256, "temperature": None}
+
+
+def bedrock_policy():
+    return {"data_policy": "cloud_allowed", "allowed_model_origins": ["https://bedrock-runtime.ap-southeast-1.amazonaws.com"], "max_tokens": 1000,
+            "response_schema": {"type": "object", "properties": {"ok": {"type": "boolean"}}, "required": ["ok"], "additionalProperties": False}}
+
+
+@pytest.mark.parametrize("change,code", [
+    ({"endpoint": "https://bedrock-runtime.ap-southeast-1.amazonaws.com.evil.example"}, "origin_denied"),
+    ({"endpoint": "https://evil.example"}, "origin_denied"),
+    ({"aws_profile": "other-profile"}, "credential_origin_denied"),
+    ({"aws_profile": ""}, "missing_credential"),
+    ({"credential_env": "VIBEAUDIT_SOME_KEY"}, "invalid_credential_reference"),
+])
+def test_bedrock_signs_only_for_a_listed_profile_and_a_bedrock_endpoint(monkeypatch, change, code):
+    monkeypatch.setenv("VIBEAUDIT_BEDROCK_PROFILES", "synthetic-sso")
+    profile, policy = {**bedrock_profile(), **change}, bedrock_policy()
+    # An allowlist entry for the bad host must not be what lets it through.
+    if "endpoint" in change:
+        policy["allowed_model_origins"].append(change["endpoint"])
+    with pytest.raises(providers.ProviderError) as error:
+        providers._validate_profile(profile, policy)
+    assert error.value.code in {code, "invalid_endpoint"}
+    monkeypatch.delenv("VIBEAUDIT_BEDROCK_PROFILES")
+    with pytest.raises(providers.ProviderError, match="VIBEAUDIT_BEDROCK_PROFILES"):
+        providers._validate_profile(bedrock_profile(), bedrock_policy())
+
+
+def test_bedrock_profile_contract():
+    from vibe_audit.domain import ModelProfile
+    base = {**bedrock_profile(), "role": "reviewer"}
+    assert ModelProfile.model_validate(base).aws_profile == "synthetic-sso"
+    for bad in [{"aws_profile": ""}, {"credential_env": "VIBEAUDIT_KEY"}, {"provider": "openai_compatible"}]:
+        with pytest.raises(ValueError):
+            ModelProfile.model_validate({**base, **bad})
+
+
+@pytest.mark.asyncio
+async def test_bedrock_converse_through_the_guarded_transport(monkeypatch):
+    """The installed LiteLLM Bedrock transform, SigV4-signed, through the pinned transport; synthetic HTTP only."""
+    import socket
+    monkeypatch.setenv("VIBEAUDIT_BEDROCK_PROFILES", "synthetic-sso")
+    monkeypatch.setattr(providers, "_aws_credentials", lambda name: {"aws_access_key_id": "AKIASYNTHETIC0000000", "aws_secret_access_key": "synthetic-secret", "aws_session_token": "synthetic-token"})
+    async def resolved(endpoint):
+        return "52.0.0.1"
+    monkeypatch.setattr(providers, "_resolve_model_ip", resolved)
+    def reject_socket(*args, **kwargs):
+        raise AssertionError("An unguarded socket connection was attempted")
+    monkeypatch.setattr(socket.socket, "connect", reject_socket)
+    captured = []
+    def handler(request):
+        captured.append(request)
+        body = {"output": {"message": {"role": "assistant", "content": [{"text": '{"ok":true}'}]}}, "stopReason": "end_turn",
+                "usage": {"inputTokens": 10, "outputTokens": 5, "totalTokens": 15}, "metrics": {"latencyMs": 1}}
+        return httpx.Response(200, headers={"content-type": "application/json"}, stream=httpx.ByteStream(json.dumps(body).encode()))
+    def init(transport, origin, pinned_ip):
+        transport.origin, transport.pinned_ip, transport.dispatched = origin, pinned_ip, False
+        transport.inner = httpx.MockTransport(handler)
+    monkeypatch.setattr(providers._OriginTransport, "__init__", init)
+    result = await providers.generate_json(bedrock_profile(), "Return JSON.", {}, bedrock_policy())
+    assert result["data"] == {"ok": True} and result["usage"]["tokens"] == 15
+    assert len(captured) == 1
+    request = captured[0]
+    assert request.url.host == "52.0.0.1" and request.headers["host"] == "bedrock-runtime.ap-southeast-1.amazonaws.com"
+    assert request.url.path.endswith("/converse") and "global.anthropic.claude-haiku-5-5" in request.url.path
+    assert request.headers["authorization"].startswith("AWS4-HMAC-SHA256") and "ap-southeast-1/bedrock" in request.headers["authorization"]
+    body = json.loads(request.content)
+    assert "temperature" not in body.get("inferenceConfig", {})
+    # Nothing of the call's own plumbing may reach the model as a request field.
+    assert not set(body.get("additionalModelRequestFields", {})) & {"input_callback", "success_callback", "failure_callback", "caching", "fallbacks"}
+
+
+@pytest.mark.asyncio
+async def test_bedrock_without_a_login_sends_nothing_and_costs_nothing(monkeypatch):
+    monkeypatch.setenv("VIBEAUDIT_BEDROCK_PROFILES", "synthetic-sso")
+    def no_login(name):
+        raise providers._NotSent("AWS credentials for profile synthetic-sso are unavailable; sign in with: aws sso login --profile synthetic-sso", code="missing_credential")
+    monkeypatch.setattr(providers, "_aws_credentials", no_login)
+    async def resolved(endpoint):
+        return "52.0.0.1"
+    monkeypatch.setattr(providers, "_resolve_model_ip", resolved)
+    with pytest.raises(providers.ProviderError) as error:
+        await providers.generate_json(bedrock_profile(), "Return JSON.", {}, bedrock_policy())
+    assert error.value.code == "missing_credential" and error.value.usage["tokens_known"] is True and "aws sso login" in str(error.value)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("json_mode,expected", [("json_object", {"type": "json_object"}), ("json_schema", "schema")])
+async def test_json_mode_asks_for_the_schema_where_a_server_accepts_only_that(profile, policy, monkeypatch, json_mode, expected):
+    captured = []
+    def handler(request):
+        captured.append(json.loads(request.content))
+        body = {"id": "synthetic", "object": "chat.completion", "created": 1, **response()}
+        return httpx.Response(200, headers={"content-type": "application/json"}, stream=httpx.ByteStream(json.dumps(body).encode()))
+    def init(transport, origin, pinned_ip):
+        transport.origin, transport.pinned_ip, transport.dispatched = origin, pinned_ip, False
+        transport.inner = httpx.MockTransport(handler)
+    monkeypatch.setattr(providers._OriginTransport, "__init__", init)
+    result = await providers.generate_json({**profile, "json_mode": json_mode}, "Return JSON.", {}, policy)
+    assert result["data"] == {"ok": True}
+    sent = captured[0]["response_format"]
+    if expected == "schema":
+        assert sent["type"] == "json_schema" and sent["json_schema"]["schema"] == policy["response_schema"]
+    else:
+        assert sent == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure,code", [(503, "provider_http_503"), (429, "provider_http_429"), ("timeout", "provider_timeout")])
+async def test_a_failed_model_call_names_its_status_but_never_its_body(profile, policy, fake_provider, failure, code):
+    calls, answers = fake_provider
+    class StatusError(Exception):
+        status_code = failure
+    answers[:] = [asyncio.TimeoutError() if failure == "timeout" else StatusError("secret body text")]
+    with pytest.raises(providers.ProviderError) as error:
+        await providers.generate_json(profile, "Review", {}, policy)
+    assert error.value.code == code and "secret body" not in str(error.value)
+    assert error.value.usage["tokens_known"] is False
+
+
+@pytest.mark.asyncio
+async def test_a_failed_validation_names_the_field_and_rule_but_not_the_answer(profile, policy, fake_provider):
+    calls, answers = fake_provider
+    answers[:] = [response('{"ok":"leaked model text"}')]
+    with pytest.raises(providers.ProviderError) as error:
+        await providers.generate_json(profile, "Review", {}, policy)
+    assert error.value.code == "schema_validation" and "ok: type" in str(error.value) and "leaked" not in str(error.value)
+    # The retry tells the model the same location, so it can fix that field.
+    assert "(ok: type)" in calls[1][5][-1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_a_broken_contract_rule_is_named_in_its_own_fixed_words(profile, policy, fake_provider):
+    from vibe_audit.contracts import ChallengeProposal
+    calls, answers = fake_provider
+    answers[:] = [response('{"challenges":[{"finding_id":"f1","counterevidence":"","missing_evidence":""}]}')]
+    policy["response_schema"] = ChallengeProposal.model_json_schema()
+    policy["contract_check"] = ChallengeProposal.model_validate
+    with pytest.raises(providers.ProviderError) as error:
+        await providers.generate_json(profile, "Review", {}, policy)
+    assert "A challenge needs counterevidence or missing evidence" in str(error.value)
