@@ -411,6 +411,7 @@ async def test_installed_litellm_sdk_uses_guarded_http_transport(profile, policy
         transport.origin = origin
         transport.pinned_ip = pinned_ip
         transport.dispatched = False
+        transport.status = None
         transport.inner = httpx.MockTransport(handler)
     monkeypatch.setattr(providers._OriginTransport, "__init__", init)
     invoke = providers._invoke
@@ -433,7 +434,8 @@ async def test_installed_litellm_sdk_uses_guarded_http_transport(profile, policy
     else:
         with pytest.raises(providers.ProviderError) as error:
             await providers.generate_json(profile, "Return JSON.", {}, policy)
-        assert error.value.usage["tokens_known"] is False
+        # Operator policy: a received 429 or 5xx was not served and counts as unbilled; a redirect stays unknown.
+        assert error.value.usage["tokens_known"] is (response_status != 302)
     assert len(captured) == 1
     assert not stray_connections
     assert captured[0].url.host == "127.0.0.1"
@@ -454,7 +456,7 @@ async def test_unreachable_endpoint_is_known_zero_usage(profile, policy, monkeyp
             raise httpx.ConnectError("synthetic connection refused", request=request)
         raise httpx.ConnectTimeout("synthetic connect timeout", request=request)
     def init(transport, origin, pinned_ip):
-        transport.origin, transport.pinned_ip, transport.dispatched = origin, pinned_ip, False
+        transport.origin, transport.pinned_ip, transport.dispatched, transport.status = origin, pinned_ip, False, None
         transport.inner = httpx.MockTransport(handler)
     monkeypatch.setattr(providers._OriginTransport, "__init__", init)
     if failure == "dns":
@@ -477,7 +479,7 @@ async def test_failure_after_dispatch_keeps_usage_unknown(profile, policy, monke
     def handler(request):
         raise httpx.ReadTimeout("synthetic read timeout", request=request)
     def init(transport, origin, pinned_ip):
-        transport.origin, transport.pinned_ip, transport.dispatched = origin, pinned_ip, False
+        transport.origin, transport.pinned_ip, transport.dispatched, transport.status = origin, pinned_ip, False, None
         transport.inner = httpx.MockTransport(handler)
     monkeypatch.setattr(providers._OriginTransport, "__init__", init)
     with pytest.raises(providers.ProviderError) as error:
@@ -716,7 +718,7 @@ async def test_bedrock_converse_through_the_guarded_transport(monkeypatch):
                 "usage": {"inputTokens": 10, "outputTokens": 5, "totalTokens": 15}, "metrics": {"latencyMs": 1}}
         return httpx.Response(200, headers={"content-type": "application/json"}, stream=httpx.ByteStream(json.dumps(body).encode()))
     def init(transport, origin, pinned_ip):
-        transport.origin, transport.pinned_ip, transport.dispatched = origin, pinned_ip, False
+        transport.origin, transport.pinned_ip, transport.dispatched, transport.status = origin, pinned_ip, False, None
         transport.inner = httpx.MockTransport(handler)
     monkeypatch.setattr(providers._OriginTransport, "__init__", init)
     result = await providers.generate_json(bedrock_profile(), "Return JSON.", {}, bedrock_policy())
@@ -755,7 +757,7 @@ async def test_json_mode_asks_for_the_schema_where_a_server_accepts_only_that(pr
         body = {"id": "synthetic", "object": "chat.completion", "created": 1, **response()}
         return httpx.Response(200, headers={"content-type": "application/json"}, stream=httpx.ByteStream(json.dumps(body).encode()))
     def init(transport, origin, pinned_ip):
-        transport.origin, transport.pinned_ip, transport.dispatched = origin, pinned_ip, False
+        transport.origin, transport.pinned_ip, transport.dispatched, transport.status = origin, pinned_ip, False, None
         transport.inner = httpx.MockTransport(handler)
     monkeypatch.setattr(providers._OriginTransport, "__init__", init)
     result = await providers.generate_json({**profile, "json_mode": json_mode}, "Return JSON.", {}, policy)
@@ -768,16 +770,20 @@ async def test_json_mode_asks_for_the_schema_where_a_server_accepts_only_that(pr
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failure,code", [(503, "provider_http_503"), (429, "provider_http_429"), ("timeout", "provider_timeout")])
-async def test_a_failed_model_call_names_its_status_but_never_its_body(profile, policy, fake_provider, failure, code):
+@pytest.mark.parametrize("failure,code,known", [(503, "provider_http_503", True), (500, "provider_http_500", True), (429, "provider_http_429", True),
+                                                (408, "provider_http_408", False), (400, "provider_http_400", False), ("timeout", "provider_timeout", False)])
+async def test_a_failed_model_call_names_its_status_but_never_its_body(profile, policy, fake_provider, failure, code, known):
     calls, answers = fake_provider
     class StatusError(Exception):
         status_code = failure
+        # As _invoke records it: the status the transport really received.
+        vibeaudit_http_status = failure
     answers[:] = [asyncio.TimeoutError() if failure == "timeout" else StatusError("secret body text")]
     with pytest.raises(providers.ProviderError) as error:
         await providers.generate_json(profile, "Review", {}, policy)
     assert error.value.code == code and "secret body" not in str(error.value)
-    assert error.value.usage["tokens_known"] is False
+    # Operator policy: a rate limit or server error was not served and is unbilled; anything else stays unknown.
+    assert error.value.usage["tokens_known"] is known
 
 
 @pytest.mark.asyncio
