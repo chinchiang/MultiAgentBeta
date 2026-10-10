@@ -778,3 +778,14 @@ async def test_a_failed_model_call_names_its_status_but_never_its_body(profile, 
         await providers.generate_json(profile, "Review", {}, policy)
     assert error.value.code == code and "secret body" not in str(error.value)
     assert error.value.usage["tokens_known"] is False
+
+
+@pytest.mark.asyncio
+async def test_a_failed_validation_names_the_field_and_rule_but_not_the_answer(profile, policy, fake_provider):
+    calls, answers = fake_provider
+    answers[:] = [response('{"ok":"leaked model text"}')]
+    with pytest.raises(providers.ProviderError) as error:
+        await providers.generate_json(profile, "Review", {}, policy)
+    assert error.value.code == "schema_validation" and "ok: type" in str(error.value) and "leaked" not in str(error.value)
+    # The retry tells the model the same location, so it can fix that field.
+    assert "(ok: type)" in calls[1][5][-1]["content"]

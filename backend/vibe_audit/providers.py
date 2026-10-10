@@ -414,6 +414,23 @@ def _usage(response: Any) -> dict:
     return {"prompt_tokens": prompt, "completion_tokens": completion, "tokens": total}
 
 
+def _validation_site(exc: BaseException) -> str:
+    """Where an answer failed validation: the schema path and rule, never the model's own text."""
+    from jsonschema.exceptions import ValidationError as SchemaViolation
+    from pydantic import ValidationError as ContractViolation
+    def path(parts):
+        text = ".".join(str(part) for part in parts)
+        return re.sub(r"[^A-Za-z0-9_.\-\[\]]", "", text)[:120] or "(root)"
+    if isinstance(exc, SchemaViolation):
+        return f"{path(exc.absolute_path)}: {exc.validator}"
+    if isinstance(exc, ContractViolation):
+        first = exc.errors()[0] if exc.errors() else {}
+        return f"{path(first.get('loc', ()))}: {re.sub(r'[^a-z_]', '', str(first.get('type', 'invalid')))[:40]}"
+    if isinstance(exc, json.JSONDecodeError):
+        return "not valid JSON"
+    return "not a single JSON object"
+
+
 def _strict_json(content: str) -> dict:
     def reject_constant(_):
         raise ValueError("Non-standard JSON number")
@@ -529,11 +546,12 @@ async def generate_json(profile: dict, system: str, payload: dict, policy: dict)
             # Contract rules a JSON schema cannot state (cross-references, non-empty content) get the same retry.
             if check := policy.get("contract_check"):
                 check(data)
-        except Exception:
+        except Exception as exc:
+            where = _validation_site(exc)
             if attempt + 1 < max_attempts:
-                messages.append({"role": "user", "content": "The previous response did not validate. Return a JSON object satisfying the supplied schema. Do not add prose or code fences."})
+                messages.append({"role": "user", "content": f"The previous response did not validate ({where}). Return a JSON object satisfying the supplied schema. Do not add prose or code fences."})
                 continue
-            raise ProviderError("Model output failed local JSON/schema validation", code="schema_validation", usage=usage.copy()) from None
+            raise ProviderError(f"Model output failed local JSON/schema validation ({where})", code="schema_validation", usage=usage.copy()) from None
         return {"data": data, "usage": usage, "model_id": profile["model_id"], "provider": profile["provider"], "response_model_id": _get(response, "model"), "cost_usd": None, "cost_note": "Token usage is provider reported; monetary cost is not calculated or claimed.", "budget_note": "Output is capped; total input/output usage is checked after each response. Provider billing cannot be guaranteed in advance."}
     raise ProviderError("No model result", code="provider_error", usage=usage.copy())
 

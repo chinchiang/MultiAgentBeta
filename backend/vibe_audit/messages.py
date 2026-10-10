@@ -424,6 +424,7 @@ ZH.update({
 })
 
 PATTERNS = [
+    (r"Model output failed local JSON/schema validation \((.+)\)", "模型輸出未通過本機 JSON／格式驗證（{0}）"),
     (r"AWS profile (.+) is not allowed; list it in (\w+)", "AWS profile {0} 未獲允許；請把它列在 {1}"),
     (r"AWS credentials for profile (.+) are unavailable; sign in with: aws sso login --profile (.+)", "AWS profile {0} 沒有可用的憑證；請先登入：aws sso login --profile {1}"),
     (r"This retest's outcome could not be written back to the parent assessment \((\w+)\)", "這次複測的結果無法寫回上層評估（{0}）"),
