@@ -99,7 +99,6 @@ ZH = {
     "No supported source files available": "沒有可支援的原始碼檔案",
     "Source changed after the run was frozen; create a new run": "原始碼在執行凍結後被變更；請建立新的執行",
     "Reviewer returned an invalid review contract": "reviewer 回傳的審查契約無效",
-    "Challenger references an unknown finding": "challenger 參照了不存在的發現",
     "Reporter must preserve every existing finding exactly once": "reporter 必須把每個既有發現恰好保留一次",
     "Provider usage is unknown; further model calls stopped": "模型用量不明；已停止後續的模型呼叫",
     "Model call budget exhausted": "模型呼叫預算已用完",
@@ -439,6 +438,7 @@ ZH.update({
 })
 
 PATTERNS = [
+    (r"Challenger: dropped (\d+) challenge\(s\) naming a finding that does not exist", "反證審查員：捨棄 {0} 項指向不存在發現的反證"),
     (r"Model request failed \(([A-Za-z0-9_ <-]+)\); response and error body withheld; billed usage may be unknown", "模型請求失敗（{0}）；回應與錯誤內容不予顯示；計費用量可能不明"),
     (r"Model endpoint answered HTTP (\d+); the request was not served and is treated as unbilled", "模型端點回應 HTTP {0}；請求沒有被處理，視為未計費"),
     (r"Model output failed local JSON/schema validation \((.+)\)", "模型輸出未通過本機 JSON／格式驗證（{0}）"),
