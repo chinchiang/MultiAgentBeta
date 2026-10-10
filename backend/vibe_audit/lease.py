@@ -113,7 +113,11 @@ class LeaseStore:
             row = self._sql("SELECT state,payload FROM worker_tasks WHERE idempotency_key=?", (key,)).fetchone()
             if not row or row[0] != "finished":
                 return None
-            result = json.loads(row[1]).get("result")
+            payload = json.loads(row[1])
+            # The key leaves out spec_hash, so a finished task of another recipe must not answer for this one.
+            if payload.get("binding") != binding:
+                return None
+            result = payload.get("result")
             return result if isinstance(result, dict) else None
 
     def _validate(self, row, token, binding, worker_id=None, *, issued=False):

@@ -140,3 +140,15 @@ def test_postgres_lease_store_refuses_a_non_utf8_database(monkeypatch,server,cli
     with pytest.raises(LeaseError,match="UTF8"):
         LeaseStore(database_url="postgresql://synthetic/db")
     assert closed==[True]
+
+
+def test_a_finished_task_answers_only_for_its_own_recipe(leases):
+    store,_=leases
+    args=dict(run_id=uuid.uuid4().hex,case_hash="case",threat_hash="threat",manifest_hash="manifest",operation="http_case",repetition=0)
+    cap=store.issue(max_requests=2,ttl_seconds=2,max_seconds=10,spec_hash="recipe-a",**args)
+    store.claim(cap,"worker");store.finish_task(cap,"worker",{"status":"completed"})
+    assert store.finished_result(spec_hash="recipe-a",**args)=={"status":"completed"}
+    # Same run, case, operation and repetition, but a different sealed spec: never reuse, never replay.
+    assert store.finished_result(spec_hash="recipe-b",**args) is None
+    with pytest.raises(LeaseError):
+        store.issue(max_requests=2,ttl_seconds=2,max_seconds=10,spec_hash="recipe-b",**args)

@@ -796,3 +796,109 @@ async def test_docker_runtime_rejects_a_work_root_too_long_for_the_broker_socket
         fits=tmp_path/("d"*(77-base))
         assert len(os.fsencode(fits))==77
         assert (await WorkerRuntime(fits,lease_store=Leases(),docker_binary="/usr/bin/docker").capabilities())["available"] is True
+
+
+async def test_lease_outage_that_also_fails_the_revoke_is_unknown_not_blocked(tmp_path,monkeypatch):
+    """Requests may already be out when the lease database goes away; the controller
+    cannot then report 'nothing dispatched, cleanup confirmed'."""
+    rt=WorkerRuntime(tmp_path,backend="process_test",allow_process_test=True,ttl_seconds=0.2)
+    try:
+        real=rt.leases.renew
+        def fail_once_claimed(capability,*args,**kwargs):
+            with rt.leases.lock:
+                row=rt.leases._sql("SELECT state FROM worker_leases WHERE id=?",(capability["id"],)).fetchone()
+            if row and row[0]=="active": raise RuntimeError("lease database unavailable")
+            return real(capability,*args,**kwargs)
+        def revoke_down(*args,**kwargs): raise RuntimeError("lease database unavailable")
+        monkeypatch.setattr(rt.leases,"renew",fail_once_claimed)
+        monkeypatch.setattr(rt.leases,"revoke",revoke_down)
+        result=await rt.execute_tool({"operation":"selftest","selftest":"spawn_child","timeout_seconds":30},
+                                     manifest=manifest(),cancel_event=asyncio.Event(),request_hook=allow)
+        # The supervisor still tore its worker down, so its own unknown outcome is what reaches the run.
+        assert result["status"]=="outcome_unknown" and "before any dispatch" not in result["reason"],result
+        assert rt.active=={}
+    finally:
+        rt.leases.close()
+
+
+async def test_controller_failure_after_the_supervisor_started_is_unknown(runtime,monkeypatch):
+    import vibe_audit.worker_runtime as module
+    def broken(*args,**kwargs): raise OSError("disk went away")
+    monkeypatch.setattr(module,"remove_private_tree",broken)
+    result=await runtime.execute_tool({"operation":"selftest","timeout_seconds":30},
+                                      manifest=manifest(),cancel_event=asyncio.Event(),request_hook=allow)
+    assert (result["status"],result["cleanup_confirmed"])==("outcome_unknown",False),result
+    assert "before any dispatch" not in result["reason"]
+
+
+@pytest.mark.parametrize("artifacts",[{"x":1},{"x":"not base64!"},["x"],"x"])
+def test_malformed_worker_artifacts_keep_the_supervisor_recorded_leak(artifacts):
+    from vibe_audit.worker_runtime import finish_result,supervised_verdict
+    claimed={"status":"pass","artifacts":artifacts,"cleanup_confirmed":True,
+             "broker_observations":[recorded("/fixture",200,"TEST-CANARY"),recorded("/private",200,"TEST-CANARY")]}
+    finished=finish_result({"operation":"http_case"},claimed)
+    assert finished["status"]=="execution_error" and "artifacts" not in finished
+    assert supervised_verdict(case(),finished)["status"]=="fail"
+
+
+async def test_supervisor_drops_fields_only_it_may_set(runtime):
+    result=await runtime.execute_tool({"operation":"selftest","selftest":"forge","timeout_seconds":30},
+                                      manifest=manifest(),cancel_event=asyncio.Event(),request_hook=allow)
+    assert result["status"]=="completed" and result["cleanup_confirmed"] is True,result
+    assert result["deployment_changed"] is False and result["broker_observations"]==[]
+    assert result["isolation"]=="process_unisolated_test_only" and result["simulated"] is True
+    assert "resumed_from_journal" not in result and result["work_dir_removed"] is True
+
+
+@pytest.mark.parametrize("profile",[{"backend":"process_test","allow_process_test":True},{"backend":"process_test"},{"allow_process_test":True}])
+def test_a_runtime_profile_cannot_select_the_unisolated_process_backend(tmp_path,profile):
+    from vibe_audit.worker_runtime import load_config
+    path=tmp_path/"runtime.json"
+    path.write_text(json.dumps({"profiles":{"default":{"work_root":str(tmp_path/"w"),**profile}}}))
+    with pytest.raises(WorkerBlocked):
+        load_config(config_path=str(path))
+
+
+def test_a_trickling_target_cannot_hold_a_request_past_its_deadline(runtime,monkeypatch):
+    """Each read gets a fresh 5s socket timeout, so only an overall deadline stops a target sending a byte every few seconds."""
+    import vibe_audit.adapters as adapters_module
+    from vibe_audit import lease as lease_module
+    from vibe_audit.worker_entry import Supervisor
+    monkeypatch.setitem(sys.modules,"adapters",adapters_module)
+    monkeypatch.setitem(sys.modules,"lease",lease_module)
+    stop=threading.Event()
+    class Slow(BaseHTTPRequestHandler):
+        def log_message(self,*args):pass
+        def do_GET(self):
+            self.send_response(200);self.send_header("Content-Length","100");self.end_headers()
+            while not stop.is_set():
+                try: self.wfile.write(b"x");self.wfile.flush()
+                except OSError: return
+                stop.wait(.2)
+    server=ThreadingHTTPServer(("127.0.0.1",0),Slow)
+    threading.Thread(target=server.serve_forever,daemon=True).start()
+    try:
+        sup=Supervisor.__new__(Supervisor)
+        sup.manifest=manifest(f"http://127.0.0.1:{server.server_port}")
+        sup.lease=runtime.leases;sup.worker_id="w"
+        sup.socket_lock=threading.Lock();sup.sockets=set();sup.revoked=threading.Event()
+        sup.cap=runtime.leases.issue(run_id="trickle",case_hash="case",threat_hash="threat",manifest_hash="m",
+                                     max_requests=5,ttl_seconds=5,max_seconds=30,operation="http_case",repetition=0,spec_hash="s")
+        runtime.leases.claim(sup.cap,"w")
+        started=time.monotonic()
+        with pytest.raises(Exception):
+            sup.forward("GET","/private",{},None,time.monotonic()+1)
+        assert time.monotonic()-started<4
+    finally:
+        stop.set();server.shutdown();server.server_close()
+
+
+async def test_the_supervisor_enforces_the_worker_time_limit_inside_a_longer_lease(runtime):
+    started=time.monotonic()
+    result=await runtime.execute_tool({"operation":"selftest","selftest":"sleep","sleep_seconds":120,"timeout_seconds":5},
+                                      manifest=manifest(),cancel_event=asyncio.Event(),request_hook=allow)
+    assert result["status"] in {"blocked","outcome_unknown"} and result["status"]!="completed",result
+    assert time.monotonic()-started<20
+    # The lease is sized for creation and teardown around the worker's own limit.
+    from vibe_audit.worker_runtime import task_budget
+    assert task_budget(5)==5+5+40

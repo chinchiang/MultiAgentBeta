@@ -106,13 +106,25 @@ def test_supervisor_sends_a_model_body_only_to_an_operator_marked_endpoint(monke
     with pytest.raises(ValueError, match="model_body"):
         model_supervisor(monkeypatch).allowed_request(chat_request())
     case_id, _, method, path, headers, raw, _ = model_supervisor(monkeypatch, model_body=True).allowed_request(chat_request())
-    assert (case_id, method, path, raw) == ("C1", "POST", "/chat", b'{"q":"hi"}')
+    assert (case_id, method, path, raw) == ("C1", "POST", "/chat", b'{"q": "hi"}')
     # The supervisor's own Content-Type joins the model's names in sorted order.
     assert list(headers)[0] == "Accept" and list(headers)[-1] == "Content-Type"
     # An operator-written case is not a model body.
     model_supervisor(monkeypatch, designed_by=None).allowed_request(chat_request())
     # The supervisor's own Content-Type is transport, so the operator lists only what the model wrote.
     assert "Content-Type" not in model_supervisor(monkeypatch, model_body=True).manifest["allowed_requests"][0]["model_headers"]
+
+
+def test_supervisor_sends_the_sealed_body_not_the_worker_spelling_of_it(monkeypatch):
+    request = chat_request()
+    request["body_b64"] = base64.b64encode(b'{ "q" : "\\u0068i" }').decode()
+    raw = model_supervisor(monkeypatch, model_body=True).allowed_request(request)[5]
+    assert raw == json.dumps({"q": "hi"}).encode()
+    # A step without a body sends none, not even a JSON null.
+    get = model_supervisor(monkeypatch, model_body=True)
+    get.spec["cases"][0]["body"] = None
+    with pytest.raises(ValueError, match="no request body"):
+        get.allowed_request({**request, "body_b64": base64.b64encode(b"null").decode()})
 
 
 def test_supervisor_applies_the_header_list_to_model_steps_of_a_sequence_only(monkeypatch):
@@ -314,7 +326,7 @@ def sequence_supervisor(monkeypatch, *, results):
             pending[0].set()
     instance.emit = emit
     answers = iter(results)
-    instance.forward = lambda method, path, headers, body: {"status_code": 200, "body": next(answers), "peer_ip": "127.0.0.1"}
+    instance.forward = lambda method, path, headers, body, deadline=None: {"status_code": 200, "body": next(answers), "peer_ip": "127.0.0.1"}
     return instance
 
 
