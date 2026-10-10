@@ -8,7 +8,7 @@ AI Commander 負責派工；程式 Harness 強制範圍、階段、權限、預�
 
 ## 開啟控制台
 
-Windows 需 Python 3.12+ 與 Node 24。第一次安裝會下載固定依賴：
+Windows 需 Python 3.12+ 與 Node 24。第一次安裝會下載固定版本的相依套件：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/setup.ps1
@@ -17,7 +17,7 @@ powershell -ExecutionPolicy Bypass -File scripts/start-local.ps1
 
 工具需在原始碼目錄執行：catalogs、fixtures 與 UI 建置不在 Python 套件內。要用 `vibe-audit` 指令請在此目錄 `pip install -e .`；複製出去的 wheel 會拒絕啟動。
 
-開啟啟動時終端機印出的網址（`http://127.0.0.1:8000/#token=…`），先選「合成示範」。權杖只用來建立 session，同一分頁重新整理不需再帶，新分頁請重新開啟啟動網址；後端重啟會產生新權杖，可用 `VIBEAUDIT_SESSION_TOKEN`（32–256 個 URL-safe 字元）固定。控制台可保存專案/模型設定、檢視三份審查、威脅/需求/案例追溯、證據與用量，匯出 JSON/Markdown/SARIF，建立保留原始關聯的修補複測。
+開啟啟動時終端機印出的網址（`http://127.0.0.1:8000/#token=…`），先選「合成示範」。權杖只用來建立 session，同一分頁重新整理不需再帶，新分頁請重新開啟啟動網址；後端重啟會產生新權杖，可用 `VIBEAUDIT_SESSION_TOKEN`（32–256 個 URL-safe 字元）固定。控制台可保存專案/模型設定、檢視三份審查、威脅/需求/案例追溯、證據與用量，匯出 JSON/Markdown/SARIF，建立保留原始關聯的修補複測。右上角的「English／中文」按鈕可切換介面語言，選擇會記在這個瀏覽器。
 
 Windows 原生不執行 live 隔離掃描。真實工作流請在 Linux 或 WSL2 依 [Linux 操作指南](docs/LINUX_SETUP.md) 啟動，使用 PostgreSQL、Docker、已準備的模型端點與使用者提供的隔離 staging。
 
@@ -37,119 +37,129 @@ Windows 原生不執行 live 隔離掃描。真實工作流請在 Linux 或 WSL2
 
 ## 系統架構與流程 (Architecture Overview)
 
-操作者在本機瀏覽器開啟 React 控制台，所有操作都經 FastAPI（session／CSRF／Host-Origin 檢查）進入 `service.py` 的 LangGraph 圖；圖依固定順序走過白箱、裁決、威脅模型、案例設計、黑箱與報告，每一階段的閘門由程式判定而不是模型。黑箱請求只能經由獨立 supervisor 與 lease 送往目標，證據與追溯寫入 PostgreSQL（示範為 SQLite）後再回到控制台。控制平面／資料平面與信任邊界見 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)，API 與模組契約見 [IMPLEMENTATION.md](IMPLEMENTATION.md)。
+下圖依程式實際行為繪製。操作者透過本機控制台呼叫 FastAPI；每個評估都在 `service.py` 的 LangGraph 圖中依序走過七個階段，每個階段結束時由程式閘門判定能否繼續。模型只經 `providers.py` 呼叫；黑箱請求只能經獨立 supervisor 送往目標；run、job、lease 與證據都寫入 `store.py`。實線是控制與資料流程，虛線是模型呼叫、事件回報與副作用觀測。控制／資料平面與信任邊界見 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)，API 與模組契約見 [IMPLEMENTATION.md](IMPLEMENTATION.md)。
 
 ```mermaid
 flowchart TB
-  OP["操作者瀏覽器<br/>127.0.0.1:8000/#token=…"] --> UI["React 控制台<br/>frontend/src → frontend/dist"]
-  UI -- "/api/* + cookie + X-CSRF-Token" --> API["FastAPI<br/>api.py（session / CSRF / Host-Origin、runs、SSE、evidence、report）<br/>workspace_api.py（projects、models、catalogs、trace、retest、decision、reconcile）"]
-  API --> SVC["LangGraph 編排 service.py<br/>intake → preflight → whitebox → adjudication → threat_model → case_design → blackbox → report → complete"]
+  OP(["操作者瀏覽器"])
+  UI["React 控制台<br/>frontend/src・中英切換 i18n.ts"]
+  API["FastAPI<br/>api.py・workspace_api.py<br/>session／CSRF／Host-Origin 檢查"]
+  OP --> UI
+  UI -->|"/api/* ＋ X-CSRF-Token"| API
+  API -.->|"SSE 進度事件"| UI
 
-  subgraph WB["白箱（原始碼只掛載到這裡）"]
-    STG["staging.py / snapshot.py<br/>raw 私密 staging 與脫敏快照"]
-    PRV["providers.py（LiteLLM）<br/>3 個獨立 reviewer + 1 輪 challenger，無 fallback"]
-    TR1["sandbox.py + worker_runtime.run_scanner<br/>Semgrep / Gitleaks / OSV 隔離掃描（deploy/scanners）"]
-    STG --> PRV
-    STG --> TR1
+  subgraph ENG["LangGraph（service.py）"]
+    direction TB
+    S0["① intake／preflight<br/>policy・staging・snapshot<br/>模型探測・標準目錄版本"]
+    S1["② whitebox<br/>3 位 reviewer 各自審脫敏快照<br/>同時掃描 raw staging"]
+    S2["③ adjudication<br/>證據聯集・引用核對<br/>至多 1 輪 challenger"]
+    S3["④ threat_model<br/>資產・信任邊界・威脅・Requirement<br/>policy.threat_gate 比對標準 ID"]
+    S4["⑤ case_design<br/>contracts・fixture_protocol<br/>policy.case_gate"]
+    Q{"live 且有<br/>模型設計案例？"}
+    S6["⑥ blackbox<br/>policy.authorize・worker_runtime"]
+    S7["⑦ report<br/>驗證證據雜湊・選用 reporter 只能排序"]
+    S0 --> S1 --> S2 --> S3 --> S4 --> Q
+    Q -->|"否"| S6
+    S6 --> S7
   end
 
-  subgraph TMC["威脅模型與案例"]
-    CAT["catalog.py ← catalogs/*.json<br/>ASVS 5.0.0 / WSTG 4.2 / LLM 2026 / Agentic 2026"]
-    CON["contracts.py / policy.py / domain.py<br/>case contract、case gate、header 詞彙"]
-    FIX["fixture_protocol.py<br/>reset / setup / cleanup、測試身分"]
-    APR{"模型設計案例？<br/>live run 先停在「待核准案例」"}
-    CAT --> CON --> FIX --> APR
+  API -->|"建立・啟動・取消・恢復"| S0
+  Q -->|"是：停在「待核准案例」"| AP["操作者在工作台核對並核准<br/>POST /runs/{id}/approve-cases"]
+  AP --> S6
+
+  LLM["模型端點<br/>providers.py（LiteLLM，無 fallback）"]
+  S1 & S2 & S3 & S4 -.-> LLM
+
+  SCAN["隔離掃描 worker<br/>sandbox.py・run_scanner<br/>Semgrep／Gitleaks／OSV"]
+  S1 --> SCAN
+
+  subgraph BOX["黑箱執行區"]
+    direction TB
+    SUP["controller ＋ 獨立 supervisor<br/>worker_runtime.py・lease.py"]
+    WK["Docker worker（network none）<br/>worker_entry.py・tool_runners.py"]
+    SUP <-->|"Unix socket relay"| WK
   end
+  S6 --> SUP
+  TGT["目標 staging<br/>或 fixtures/web-api・ai-agent"]
+  SUP -->|"精確 METHOD/path・身分・IP・預算"| TGT
+  TGT -.->|"副作用（fixture 路徑）"| EC["effect_collector.py<br/>事件序列與 sink 收據"]
+  EC -.-> SUP
 
-  subgraph BB["黑箱（無原始碼、network none）"]
-    WR["worker_runtime.py<br/>controller + 獨立 supervisor（Unix socket relay、IP 釘選、目標憑證）"]
-    LS["lease.py<br/>capability / lease 帳本"]
-    WE["worker_entry.py<br/>Docker worker（deploy/worker、UID 65533）<br/>ZAP / Schemathesis / Playwright / promptfoo / PyRIT"]
-    EC["effect_collector.py<br/>事件序列與 sink 收據"]
-    WR <--> LS
-    WR <--> WE
-    EC --> WR
-  end
-
-  TGT["目標<br/>fixtures/web-api（TS）、fixtures/ai-agent（Python）<br/>或操作者提供的隔離 staging"]
-
-  subgraph PERSIST["持久化與結果"]
-    ST["store.py<br/>PostgreSQL（正式）/ SQLite（示範）<br/>run、job、lease、LangGraph checkpoint"]
-    TRC["traceability.py<br/>實體版本與證據連結"]
-    RPT["報告與證據信封<br/>JSON / Markdown / SARIF"]
-    ST --> TRC --> RPT
-  end
-
-  SVC --> WB
-  WB --> TMC
-  APR -- "操作者核准封存案例" --> BB
-  WR -- "精確 METHOD/path、身分、IP、預算" --> TGT
-  TGT --> EC
-  SVC <--> ST
-  BB --> ST
-  RPT --> API
-
-  BM["benchmark.py / benchmark_matching.py<br/>benchmarks/：七組公平預算比較（僅驗證管線）"]
-  SVC -.-> BM
+  DB[("store.py ＋ traceability.py<br/>run・job・lease・證據<br/>PostgreSQL（正式）／SQLite（示範）")]
+  ENG <--> DB
+  API <-->|"讀取 run・證據<br/>匯出 JSON／Markdown／SARIF"| DB
 ```
 
-| 階段 | 主要模組 | 產出與閘門 |
+| 階段 | 主要模組 | 做什麼、靠什麼把關 |
 |---|---|---|
-| intake / preflight | `api.py`、`policy.py`、`staging.py`、`resource_manifest.py` | 不可變 manifest、凍結原始碼摘要、模型端點探測、憑證與目標 IP 預檢 |
-| whitebox | `snapshot.py`、`providers.py`、`sandbox.py`、`worker_runtime.py` | 三份獨立封存審查、Semgrep/Gitleaks/OSV 證據；reviewer 看不到彼此與掃描器結論 |
-| adjudication | `service.py`、`providers.py` | 證據聯集、來源引用驗證、至多一輪 challenger；不以多數票決定 |
-| threat_model | `catalog.py`、`contracts.py`、`traceability.py` | 資產／資料流／信任邊界／威脅／Requirement，綁定 canonical 標準 ID 與版本 |
-| case_design | `contracts.py`、`policy.py`、`fixture_protocol.py` | 可追溯、含 positive control 與 oracle 的固定案例；模型設計案例需操作者核准 |
-| blackbox | `worker_runtime.py`、`lease.py`、`worker_entry.py`、`tool_runners.py`、`effect_collector.py`、`adapters.py` | 經 supervisor 的受控請求、獨立觀測與 sink 收據；pass/fail/inconclusive/blocked/execution_error/outcome_unknown |
-| report / complete | `service.py`、`store.py`、`traceability.py` | 雜湊驗證的證據信封、追溯圖、JSON/Markdown/SARIF 匯出、關聯複測 |
+| ① intake／preflight | `api.py`、`policy.py`、`staging.py`、`snapshot.py`、`providers.py`、`catalog.py` | 建立不可變 manifest；複製 raw 私密 staging 並產生脫敏快照；探測模型端點；記錄標準目錄版本；檢查憑證綁定與目標 IP |
+| ② whitebox | `providers.py`、`snapshot.py`、`sandbox.py`、`worker_runtime.py` | 3 位 reviewer 並行審同一份脫敏快照並各自封存；Semgrep／Gitleaks／OSV 同時在隔離 worker 掃描 raw staging；`policy.whitebox_gate` |
+| ③ adjudication | `service.py`、`providers.py` | 保留所有主張的聯集、核對原始碼引用、至多 1 輪 challenger；不以多數票決定 |
+| ④ threat_model | `service.py`、`providers.py`、`policy.py`、`catalog.py` | 建立資產、信任邊界、資料流、威脅與 Requirement；`policy.threat_gate` 比對標準 ID 與版本 |
+| ⑤ case_design | `contracts.py`、`adapters.py`、`fixture_protocol.py`、`policy.py` | 操作者自填或模型設計的固定案例；header 名稱正規化；`policy.case_gate` 檢查追溯、oracle、範圍與身分 |
+| 核准 | `api.py`（approve-cases） | live 且有模型設計案例時停在「待核准案例」；操作者核准這組封存案例後才送出第一個請求 |
+| ⑥ blackbox | `policy.py`、`worker_runtime.py`、`lease.py`、`worker_entry.py`、`tool_runners.py`、`adapters.py`、`fixture_protocol.py`、`effect_collector.py` | 每個請求都經 supervisor 檢查 lease、方法／路徑、身分、IP 與預算才送往目標；結果分為 pass／fail／inconclusive／blocked／execution_error／outcome_unknown |
+| ⑦ report | `service.py`、`store.py`、`traceability.py` | 驗證證據雜湊；選用 reporter 只能重新排序既有發現；API 匯出 JSON、Markdown（中／英）與 SARIF |
 
 ### 整體目錄結構
 
 ```text
 MultiAgentBeta/
 ├── backend/vibe_audit/            # Python 套件（pip install -e . 後提供 vibe-audit 指令）
-│   ├── __main__.py                #   啟動 uvicorn（127.0.0.1）、印出啟動網址
-│   ├── api.py                     #   FastAPI：session/CSRF/Host-Origin、/api/runs、SSE、evidence、report、靜態 UI
-│   ├── workspace_api.py           #   /api/projects、/models、/catalogs、trace、retest、decision、reconcile
-│   ├── service.py                 #   LangGraph 編排、各階段、閘門、Markdown/SARIF 報告
-│   ├── providers.py               #   LiteLLM 模型呼叫、憑證 origin 綁定、無 fallback
-│   ├── staging.py / snapshot.py   #   raw 私密 staging 與脫敏快照
-│   ├── sandbox.py                 #   白箱掃描器（Semgrep/Gitleaks/OSV）路徑、上限與結果解析
-│   ├── tool_runners.py            #   黑箱工具固定執行：ZAP/Schemathesis/Playwright/promptfoo/PyRIT
-│   ├── catalog.py                 #   canonical 標準 ID 與來源釘選
-│   ├── contracts.py / policy.py   #   case contract、閘門、header 詞彙、憑證規則
+│   ├── __main__.py                #   啟動 uvicorn（只聽 127.0.0.1）並印出含權杖的網址
+│   ├── api.py                     #   FastAPI：session／CSRF／Host-Origin、runs、approve-cases、SSE、證據、報告、靜態介面
+│   ├── workspace_api.py           #   專案、模型範本、標準目錄、追溯、複測、裁決、清理確認
+│   ├── service.py                 #   LangGraph 七個階段、閘門呼叫、Markdown／SARIF 報告
+│   ├── providers.py               #   LiteLLM 模型呼叫與探測、憑證 origin 綁定、無 fallback
+│   ├── messages.py                #   錯誤訊息的正體中文對照（API 的 detail_zh、run 的 error_zh）
+│   ├── diagnostics.py             #   本機診斷記錄：被固定文字取代的失敗只記例外類型與位置（vibe-audit.log）
+│   ├── settings.py                #   後端程序的 VIBEAUDIT_* 設定：一次讀取並檢查（權杖、資料目錄、資料庫、控制台 origins、來源根目錄、目錄與設定檔路徑）
+│   ├── staging.py / snapshot.py   #   raw 私密 staging（給掃描器）與脫敏快照（給模型）
+│   ├── sandbox.py                 #   白箱掃描器的路徑檢查、上限與結果解析
+│   ├── catalog.py                 #   標準 ID 與來源釘選
+│   ├── contracts.py / policy.py   #   案例契約；manifest、白箱、威脅、案例閘門與 authorize
 │   ├── domain.py / schemas.py     #   資料模型與 JSON schema
-│   ├── adapters.py                #   受控 HTTP 傳輸、IP 釘選、oracle 評估
-│   ├── fixture_protocol.py        #   reset/setup/cleanup 協定、測試身分
-│   ├── worker_runtime.py          #   controller + 獨立 supervisor、Unix socket relay
-│   ├── worker_entry.py            #   Docker worker 進入點
-│   ├── lease.py                   #   capability/lease 帳本、續約與撤銷
+│   ├── adapters.py                #   受控 HTTP 傳輸、IP 釘選、header 規則、oracle 評估
+│   ├── fixture_protocol.py        #   reset／setup／cleanup 協定、測試身分
 │   ├── effect_collector.py        #   獨立事件序列與 sink 收據
-│   ├── store.py / traceability.py #   PostgreSQL/SQLite 儲存、版本化實體與證據連結
-│   ├── resource_manifest.py       #   資源版本紀錄
-│   ├── benchmark.py / benchmark_matching.py  # 比較評估 runner 與結果比對
-│   └── tokenizers/                #   離線 tiktoken 詞彙表
-├── frontend/                      # React + TypeScript + Vite 控制台
-│   ├── src/                       #   App.tsx、api.ts、types.ts、extensions.tsx、main.tsx
-│   ├── dist/                      #   已建置的 UI，由 FastAPI 同 origin 提供
-│   └── scripts/                   #   browser-smoke、contract-smoke
-├── tests/                         # pytest（engine、providers、worker_runtime、lease、sandbox、local_pipeline…）
-├── catalogs/                      # ASVS 5.0.0、WSTG 4.2、LLM 2026、Agentic 2026 canonical JSON、manifest、source-lock
+│   ├── worker_runtime.py          #   controller ＋ 獨立 supervisor、run_scanner、run_case
+│   ├── worker_entry.py            #   supervisor 與 Docker worker 的進入點、Unix socket relay
+│   ├── tool_runners.py            #   黑箱工具固定執行：ZAP／Schemathesis／Playwright／promptfoo／PyRIT
+│   ├── lease.py                   #   capability／lease 帳本、續約與撤銷
+│   ├── store.py / traceability.py #   PostgreSQL／SQLite 儲存、版本化實體與證據連結
+│   ├── resource_manifest.py       #   掃描器資源版本紀錄
+│   ├── benchmark.py / benchmark_matching.py  # 獨立的比較評估工具（不在評估流程中）
+│   └── tokenizers/                #   離線 tiktoken 詞彙表與授權
+├── frontend/                      # React ＋ TypeScript ＋ Vite 控制台
+│   ├── src/                       #   App.tsx（外殼）、run-detail.tsx、create-form.tsx、capabilities.tsx（三個畫面）、ui.tsx（共用元件與標籤）、extensions.tsx、api.ts、types.ts、i18n.ts（中英切換）、messages.ts（引擎訊息中文）、樣式
+│   ├── tests/                     #   vitest 單元與元件測試（happy-dom 模擬瀏覽器，不需後端）
+│   ├── scripts/                   #   contract-smoke、browser-smoke、check-i18n、check-messages
+│   └── dist/                      #   已建置的介面，由 FastAPI 同 origin 提供
+├── tests/                         # pytest（27 個檔案，含 test_bilingual_docs.py 文件雙語檢查與 test_properties.py 的 Hypothesis 性質測試）
+├── catalogs/                      # ASVS 5.0.0、WSTG 4.2、LLM 2026、Agentic 2026 標準 JSON 與 manifest
 │   └── sources/                   #   原始標準內容與授權
-├── fixtures/                      # 合成靶場
-│   ├── web-api/                   #   TypeScript Web API（BOLA 案例）
-│   └── ai-agent/                  #   Python AI agent 目標
+├── fixtures/                      # 掃描器規則與設定（Semgrep、Gitleaks、OSV）
+│   ├── web-api/                   #   TypeScript Web API 合成靶場（BOLA 案例）
+│   └── ai-agent/                  #   Python AI agent 合成靶場
 ├── deploy/                        # postgres.compose.yml
-│   ├── worker/                    #   worker Dockerfile、工具映像鎖定、runtime.example.json
+│   ├── worker/                    #   worker 與工具映像 Dockerfile、鎖定檔、runtime.example.json
 │   └── scanners/                  #   Gitleaks、OSV 映像
 ├── benchmarks/                    # 比較評估設計、synthetic-v1、examples/、results-local/、results-synthetic/
-├── docs/                          # ARCHITECTURE、LINUX_SETUP、DELIVERY、VALIDATION、DOCKER_INTEGRATION_TESTING、VIBESEC_ADVISORIES、SOURCES、schema、驗證紀錄（XML/JSON）、history/
-├── scripts/                       # setup/start-local、verify、provision-runtime/offline-db、package-release、hash-lock、refresh-catalog
-├── .github/workflows/ci.yml       # backend（pytest + PostgreSQL + SSR/API smoke）、frontend（typecheck、build、dist 比對、manifest）、依賴稽核、每週 Docker 隔離測試
+├── docs/                          # ARCHITECTURE、LINUX_SETUP、DOCKER_INTEGRATION_TESTING、VALIDATION、DELIVERY、SOURCES、
+│                                  #   VIBESEC_ADVISORIES、threat-model.yaml、run-input.schema.json、驗證收據、截圖、history/
+├── scripts/                       # setup／start-local、verify、contract-smoke、provision-runtime／offline-db、package-release、hash-lock、
+│                                  #   redact-receipts、summarize-validation、refresh-catalog、render-sample-report、mutation-test、dependency-drift
+├── .github/workflows/ci.yml       # backend（Python 3.12／3.13：ruff、pytest ＋ PostgreSQL、契約 smoke）與 frontend（typecheck、check:i18n、check:messages、建置一致性、清單）
+├── .github/workflows/integration.yml  # 以 deploy/ 建置的映像跑 Docker worker、掃描器、工具、fixture 與完整 pipeline 整合測試
+├── .github/workflows/mutation.yml     # mutmut 突變測試：閘門與解析模組的每個突變都要被測試抓到（scripts/mutation-test.py）
+├── .github/workflows/mutation-pr.yml  # pull request 只對改動的函式做突變測試（scripts/mutation-test.py --changed）
+├── .github/workflows/dependency-drift.yml  # 每週列出落後登錄站的固定版本與 OSV 公告（scripts/dependency-drift.py）
+├── .claude/                       # 雲端 session 的 SessionStart hook（不進發佈檔）
+├── CLAUDE.md                      # 開發指引（不進發佈檔）
 ├── IMPLEMENTATION.md              # API 與模組契約
 ├── README.md · LICENSE · NOTICE
-├── pyproject.toml · requirements.lock.txt   # 固定依賴（hash 檢查）
-└── source-manifest.sha256         # 來源檔案雜湊清單（scripts/package-release.py）
+├── pyproject.toml · requirements.lock.txt · requirements.mutation.lock.txt   # 固定版本並檢查雜湊的相依套件；第二份只供突變測試
+└── source-manifest.sha256         # 每個被追蹤檔案的雜湊清單（scripts/package-release.py）
 ```
 
 ## 安全政策
@@ -162,19 +172,21 @@ MultiAgentBeta/
 - 白箱 raw staging 與模型用脫敏快照分開。staging 副本含有機密檔案，每次執行結束（含 blocked、failed、取消）與服務啟動時都會刪除；恢復時重新複製並必須與凍結時完全相同。來源讀取有上限，脫敏及路由抽取是啟發式；略過的目錄（build、dist、node_modules、.git、symlink）、未讀檔案和未知業務規則會保留缺口。
 - 文字宣稱、HTTP 狀態碼、scanner exit 0、模型共識都不能單獨證明安全。控制或觀測失敗不能判為通過。
 - 送出後中斷標示 outcome_unknown，不自動重播。停止先撤銷網路；未確認清理仍顯示未完成。
-- loopback 單使用者 session：建立 session 需要啟動權杖（同機其他程序無法自行取得 session 再探測模型或讀取證據）。cookie 不分 port，所以每個 API 請求（含讀取）都另需只存在該分頁 sessionStorage 的 CSRF token；瀏覽器開過的其他本機服務拿到 cookie 也無法使用。另有 Host/Origin 防護，每個 /api 路由也各自檢查 session 與 CSRF，不只靠 middleware。同時最多 8 個 session，閒置 1 小時或滿 8 小時失效，可在工作台登出；API 可一次結束全部 session，此時自動產生的啟動權杖也會換新並重新印出。錯誤的啟動權杖會讓下一次錯誤回應逐次變慢（上限 5 秒），正確的權杖不受影響。自訂的 VIBEAUDIT_SESSION_TOKEN 必須夠隨機（例如 `python -c "import secrets; print(secrets.token_urlsafe(32))"`），重複字元或重複樣式會被拒絕。資料目錄（VIBEAUDIT_DATA_DIR）在 Linux 上只限擁有者存取（0700），無法設定時服務不啟動；Windows 只執行合成資料的 demo，目錄權限沿用上層目錄的 ACL。受測文字以不可信資料呈現。不要將控制台直接公開到網際網路。
+- loopback 單使用者 session：建立 session 需要啟動權杖（同機其他處理程序無法自行取得 session 再探測模型或讀取證據）。cookie 不分 port，所以每個 API 請求（含讀取）都另需只存在該分頁 sessionStorage 的 CSRF token；瀏覽器開過的其他本機服務拿到 cookie 也無法使用。另有 Host/Origin 防護，每個 /api 路由也各自檢查 session 與 CSRF，不只靠 middleware。同時最多 8 個 session，閒置 1 小時或滿 8 小時失效，可在工作台登出；API 可一次結束全部 session，此時自動產生的啟動權杖也會換新並重新印出。錯誤的啟動權杖會讓下一次錯誤回應逐次變慢（上限 5 秒），正確的權杖不受影響。自訂的 VIBEAUDIT_SESSION_TOKEN 必須夠隨機（例如 `python -c "import secrets; print(secrets.token_urlsafe(32))"`），重複字元或重複樣式會被拒絕。資料目錄（VIBEAUDIT_DATA_DIR）在 Linux 上只限擁有者存取（0700），無法設定時服務不啟動；API 與報告以固定文字描述的失敗，其例外類型與程式位置（不含訊息與值）寫在資料目錄的 vibe-audit.log（0600），只留在這台機器；Windows 只執行合成資料的 demo，目錄權限沿用上層目錄的 ACL。受測文字以不可信資料呈現。不要將控制台直接公開到網際網路。
 
-容器、資料庫與控制程序管理者屬信任邊界；本工具無法限制外部 staging 的全部出網，也不能保證找出所有漏洞。
+容器、資料庫與控制處理程序的管理者屬信任邊界；本工具無法限制外部 staging 的全部出網，也不能保證找出所有漏洞。
 
 ## 文件與開發
 
 - [部署與設定](docs/LINUX_SETUP.md)
+- [Docker 整合測試](docs/DOCKER_INTEGRATION_TESTING.md)／[Worker 映像](deploy/worker/README.md)
+- [前端建置與連線行為](frontend/README.md)
 - [架構與方法](docs/ARCHITECTURE.md)
 - [API 與模組契約](IMPLEMENTATION.md)
 - [交付對照](docs/DELIVERY.md)／[驗證紀錄](docs/VALIDATION.md)
 - [模型減偏比較設計](benchmarks/README.md)
 - [來源與授權](docs/SOURCES.md)／[NOTICE](NOTICE)
-- [合成範例報告](docs/sample-report.md)
+- [合成範例報告（中英雙語）](docs/sample-report.md)
 
 ```powershell
 $env:PYTHONPATH = 'backend'
@@ -183,7 +195,9 @@ cd frontend
 npm.cmd run build
 ```
 
-沒有 Linux/PostgreSQL/固定映像的測試環境，對應整合測試會明確 skip。不能將 skipped 當作驗證通過。核心 Apache-2.0；外部工具、規則、模型與標準內容各保留原授權。
+沒有 Linux/PostgreSQL/固定映像的測試環境，對應整合測試會明確 skip。不能將 skipped 當作驗證通過。
+
+突變測試（Linux，離線）：`python -m pip install --require-hashes -r requirements.mutation.lock.txt` 後執行 `python scripts/mutation-test.py`。mutmut 會逐一改壞 `policy.py`、`adapters.py`、`catalog.py`、`lease.py`、`snapshot.py` 與 `messages.py` 的運算子、常數與分支，再跑涵蓋該函式的單元測試（端對端測試套件因執行時間不在其中，仍由 ci.yml 執行）；測試仍通過或沒有測試涵蓋的改動就是盲點，腳本會列出，而任一模組的數量超過 `tests/mutation-baseline.json` 記錄的上限就以非零結束。`tests/test_properties.py` 以 Hypothesis 對純函式（redaction、origin 解析、雜湊、IP 判定、訊息對照、路由擷取、header 檢查）產生輸入驗證性質，同樣離線。lease 測試在 SQLite 與 PostgreSQL 各跑一次（設定 `VIBEAUDIT_TEST_DATABASE_URL` 時；每個測試用自己的資料庫），所以只在 PostgreSQL 上才有差別的鎖定與時鐘改動也抓得到。`.github/workflows/mutation.yml` 每週執行同一件事；pull request 則由 `.github/workflows/mutation-pr.yml` 執行 `python scripts/mutation-test.py --changed origin/main`，只改壞 diff 碰到的函式，每個函式的逃脫數不得超過基準為它記錄的數字（新函式不得有逃脫），幾分鐘內就有結果。這兩個 workflow 預設關閉：只有 repository variable `VIBEAUDIT_MUTATION` 設為 `true` 時才會自動執行，手動 dispatch 則一律執行。相依套件漂移（需要網路）：`python scripts/dependency-drift.py` 讀兩份 Python 鎖定檔與 `frontend/package-lock.json`，向 PyPI、npm registry 查最新版本、向 OSV 查固定版本的安全公告，印出 Markdown 報告（`--all` 列出全部、`--json` 輸出資料）；有公告才以非零結束，不會自動升級。`.github/workflows/dependency-drift.yml` 每週把報告寫進 job summary。核心 Apache-2.0；外部工具、規則、模型與標準內容各保留原授權。
 
 ---
 # Vibe Audit 0.2.1
@@ -205,7 +219,7 @@ powershell -ExecutionPolicy Bypass -File scripts/start-local.ps1
 
 The tool must be run from the source directory: catalogs, fixtures, and the UI build are not inside the Python package. To use the `vibe-audit` command, run `pip install -e .` in this directory; a wheel copied elsewhere will refuse to start.
 
-Open the URL printed by the launcher terminal (`http://127.0.0.1:8000/#token=…`) and first pick 「合成示範」. The token is only used to establish a session; refreshing the same tab does not need to carry it again, and a new tab should reopen the launcher URL; a backend restart mints a new token, which can be pinned with `VIBEAUDIT_SESSION_TOKEN` (32–256 URL-safe characters). The console can save project/model settings, view the three reviews, threat/requirement/case traceability, evidence and usage, export JSON/Markdown/SARIF, and create remediation retests that preserve the original associations.
+Open the URL printed by the launcher terminal (`http://127.0.0.1:8000/#token=…`) and first pick 「合成示範」 (Synthetic demo in the English interface). The token is only used to establish a session; refreshing the same tab does not need to carry it again, and a new tab should reopen the launcher URL; a backend restart mints a new token, which can be pinned with `VIBEAUDIT_SESSION_TOKEN` (32–256 URL-safe characters). The console can save project/model settings, view the three reviews, threat/requirement/case traceability, evidence and usage, export JSON/Markdown/SARIF, and create remediation retests that preserve the original associations. The English／中文 button at the top right switches the interface language; the browser remembers the choice.
 
 Windows natively does not run live isolated scans. For the real workflow, start on Linux or WSL2 following the [Linux setup guide](docs/LINUX_SETUP.md), using PostgreSQL, Docker, prepared model endpoints, and user-provided isolated staging.
 
@@ -225,119 +239,129 @@ Tool integrations use bounded, fixed cases. This version has no arbitrary site e
 
 ## Architecture Overview
 
-The operator opens the React console in a local browser; every action goes through FastAPI (session, CSRF and Host/Origin checks) into the LangGraph graph in `service.py`. The graph walks white-box review, adjudication, threat modeling, case design, black-box execution and reporting in a fixed order, and each gate is decided by code, not by a model. Black-box requests reach the target only through the independent supervisor and its lease; evidence and traceability are written to PostgreSQL (SQLite for the demo) and then return to the console. Control/data planes and trust boundaries are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md); API and module contracts are in [IMPLEMENTATION.md](IMPLEMENTATION.md).
+The diagram follows what the code actually does. The operator calls FastAPI from the local console; every assessment walks the seven stages of the LangGraph graph in `service.py` in order, and a code gate decides at the end of each stage whether it may continue. Models are called only through `providers.py`; black-box requests reach the target only through the independent supervisor; runs, jobs, leases and evidence are written to `store.py`. Solid lines are control and data flow; dashed lines are model calls, event reporting and side-effect observation. Control/data planes and trust boundaries are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md); API and module contracts are in [IMPLEMENTATION.md](IMPLEMENTATION.md).
 
 ```mermaid
 flowchart TB
-  OP["Operator browser<br/>127.0.0.1:8000/#token=…"] --> UI["React console<br/>frontend/src → frontend/dist"]
-  UI -- "/api/* + cookie + X-CSRF-Token" --> API["FastAPI<br/>api.py (session / CSRF / Host-Origin, runs, SSE, evidence, report)<br/>workspace_api.py (projects, models, catalogs, trace, retest, decision, reconcile)"]
-  API --> SVC["LangGraph orchestration service.py<br/>intake → preflight → whitebox → adjudication → threat_model → case_design → blackbox → report → complete"]
+  OP(["Operator browser"])
+  UI["React console<br/>frontend/src · Chinese/English switch i18n.ts"]
+  API["FastAPI<br/>api.py · workspace_api.py<br/>session / CSRF / Host-Origin checks"]
+  OP --> UI
+  UI -->|"/api/* + X-CSRF-Token"| API
+  API -.->|"SSE progress events"| UI
 
-  subgraph WB["White-box (the only place source is mounted)"]
-    STG["staging.py / snapshot.py<br/>raw private staging and redacted snapshot"]
-    PRV["providers.py (LiteLLM)<br/>3 independent reviewers + 1 challenger round, no fallback"]
-    TR1["sandbox.py + worker_runtime.run_scanner<br/>Semgrep / Gitleaks / OSV isolated scans (deploy/scanners)"]
-    STG --> PRV
-    STG --> TR1
+  subgraph ENG["LangGraph (service.py)"]
+    direction TB
+    S0["① intake / preflight<br/>policy · staging · snapshot<br/>model probes · standards catalog version"]
+    S1["② whitebox<br/>3 reviewers each read the redacted snapshot<br/>scanners read raw staging in parallel"]
+    S2["③ adjudication<br/>evidence union · citation checks<br/>at most 1 challenger round"]
+    S3["④ threat_model<br/>assets · trust boundaries · threats · Requirements<br/>policy.threat_gate checks standard IDs"]
+    S4["⑤ case_design<br/>contracts · fixture_protocol<br/>policy.case_gate"]
+    Q{"Live run with<br/>model-designed cases?"}
+    S6["⑥ blackbox<br/>policy.authorize · worker_runtime"]
+    S7["⑦ report<br/>verify evidence hashes · optional reporter only reorders"]
+    S0 --> S1 --> S2 --> S3 --> S4 --> Q
+    Q -->|"No"| S6
+    S6 --> S7
   end
 
-  subgraph TMC["Threat model and cases"]
-    CAT["catalog.py ← catalogs/*.json<br/>ASVS 5.0.0 / WSTG 4.2 / LLM 2026 / Agentic 2026"]
-    CON["contracts.py / policy.py / domain.py<br/>case contract, case gate, header vocabulary"]
-    FIX["fixture_protocol.py<br/>reset / setup / cleanup, test identities"]
-    APR{"Model-designed cases?<br/>a live run first stops at 'awaiting approval'"}
-    CAT --> CON --> FIX --> APR
+  API -->|"create · start · cancel · resume"| S0
+  Q -->|"Yes: stops at awaiting approval"| AP["Operator reviews and approves in the workbench<br/>POST /runs/{id}/approve-cases"]
+  AP --> S6
+
+  LLM["Model endpoints<br/>providers.py (LiteLLM, no fallback)"]
+  S1 & S2 & S3 & S4 -.-> LLM
+
+  SCAN["Isolated scanner worker<br/>sandbox.py · run_scanner<br/>Semgrep / Gitleaks / OSV"]
+  S1 --> SCAN
+
+  subgraph BOX["Black-box execution"]
+    direction TB
+    SUP["controller + independent supervisor<br/>worker_runtime.py · lease.py"]
+    WK["Docker worker (network none)<br/>worker_entry.py · tool_runners.py"]
+    SUP <-->|"Unix socket relay"| WK
   end
+  S6 --> SUP
+  TGT["Target staging<br/>or fixtures/web-api · ai-agent"]
+  SUP -->|"exact METHOD/path · identity · IP · budget"| TGT
+  TGT -.->|"side effects (fixture path)"| EC["effect_collector.py<br/>event sequence and sink receipts"]
+  EC -.-> SUP
 
-  subgraph BB["Black-box (no source, network none)"]
-    WR["worker_runtime.py<br/>controller + independent supervisor (Unix socket relay, IP pinning, target credentials)"]
-    LS["lease.py<br/>capability / lease ledger"]
-    WE["worker_entry.py<br/>Docker worker (deploy/worker, UID 65533)<br/>ZAP / Schemathesis / Playwright / promptfoo / PyRIT"]
-    EC["effect_collector.py<br/>sequenced events and sink receipts"]
-    WR <--> LS
-    WR <--> WE
-    EC --> WR
-  end
-
-  TGT["Target<br/>fixtures/web-api (TS), fixtures/ai-agent (Python)<br/>or operator-provided isolated staging"]
-
-  subgraph PERSIST["Persistence and results"]
-    ST["store.py<br/>PostgreSQL (production) / SQLite (demo)<br/>runs, jobs, leases, LangGraph checkpoints"]
-    TRC["traceability.py<br/>entity versions and evidence links"]
-    RPT["Reports and evidence envelopes<br/>JSON / Markdown / SARIF"]
-    ST --> TRC --> RPT
-  end
-
-  SVC --> WB
-  WB --> TMC
-  APR -- "operator approves the sealed set" --> BB
-  WR -- "exact METHOD/path, identity, IP, budget" --> TGT
-  TGT --> EC
-  SVC <--> ST
-  BB --> ST
-  RPT --> API
-
-  BM["benchmark.py / benchmark_matching.py<br/>benchmarks/: seven fair-budget arms (plumbing only)"]
-  SVC -.-> BM
+  DB[("store.py + traceability.py<br/>runs · jobs · leases · evidence<br/>PostgreSQL (production) / SQLite (demo)")]
+  ENG <--> DB
+  API <-->|"read runs and evidence<br/>export JSON / Markdown / SARIF"| DB
 ```
 
-| Stage | Main modules | Output and gate |
+| Stage | Main modules | What it does and what gates it |
 |---|---|---|
-| intake / preflight | `api.py`, `policy.py`, `staging.py`, `resource_manifest.py` | Immutable manifest, frozen source digest, model endpoint probe, credential and target-IP preflight |
-| whitebox | `snapshot.py`, `providers.py`, `sandbox.py`, `worker_runtime.py` | Three sealed independent reviews, Semgrep/Gitleaks/OSV evidence; reviewers see neither each other nor scanner results |
-| adjudication | `service.py`, `providers.py` | Evidence union, source-citation verification, at most one challenger round; no majority vote |
-| threat_model | `catalog.py`, `contracts.py`, `traceability.py` | Assets / data flows / trust boundaries / threats / Requirements bound to canonical standard IDs and versions |
-| case_design | `contracts.py`, `policy.py`, `fixture_protocol.py` | Traceable fixed cases with positive controls and oracles; model-designed cases need operator approval |
-| blackbox | `worker_runtime.py`, `lease.py`, `worker_entry.py`, `tool_runners.py`, `effect_collector.py`, `adapters.py` | Supervised controlled requests, independent observations and sink receipts; pass/fail/inconclusive/blocked/execution_error/outcome_unknown |
-| report / complete | `service.py`, `store.py`, `traceability.py` | Hash-verified evidence envelopes, trace graph, JSON/Markdown/SARIF export, linked retests |
+| ① intake / preflight | `api.py`, `policy.py`, `staging.py`, `snapshot.py`, `providers.py`, `catalog.py` | Creates the immutable manifest; copies the raw private staging and builds the redacted snapshot; probes model endpoints; records the standards catalog version; checks credential bindings and target IPs |
+| ② whitebox | `providers.py`, `snapshot.py`, `sandbox.py`, `worker_runtime.py` | 3 reviewers read the same redacted snapshot in parallel and each review is sealed; Semgrep / Gitleaks / OSV scan the raw staging in isolated workers at the same time; `policy.whitebox_gate` |
+| ③ adjudication | `service.py`, `providers.py` | Keeps the union of all claims, checks source citations, at most 1 challenger round; no majority vote |
+| ④ threat_model | `service.py`, `providers.py`, `policy.py`, `catalog.py` | Builds assets, trust boundaries, data flows, threats and Requirements; `policy.threat_gate` checks standard IDs and versions |
+| ⑤ case_design | `contracts.py`, `adapters.py`, `fixture_protocol.py`, `policy.py` | Fixed cases written by the operator or designed by a model; header names are canonicalized; `policy.case_gate` checks traceability, oracles, scope and identities |
+| Approval | `api.py` (approve-cases) | A live run with model-designed cases stops at awaiting approval; the first request goes out only after the operator approves that sealed set |
+| ⑥ blackbox | `policy.py`, `worker_runtime.py`, `lease.py`, `worker_entry.py`, `tool_runners.py`, `adapters.py`, `fixture_protocol.py`, `effect_collector.py` | Every request is checked by the supervisor for lease, method/path, identity, IP and budget before it reaches the target; results are pass / fail / inconclusive / blocked / execution_error / outcome_unknown |
+| ⑦ report | `service.py`, `store.py`, `traceability.py` | Verifies evidence hashes; an optional reporter can only reorder existing findings; the API exports JSON, Markdown (Chinese or English) and SARIF |
 
 ### Repository Layout
 
 ```text
 MultiAgentBeta/
 ├── backend/vibe_audit/            # Python package (pip install -e . provides the vibe-audit command)
-│   ├── __main__.py                #   starts uvicorn on 127.0.0.1 and prints the launch URL
-│   ├── api.py                     #   FastAPI: session/CSRF/Host-Origin, /api/runs, SSE, evidence, report, static UI
-│   ├── workspace_api.py           #   /api/projects, /models, /catalogs, trace, retest, decision, reconcile
-│   ├── service.py                 #   LangGraph orchestration, stages, gates, Markdown/SARIF reports
-│   ├── providers.py               #   LiteLLM model calls, credential origin binding, no fallback
-│   ├── staging.py / snapshot.py   #   raw private staging and redacted snapshot
-│   ├── sandbox.py                 #   white-box scanner (Semgrep/Gitleaks/OSV) paths, bounds and result parsing
-│   ├── tool_runners.py            #   fixed black-box tool runs: ZAP/Schemathesis/Playwright/promptfoo/PyRIT
-│   ├── catalog.py                 #   canonical standard IDs and source pins
-│   ├── contracts.py / policy.py   #   case contract, gates, header vocabulary, credential rules
+│   ├── __main__.py                #   starts uvicorn (127.0.0.1 only) and prints the URL with the token
+│   ├── api.py                     #   FastAPI: session/CSRF/Host-Origin, runs, approve-cases, SSE, evidence, reports, static UI
+│   ├── workspace_api.py           #   projects, model templates, standards catalog, trace, retest, decisions, cleanup attestation
+│   ├── service.py                 #   the seven LangGraph stages, gate calls, Markdown/SARIF reports
+│   ├── providers.py               #   LiteLLM model calls and probes, credential origin binding, no fallback
+│   ├── messages.py                #   Traditional Chinese wording of error messages (detail_zh, error_zh)
+│   ├── diagnostics.py             #   local diagnostics: failures reported in fixed words log their type and location (vibe-audit.log)
+│   ├── settings.py                #   the backend process's VIBEAUDIT_* settings, read and checked once (token, data dir, database, console origins, source roots, catalog and config paths)
+│   ├── staging.py / snapshot.py   #   raw private staging (for scanners) and redacted snapshot (for models)
+│   ├── sandbox.py                 #   white-box scanner path checks, bounds and result parsing
+│   ├── catalog.py                 #   standard IDs and source pins
+│   ├── contracts.py / policy.py   #   case contract; manifest, white-box, threat and case gates, authorize
 │   ├── domain.py / schemas.py     #   data model and JSON schemas
-│   ├── adapters.py                #   controlled HTTP transport, IP pinning, oracle evaluation
+│   ├── adapters.py                #   controlled HTTP transport, IP pinning, header rules, oracle evaluation
 │   ├── fixture_protocol.py        #   reset/setup/cleanup protocol, test identities
-│   ├── worker_runtime.py          #   controller + independent supervisor, Unix socket relay
-│   ├── worker_entry.py            #   Docker worker entry point
+│   ├── effect_collector.py        #   independent event sequence and sink receipts
+│   ├── worker_runtime.py          #   controller + independent supervisor, run_scanner, run_case
+│   ├── worker_entry.py            #   supervisor and Docker worker entry points, Unix socket relay
+│   ├── tool_runners.py            #   fixed black-box tool runs: ZAP/Schemathesis/Playwright/promptfoo/PyRIT
 │   ├── lease.py                   #   capability/lease ledger, renewal and revocation
-│   ├── effect_collector.py        #   independent sequenced events and sink receipts
 │   ├── store.py / traceability.py #   PostgreSQL/SQLite storage, versioned entities and evidence links
-│   ├── resource_manifest.py       #   resource version records
-│   ├── benchmark.py / benchmark_matching.py  # comparative-evaluation runner and result matching
-│   └── tokenizers/                #   offline tiktoken vocabulary
+│   ├── resource_manifest.py       #   scanner resource version records
+│   ├── benchmark.py / benchmark_matching.py  # separate comparative-evaluation tool (not part of an assessment)
+│   └── tokenizers/                #   offline tiktoken vocabulary and license
 ├── frontend/                      # React + TypeScript + Vite console
-│   ├── src/                       #   App.tsx, api.ts, types.ts, extensions.tsx, main.tsx
-│   ├── dist/                      #   built UI, served by FastAPI on the same origin
-│   └── scripts/                   #   browser-smoke, contract-smoke
-├── tests/                         # pytest (engine, providers, worker_runtime, lease, sandbox, local_pipeline, …)
-├── catalogs/                      # ASVS 5.0.0, WSTG 4.2, LLM 2026, Agentic 2026 canonical JSON, manifest, source-lock
+│   ├── src/                       #   App.tsx (shell), run-detail.tsx, create-form.tsx, capabilities.tsx (the three screens), ui.tsx (shared pieces and labels), extensions.tsx, api.ts, types.ts, i18n.ts (language switch), messages.ts (engine messages in Chinese), styles
+│   ├── tests/                     #   vitest unit and component tests (happy-dom simulated browser, no backend)
+│   ├── scripts/                   #   contract-smoke, browser-smoke, check-i18n, check-messages
+│   └── dist/                      #   built UI, served by FastAPI on the same origin
+├── tests/                         # pytest (27 files, including test_bilingual_docs.py for bilingual docs and the Hypothesis property tests in test_properties.py)
+├── catalogs/                      # ASVS 5.0.0, WSTG 4.2, LLM 2026, Agentic 2026 standard JSON and manifest
 │   └── sources/                   #   original standard content and licenses
-├── fixtures/                      # synthetic targets
-│   ├── web-api/                   #   TypeScript Web API (BOLA case)
-│   └── ai-agent/                  #   Python AI agent target
+├── fixtures/                      # scanner rules and settings (Semgrep, Gitleaks, OSV)
+│   ├── web-api/                   #   TypeScript Web API synthetic target (BOLA case)
+│   └── ai-agent/                  #   Python AI agent synthetic target
 ├── deploy/                        # postgres.compose.yml
-│   ├── worker/                    #   worker Dockerfile, tool image locks, runtime.example.json
+│   ├── worker/                    #   worker and tool image Dockerfiles, locks, runtime.example.json
 │   └── scanners/                  #   Gitleaks and OSV images
 ├── benchmarks/                    # comparison design, synthetic-v1, examples/, results-local/, results-synthetic/
-├── docs/                          # ARCHITECTURE, LINUX_SETUP, DELIVERY, VALIDATION, DOCKER_INTEGRATION_TESTING, VIBESEC_ADVISORIES, SOURCES, schema, validation records (XML/JSON), history/
-├── scripts/                       # setup/start-local, verify, provision-runtime/offline-db, package-release, hash-lock, refresh-catalog
-├── .github/workflows/ci.yml       # backend (pytest + PostgreSQL + SSR/API smoke), frontend (typecheck, build, dist diff, manifest), dependency audit, weekly Docker isolation tests
+├── docs/                          # ARCHITECTURE, LINUX_SETUP, DOCKER_INTEGRATION_TESTING, VALIDATION, DELIVERY, SOURCES,
+│                                  #   VIBESEC_ADVISORIES, threat-model.yaml, run-input.schema.json, receipts, screenshots, history/
+├── scripts/                       # setup/start-local, verify, contract-smoke, provision-runtime/offline-db, package-release, hash-lock,
+│                                  #   redact-receipts, summarize-validation, refresh-catalog, render-sample-report, mutation-test, dependency-drift
+├── .github/workflows/ci.yml       # backend (Python 3.12/3.13: ruff, pytest + PostgreSQL, contract smoke) and frontend (typecheck, check:i18n, check:messages, build parity, manifest)
+├── .github/workflows/integration.yml  # Docker worker, scanner, tool, fixture and full-pipeline integration tests on images built from deploy/
+├── .github/workflows/mutation.yml     # mutmut mutation testing: every mutant of the gate and parser modules must be caught (scripts/mutation-test.py)
+├── .github/workflows/mutation-pr.yml  # a pull request mutates only the functions it changed (scripts/mutation-test.py --changed)
+├── .github/workflows/dependency-drift.yml  # weekly: pins behind their registries and OSV advisories (scripts/dependency-drift.py)
+├── .claude/                       # SessionStart hook for cloud sessions (excluded from releases)
+├── CLAUDE.md                      # development guide (excluded from releases)
 ├── IMPLEMENTATION.md              # API and module contracts
 ├── README.md · LICENSE · NOTICE
-├── pyproject.toml · requirements.lock.txt   # pinned dependencies (hash-checked)
-└── source-manifest.sha256         # source file hash list (scripts/package-release.py)
+├── pyproject.toml · requirements.lock.txt · requirements.mutation.lock.txt   # pinned, hash-checked dependencies; the second only for mutation testing
+└── source-manifest.sha256         # hash list of every tracked file (scripts/package-release.py)
 ```
 
 ## Security Policy
@@ -350,19 +374,21 @@ MultiAgentBeta/
 - White-box raw staging is kept separate from the redacted snapshot used by models. The staging copy contains sensitive files and is deleted at the end of every run (including blocked, failed, and cancelled) and at service startup; on resume it is re-copied and must be exactly identical to the frozen state. Source reads are capped, and redaction and route extraction are heuristic; skipped directories (build, dist, node_modules, .git, symlink), unread files, and unknown business rules remain as gaps.
 - Textual claims, HTTP status codes, scanner exit 0, and model consensus cannot alone prove security. Control or observation failures cannot be judged as passes.
 - Interruptions after submission are marked outcome_unknown and are not replayed automatically. Stopping revokes network access first; unconfirmed cleanup still shows as incomplete.
-- loopback single-user session: establishing a session requires the launcher token (other processes on the same machine cannot obtain a session on their own and then probe models or read evidence). Cookies are not port-scoped, so every API request (including reads) additionally requires a CSRF token that exists only in that tab's sessionStorage; other local services the browser has opened cannot use it even if they obtain the cookie. Host/Origin protections are also in place, and every /api route checks the session and CSRF token itself rather than relying on the middleware alone. At most 8 sessions exist at once; a session ends after 1 hour idle or 8 hours, and the workbench can log out; the API can end every session at once, which also replaces a generated startup token and prints the new one. Each recent wrong startup token slows the next wrong answer (up to 5 seconds); the right token is never held back. A custom VIBEAUDIT_SESSION_TOKEN must be random (for example `python -c "import secrets; print(secrets.token_urlsafe(32))"`); repeated characters or patterns are refused. On Linux the data directory (VIBEAUDIT_DATA_DIR) is owner-only (0700), and the service does not start if it cannot be made so; Windows runs only the synthetic demo, and the directory keeps the ACL it inherits. Tested text is presented as untrusted data. Do not expose the console directly to the internet.
+- loopback single-user session: establishing a session requires the launcher token (other processes on the same machine cannot obtain a session on their own and then probe models or read evidence). Cookies are not port-scoped, so every API request (including reads) additionally requires a CSRF token that exists only in that tab's sessionStorage; other local services the browser has opened cannot use it even if they obtain the cookie. Host/Origin protections are also in place, and every /api route checks the session and CSRF token itself rather than relying on the middleware alone. At most 8 sessions exist at once; a session ends after 1 hour idle or 8 hours, and the workbench can log out; the API can end every session at once, which also replaces a generated startup token and prints the new one. Each recent wrong startup token slows the next wrong answer (up to 5 seconds); the right token is never held back. A custom VIBEAUDIT_SESSION_TOKEN must be random (for example `python -c "import secrets; print(secrets.token_urlsafe(32))"`); repeated characters or patterns are refused. On Linux the data directory (VIBEAUDIT_DATA_DIR) is owner-only (0700), and the service does not start if it cannot be made so; a failure the API or a report describes in fixed words is explained by its exception type and code location (never its message or values) in vibe-audit.log inside the data directory (0600), which stays on this machine; Windows runs only the synthetic demo, and the directory keeps the ACL it inherits. Tested text is presented as untrusted data. Do not expose the console directly to the internet.
 
 Containers, the database, and control-process administrators are trust boundaries; this tool cannot restrict all outbound traffic from external staging, nor can it guarantee finding all vulnerabilities.
 
 ## Documentation and Development
 
 - [Deployment and configuration](docs/LINUX_SETUP.md)
+- [Docker integration testing](docs/DOCKER_INTEGRATION_TESTING.md) / [Worker images](deploy/worker/README.md)
+- [Frontend build and connection behavior](frontend/README.md)
 - [Architecture and methodology](docs/ARCHITECTURE.md)
 - [API and module contracts](IMPLEMENTATION.md)
 - [Delivery comparison](docs/DELIVERY.md) / [Validation log](docs/VALIDATION.md)
 - [Bias-reduction comparison design](benchmarks/README.md)
 - [Sources and license](docs/SOURCES.md) / [NOTICE](NOTICE)
-- [Synthetic sample report](docs/sample-report.md)
+- [Synthetic sample report (Chinese and English)](docs/sample-report.md)
 
 ```powershell
 $env:PYTHONPATH = 'backend'
@@ -371,4 +397,6 @@ cd frontend
 npm.cmd run build
 ```
 
-Without a test environment with Linux/PostgreSQL/pinned images, the corresponding integration tests explicitly skip. Skipped must not be treated as verification passed. The core is Apache-2.0; external tools, rules, models, and standard content retain their original licenses.
+Without a test environment with Linux/PostgreSQL/pinned images, the corresponding integration tests explicitly skip. Skipped must not be treated as verification passed.
+
+Mutation testing (Linux, offline): `python -m pip install --require-hashes -r requirements.mutation.lock.txt`, then `python scripts/mutation-test.py`. mutmut changes one operator, constant or branch of `policy.py`, `adapters.py`, `catalog.py`, `lease.py`, `snapshot.py` and `messages.py` at a time and runs the unit tests that cover that function (the end-to-end suites are left out for run time; ci.yml still runs them); a change the tests still pass, or that no test reaches, is a blind spot: the script lists them and exits non-zero when any module exceeds the ceiling recorded in `tests/mutation-baseline.json`. `tests/test_properties.py` checks properties of the pure functions (redaction, origin parsing, hashes, IP rules, message table, route extraction, header checks) over inputs Hypothesis generates, offline as well. The lease tests run once on SQLite and once on PostgreSQL (when `VIBEAUDIT_TEST_DATABASE_URL` is set; each test gets its own database), so a lock or clock change that only shows on PostgreSQL is caught too. `.github/workflows/mutation.yml` does the same weekly; on a pull request `.github/workflows/mutation-pr.yml` runs `python scripts/mutation-test.py --changed origin/main`, which mutates only the functions the diff touched and lets none of them exceed the count the baseline records for it (a new function must let none), so the answer arrives in minutes. Both workflows are off by default: they run on their own only when the repository variable `VIBEAUDIT_MUTATION` is `true`; a manual dispatch always runs. Dependency drift (needs the network): `python scripts/dependency-drift.py` reads both Python lock files and `frontend/package-lock.json`, asks PyPI and the npm registry for the latest release and OSV for advisories against the pinned versions, and prints a Markdown report (`--all` lists every pin, `--json` the data); it exits non-zero only for an advisory and upgrades nothing. `.github/workflows/dependency-drift.yml` writes the report to the job summary weekly. The core is Apache-2.0; external tools, rules, models, and standard content retain their original licenses.

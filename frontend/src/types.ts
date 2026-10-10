@@ -42,12 +42,13 @@ export interface TestCase {
   oracle: {kind: string; forbidden_text: string[]; allowed_statuses: number[]; required_observations: string[]; expected_role: string | null};
   cleanup: unknown; side_effects: boolean; repetitions: number; observation_mode: string; source_digest: string; threat_model_hash: string; hash: string;
 }
+export type RunSummary = Pick<Run, 'id'|'name'|'mode'|'status'|'stage'|'created_at'|'updated_at'|'usage'|'usage_unknown'|'error'|'error_zh'|'workers_pending_cleanup'|'deployment_changed'>;
 export interface Run {
   id: string; name: string; mode: string; status: string; stage: string; created_at: string; updated_at: string;
   manifest: RunInput; events: AuditEvent[]; reviews: Review[]; threat_model: ThreatModel | null; cases: TestCase[];
   executions: Record<string,unknown>[]; findings: Finding[]; gaps: unknown[]; limitations?: string[]; usage: {requests:number;model_calls:number;tokens:number};
-  artifacts: unknown[]; error: unknown; workers_pending_cleanup?: boolean; usage_unknown?: boolean; deployment_changed?: boolean;
+  artifacts: unknown[]; error: unknown; error_zh?: string | null; workers_pending_cleanup?: boolean; usage_unknown?: boolean; deployment_changed?: boolean;
   gate_receipts?: Record<string,string>; case_approval?: {receipt:string; actor:string; approved_at:string; evidence_id:string};
 }
-export interface Capabilities { tools: {id:string;available:boolean;status:string;detail:string}[]; runtime: Record<string,unknown>; limitations: string[] }
-export interface Session { csrf_token: string; mode: string; limitations: string[] }
+export interface Capabilities { tools: {id:string;available:boolean;status:string;detail:string;detail_en?:string}[]; runtime: Record<string,unknown>; limitations: string[]; limitations_zh?: string[] }
+export interface Session { csrf_token: string; mode: string; limitations: string[]; limitations_zh?: string[] }

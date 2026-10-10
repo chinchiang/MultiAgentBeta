@@ -1,3 +1,4 @@
+import { t } from './i18n';
 // Cookies reach every port on this host, so the session cookie alone opens nothing. Every request also
 // carries the CSRF token, kept in this page's port-scoped sessionStorage so a reload needs no startup token.
 const CSRF_KEY = 'vibeaudit.csrf';
@@ -29,17 +30,22 @@ function headers(path: string, json: boolean): Record<string, string> {
   else if (csrfToken) result['X-CSRF-Token'] = csrfToken;
   return result;
 }
+/** A service error that reads in the console's current language: `detail_zh` is the Chinese wording of `detail`, when the service has one. */
+class ServiceError extends Error {
+  constructor(private readonly zh: string, private readonly en: string) { super(); }
+  override get message() { return t(this.zh, this.en); }
+}
 async function failure(response: Response): Promise<Error> {
   let data: unknown;
-  try { data = await response.json(); } catch { return new Error(`無法讀取服務回應（HTTP ${response.status}）。請確認本地 API 已啟動。`); }
-  const detail = (data as {detail?: unknown})?.detail;
+  try { data = await response.json(); } catch { return new Error(t(`無法讀取服務回應（HTTP ${response.status}）。請確認本地 API 已啟動。`,`Cannot read the service response (HTTP ${response.status}). Make sure the local API is running.`)); }
+  const { detail, detail_zh } = (data ?? {}) as {detail?: unknown; detail_zh?: unknown};
   // FastAPI reports a rejected body as a list of {loc, msg}; show each field and reason, not raw JSON.
-  if (Array.isArray(detail)) return new Error(detail.map(item => {
+  const en = typeof detail === 'string' ? detail : Array.isArray(detail) ? detail.map(item => {
     const {loc, msg} = (item ?? {}) as {loc?: unknown[]; msg?: unknown};
     const field = Array.isArray(loc) ? loc.filter(part => part !== 'body').join('.') : '';
-    return `${field ? field + '：' : ''}${typeof msg === 'string' ? msg : JSON.stringify(item)}`;
-  }).join('；'));
-  return new Error(typeof detail === 'string' ? detail : JSON.stringify(detail ?? data));
+    return `${field ? field + ': ' : ''}${typeof msg === 'string' ? msg : JSON.stringify(item)}`;
+  }).join('; ') : JSON.stringify(detail ?? data);
+  return new ServiceError(typeof detail_zh === 'string' ? detail_zh : en, en);
 }
 export async function api<T>(path: string, body?: unknown, method: 'GET'|'POST'|'PUT' = body === undefined ? 'GET' : 'POST'): Promise<T> {
   const response = await fetch(`/api${path}`, {
@@ -50,10 +56,10 @@ export async function api<T>(path: string, body?: unknown, method: 'GET'|'POST'|
   });
   if (path === '/session' && response.status === 401) {
     setCSRF('');
-    throw new Error('需要啟動權杖：請開啟本地服務啟動時印出的完整網址（含 #token=…）。');
+    throw new Error(t('需要啟動權杖：請開啟本地服務啟動時印出的完整網址（含 #token=…）。','A startup token is needed: open the full URL (with #token=…) that the local service printed when it started.'));
   }
   if (!response.ok) throw await failure(response);
-  try { return await response.json() as T; } catch { throw new Error(`無法讀取服務回應（HTTP ${response.status}）。請確認本地 API 已啟動。`); }
+  try { return await response.json() as T; } catch { throw new Error(t(`無法讀取服務回應（HTTP ${response.status}）。請確認本地 API 已啟動。`,`Cannot read the service response (HTTP ${response.status}). Make sure the local API is running.`)); }
 }
 // A plain link cannot send the CSRF header, so exports are fetched and handed to the browser as a file.
 export async function download(path: string, filename: string): Promise<void> {

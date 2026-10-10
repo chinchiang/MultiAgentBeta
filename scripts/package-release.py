@@ -16,6 +16,9 @@ ROOT = Path(__file__).resolve().parents[1]
 VERSION = "0.2.1"
 MANIFEST = "source-manifest.sha256"
 PRIVATE = (".env", "local-secrets.", ".data")
+# Claude Code configuration for cloud sessions is committed but is not part of the product.
+AGENT_STATE = (".claude",)
+AGENT_NOTES = ("CLAUDE.md",)
 
 
 def deliverables(root=ROOT):
@@ -23,7 +26,8 @@ def deliverables(root=ROOT):
     tracked = subprocess.run(["git", "ls-files", "-z"], cwd=root, capture_output=True, check=True).stdout.decode("utf-8").split("\0")
     built = [p.relative_to(root).as_posix() for p in (root/"frontend"/"dist").rglob("*")]
     names = {name for name in tracked+built if name and name != MANIFEST and (root/name).is_file() and not (root/name).is_symlink()
-             and not any(part.startswith(PRIVATE) for part in PureWindowsPath(name).parts)}
+             and not any(part.startswith(PRIVATE) or part in AGENT_STATE for part in PureWindowsPath(name).parts)
+             and name not in AGENT_NOTES}
     return sorted(names, key=PureWindowsPath)
 
 

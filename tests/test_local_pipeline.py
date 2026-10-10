@@ -2,7 +2,6 @@
 
 This validates wiring, stage gates and durability; it does not measure any LLM.
 """
-import asyncio
 import copy
 import json
 import os

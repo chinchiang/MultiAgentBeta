@@ -11,47 +11,18 @@ if [ -n "${VIBEAUDIT_JUNIT_XML:-}" ]; then
 else
   "$python_executable" -m pytest tests -q -rs
 fi
-# Like verify.ps1: the committed UI must build from the committed sources.
+# Lint: unused names and imports, syntax errors and the bugbear mistakes (rules in pyproject.toml).
+"$python_executable" -m ruff check backend tests scripts
+# Like verify.ps1: the committed UI must build from the committed sources, and every visible string and engine
+# message must read in both languages.
 if [ -d frontend/node_modules ]; then
-  (cd frontend && npm run typecheck && npm run build)
+  (cd frontend && npm run typecheck && npm test && npm run check:i18n && npm run check:messages && npm run build)
 else
   printf '%s\n' 'frontend/node_modules missing: run npm ci in frontend to type-check and rebuild the UI; the manifest check below still compares frontend/dist.' >&2
 fi
 # Like verify.ps1: the SSR/API contract smoke runs against a real backend on loopback.
 if command -v node >/dev/null 2>&1 && [ -d frontend/node_modules ]; then
-  smoke_port="${VIBEAUDIT_SMOKE_PORT:-8002}"
-  smoke_token=$("$python_executable" -c 'import secrets;print(secrets.token_hex(32))')
-  smoke_log=$(mktemp)
-  smoke_cleaned=''
-  smoke_cleanup() {
-    [ -n "$smoke_cleaned" ] && return
-    smoke_cleaned=1
-    kill "$smoke_pid" 2>/dev/null || true
-    wait "$smoke_pid" 2>/dev/null || true
-    rm -f "$smoke_log"
-  }
-  trap smoke_cleanup EXIT
-  VIBEAUDIT_SESSION_TOKEN="$smoke_token" "$python_executable" -m vibe_audit --port "$smoke_port" >"$smoke_log" 2>&1 &
-  smoke_pid=$!
-  smoke_ready=''
-  i=0
-  while [ "$i" -lt 40 ]; do
-    if "$python_executable" -c 'import socket,sys; s=socket.socket(); s.settimeout(1); sys.exit(0 if s.connect_ex(("127.0.0.1", int(sys.argv[1]))) == 0 else 1)' "$smoke_port"; then
-      smoke_ready=1
-      break
-    fi
-    kill -0 "$smoke_pid" 2>/dev/null || break
-    i=$((i + 1))
-    sleep 0.5
-  done
-  if [ -n "$smoke_ready" ]; then
-    VIBEAUDIT_SESSION_TOKEN="$smoke_token" node frontend/scripts/contract-smoke.mjs --base-url "http://127.0.0.1:$smoke_port"
-  else
-    cat "$smoke_log" >&2
-    printf 'Backend did not open port %s for the SSR/API contract smoke.\n' "$smoke_port" >&2
-    exit 1
-  fi
-  smoke_cleanup
+  VIBEAUDIT_PYTHON="$python_executable" sh scripts/contract-smoke.sh
 else
   printf '%s\n' 'node or frontend/node_modules missing: the SSR/API contract smoke was skipped; run npm ci in frontend to include it.' >&2
 fi

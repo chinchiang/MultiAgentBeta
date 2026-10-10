@@ -4,7 +4,6 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import signal
 import socket
 import subprocess
 import sys
@@ -13,7 +12,7 @@ import time
 import uuid
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 import pytest
-from vibe_audit.lease import canonical_hash,LeaseStore
+from vibe_audit.lease import canonical_hash,LeaseStore,placeholders
 from vibe_audit.worker_runtime import WorkerRuntime,WorkerBlocked,docker_command
 
 
@@ -95,7 +94,7 @@ async def test_sustained_lease_outage_fails_closed_after_three_strikes(tmp_path,
         # outage under test begins once a worker exists, not before it can start.
         def fail_once_claimed(capability,*args,**kwargs):
             with rt.leases.lock:
-                row=rt.leases._sql("SELECT state FROM worker_leases WHERE id=?",(capability["id"],)).fetchone()
+                row=rt.leases._sql(placeholders("SELECT state FROM worker_leases WHERE id=?",rt.leases.postgres),(capability["id"],)).fetchone()
             if row and row[0]=="active": raise RuntimeError("lease database unavailable")
             return real(capability,*args,**kwargs)
         monkeypatch.setattr(rt.leases,"renew",fail_once_claimed)
@@ -886,7 +885,9 @@ def test_a_trickling_target_cannot_hold_a_request_past_its_deadline(runtime,monk
                                      max_requests=5,ttl_seconds=5,max_seconds=30,operation="http_case",repetition=0,spec_hash="s")
         runtime.leases.claim(sup.cap,"w")
         started=time.monotonic()
-        with pytest.raises(Exception):
+        import http.client
+        from vibe_audit.worker_entry import Unusable
+        with pytest.raises((Unusable,OSError,http.client.HTTPException)):
             sup.forward("GET","/private",{},None,time.monotonic()+1)
         assert time.monotonic()-started<4
     finally:

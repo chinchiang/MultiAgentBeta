@@ -452,8 +452,38 @@ class TargetAddressTests(unittest.TestCase):
         self.assertIsNone(hit("http://127.0.0.1:9000", ["127.0.0.1"], [*console, database]))
         self.assertIsNone(hit("http://10.0.0.5:8000", ["10.0.0.5"], console))
         self.assertIsNone(hit("http://127.0.0.1:5432", ["127.0.0.1"], ["postgresql:///vibeaudit?host=/run/postgresql", ""]))
-        with self.assertRaises(adapters.AdapterBlocked):
+        with self.assertRaisesRegex(adapters.AdapterBlocked, "explicit IP addresses"):
             hit("http://127.0.0.1:9000", ["localhost"], console)
+        # No allowlist yet is no hit; an unparsable endpoint is skipped, not the end of the search.
+        self.assertIsNone(adapters.control_plane_target({"target_url": "http://127.0.0.1:8000"}, console))
+        self.assertEqual(hit("http://127.0.0.1:8000", ["127.0.0.1"], ["http://[::1", *console]), "127.0.0.1:8000")
+        self.assertEqual(hit("http://[::1]:8000", ["::1"], ["http://[::1]:8000"]), "[::1]:8000")
+
+    def test_pinned_address_resolves_names_inside_the_allowlist_only(self):
+        calls = []
+        def fake_getaddrinfo(host, port, **kwargs):
+            calls.append((host, port, kwargs))
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("203.0.113.5", port))]
+        with patch.object(adapters.socket, "getaddrinfo", fake_getaddrinfo):
+            self.assertEqual(adapters._pinned_address("example.test", 443, ["203.0.113.5", "203.0.113.6"]), "203.0.113.5")
+            with self.assertRaisesRegex(adapters.AdapterBlocked, "outside the exact target IP allowlist"):
+                adapters._pinned_address("example.test", 443, ["203.0.113.6"])
+        self.assertEqual(calls, [("example.test", 443, {"type": socket.SOCK_STREAM})] * 2)
+        # A literal address never touches DNS, and the lowest address of a set is the one dialled.
+        with patch.object(adapters.socket, "getaddrinfo", side_effect=AssertionError("no DNS for a literal")):
+            self.assertEqual(adapters._pinned_address("10.0.0.5", 80, ["10.0.0.5"]), "10.0.0.5")
+            with self.assertRaisesRegex(adapters.AdapterBlocked, "outside the exact target IP allowlist"):
+                adapters._pinned_address("10.0.0.7", 80, ["10.0.0.5"])
+        for allowed, message in [("10.0.0.5", "explicit IP addresses"), ([10], "explicit IP addresses"), (["10.0.0.0/8"], "explicit IP addresses"),
+                                 ([], "No target IP addresses"), (["169.254.169.254"], "cloud metadata")]:
+            with self.assertRaisesRegex(adapters.AdapterBlocked, message):
+                adapters._pinned_address("10.0.0.5", 80, allowed)
+
+    def test_one_of_matches_whole_listed_values_only(self):
+        pattern = adapters._one_of(["a", "b.c"])
+        self.assertTrue(pattern.fullmatch("b.c") and pattern.fullmatch("a"))
+        self.assertIsNone(pattern.fullmatch("bxc"))
+        self.assertIsNone(pattern.fullmatch("a|b.c"))
 
 
 class StateChangeTests(unittest.TestCase):
@@ -473,6 +503,25 @@ class ToolCapabilityTests(unittest.TestCase):
             capabilities = adapters.tool_capabilities()
         scanners = [c for c in capabilities if c["id"] in {"semgrep", "osv", "gitleaks", "zap", "schemathesis", "playwright", "promptfoo", "pyrit"}]
         self.assertTrue(all(c["cli_detected"] and not c["available"] for c in scanners))
+
+    def test_capability_list_is_fixed(self):
+        capabilities = adapters.tool_capabilities()
+        self.assertEqual([c["id"] for c in capabilities], ["semgrep", "osv", "gitleaks", "zap", "schemathesis", "playwright", "promptfoo", "pyrit", "synthetic_demo", "tool_effect_collector"])
+        self.assertEqual({(c["available"], c["status"], c["implemented"]) for c in capabilities[:8]}, {(False, "implemented_requires_runtime", True)})
+        self.assertEqual({c["detail"] for c in capabilities[:8]}, {"Adapter 已實作；尚未配置可驗證的 Linux 隔離執行環境與固定工具映像。"})
+        self.assertEqual({c["detail_en"] for c in capabilities[:8]}, {"Adapter implemented; no verifiable isolated Linux runtime or pinned tool image is configured yet."})
+        self.assertEqual(capabilities[8], {"id": "synthetic_demo", "available": True, "status": "synthetic_only", "implemented": True,
+                                           "detail": "可執行本地合成流程；不會呼叫真實模型或驗證其偵測品質。",
+                                           "detail_en": "Runs the local synthetic flow; it calls no real model and does not verify detection quality."})
+        self.assertEqual(capabilities[9], {"id": "tool_effect_collector", "available": False, "status": "target_binding_required", "implemented": True,
+                                           "detail": "獨立事件及副作用收集器已實作；實際目標必須配置可信 binding，無觀測時不判定通過。",
+                                           "detail_en": "Independent event and side-effect collector implemented; a real target needs a trusted binding, and nothing passes without an observation."})
+
+    def test_every_capability_explains_itself_in_chinese_and_english(self):
+        # The console shows detail or detail_en depending on the language the operator chose.
+        for capability in adapters.tool_capabilities():
+            self.assertRegex(capability["detail"], "[\u4e00-\u9fff]")
+            self.assertTrue(capability["detail_en"].isascii() and capability["detail_en"].strip())
 
 
 if __name__ == "__main__":

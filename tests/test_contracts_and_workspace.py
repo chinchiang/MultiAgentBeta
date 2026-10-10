@@ -10,11 +10,11 @@ from fastapi.testclient import TestClient
 
 from vibe_audit.api import create_app
 from vibe_audit.contracts import ChallengeItem, complete_requirements, verify_source_references
-from vibe_audit.domain import RunInput
+from vibe_audit.domain import RunInput, new_run
 from vibe_audit.policy import PolicyError, sealed
 from vibe_audit.service import Engine
 from vibe_audit.staging import discard_staging, stage_source, verify_staging
-from vibe_audit.store import Store
+from vibe_audit.store import RunNotFound, Store, placeholders
 
 
 @pytest.fixture(autouse=True)
@@ -244,8 +244,6 @@ async def test_graph_and_job_commit_rollback_is_atomic(tmp_path,monkeypatch,back
         return execute(sql,args)
     monkeypatch.setattr(store,"_execute",fail)
     run["name"]="must rollback"
-    # A save writes only versions it has not written yet, so the failure needs a changed entity.
-    run["findings"][0]["title"]="must rollback"
     with pytest.raises(RuntimeError,match="Injected"):
         store.finish_job(job,{"status":"pass"},run)
     assert store.get(run["id"])["name"]==original["name"]
@@ -254,6 +252,34 @@ async def test_graph_and_job_commit_rollback_is_atomic(tmp_path,monkeypatch,back
     restarted=Engine(store,url)
     with pytest.raises(PolicyError,match="outcome_unknown"):
         restarted.start(run["id"],resume=True)
+    store.close()
+
+
+def test_postgres_store_connects_with_a_timeout_and_survives_a_dropped_connection(tmp_path,monkeypatch):
+    import psycopg
+    url=os.getenv("VIBEAUDIT_TEST_DATABASE_URL")
+    if not url:
+        pytest.skip("Provide dedicated PostgreSQL integration database")
+    connect=psycopg.connect
+    kwargs=[]
+    def recording(*args,**options):
+        kwargs.append(options)
+        return connect(*args,**options)
+    monkeypatch.setattr(psycopg,"connect",recording)
+    store=Store(tmp_path,url)
+    assert kwargs[-1]["connect_timeout"]==5 and kwargs[-1]["autocommit"] is True
+    run=new_run("run-dropped",RunInput(name="dropped connection"))
+    store.save(run)
+    # A database restart drops the connection: the next statement outside a transaction reconnects once.
+    store.conn.close()
+    assert store.get(run["id"])["name"]=="dropped connection"
+    assert len(kwargs)==2
+    # Inside a transaction the lost work is the caller's: the error propagates and nothing is retried.
+    with pytest.raises(psycopg.OperationalError):
+        with store.transaction():
+            store.conn.close()
+            store._execute("SELECT 1")
+    assert store.get(run["id"])["name"]=="dropped connection"
     store.close()
 
 
@@ -291,6 +317,50 @@ def test_workspace_settings_catalog_and_linked_retest(tmp_path):
         assert sarif=={"runId":child["id"],"retestOf":run["id"],"retestedFindingIds":[finding_id]}
         assert "retestOf" not in client.get(f"/api/runs/{run['id']}/report",params={"format":"sarif"}).json()["runs"][0]["properties"]
         assert "Retest of" not in client.get(f"/api/runs/{run['id']}/report",params={"format":"markdown"}).text
+        chinese=client.get(f"/api/runs/{child['id']}/report",params={"format":"markdown","lang":"zh-Hant"}).text
+        assert "複測對象："+run["id"]+"（發現："+finding_id.replace("_","\\_")+"）" in chinese and "## 發現" in chinese
+        assert client.get(f"/api/runs/{child['id']}/report",params={"format":"markdown","lang":"fr"}).status_code==400
+        # A parent whose model-designed case carries a header its scope never listed cannot be retested as is:
+        # the refusal comes at creation, names the case and says what to do, instead of failing after the white-box stage.
+        parent=app.state.store.get(run["id"])
+        parent["cases"][0].update(designed_by="model",headers={"Accept":"application/json"})
+        app.state.store.save(parent)
+        refused=client.post(f"/api/runs/{run['id']}/retest",json=body,headers=headers)
+        assert refused.status_code==409 and parent["cases"][0]["id"] in refused.json()["detail"]
+        assert "new assessment" in refused.json()["detail"] and "model_headers" in refused.json()["detail"]
+        # Without the unlisted header the same model-designed case is retested as before.
+        parent["cases"][0]["headers"]={}
+        app.state.store.save(parent)
+        assert client.post(f"/api/runs/{run['id']}/retest",json=body,headers=headers).status_code==201
+
+
+def test_run_inventory_carries_summaries_and_concurrent_decisions_both_persist(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    app=create_app(tmp_path,testing=True)
+    with TestClient(app) as client:
+        csrf=client.get("/api/session",headers={"X-VibeAudit-Token":app.state.session_token}).json()["csrf_token"]
+        client.headers["X-CSRF-Token"]=csrf
+        _,run=client.portal.call(demo,app.state.store)
+        listed=client.get("/api/runs").json()["runs"]
+        assert [entry["id"] for entry in listed]==[run["id"]]
+        # The inventory names and sizes a run; its events, findings and evidence come with the run itself.
+        from vibe_audit.store import SUMMARY_FIELDS
+        assert {"id","name","mode","status","stage","created_at","updated_at","usage"}<=set(listed[0])<=set(SUMMARY_FIELDS)
+        assert listed[0]["name"]==run["name"] and listed[0]["status"]==run["status"] and listed[0]["usage"]==run["usage"]
+        whole=client.get(f"/api/runs/{run['id']}").json()
+        assert {"events","findings","artifacts"}<=set(whole) and all(whole.get(key)==value for key,value in listed[0].items())
+        execution={x["case_id"]:x["evidence_id"] for x in run["executions"]}
+        hypotheses=[f for f in run["findings"] if f["state"]=="hypothesis"][:2]
+        assert len(hypotheses)==2
+        def decide(finding):
+            body={"decision":"inconclusive","rationale":"Operator retest","evidence_ids":[execution["C-003"]],"threat_ids":["T-002"]}
+            return client.post(f"/api/runs/{run['id']}/findings/{finding['id']}/decision",json=body).status_code
+        # Two decisions at once read, change and save the same run; each must keep the other's change.
+        with ThreadPoolExecutor(2) as pool:
+            assert list(pool.map(decide,hypotheses))==[200,200]
+        stored=app.state.store.get(run["id"])
+        assert [f["state"] for f in stored["findings"] if f["id"] in {h["id"] for h in hypotheses}]==["inconclusive","inconclusive"]
+        assert sum("recorded an evidence-linked decision" in e["message"] for e in stored["events"])==2
 
 
 def test_finding_decision_needs_independent_execution_evidence(tmp_path):
@@ -344,6 +414,14 @@ def test_finding_decision_needs_independent_execution_evidence(tmp_path):
         assert decided["state"]=="refuted"
         assert [d["previous_state"] for d in decided["decisions"]]==["hypothesis","inconclusive"]
         assert [d["threat_ids"] for d in decided["decisions"]]==[["T-002"],["T-001"]]
+        # A tampered evidence file is an integrity failure (409), the same answer the evidence routes give, not a 500.
+        record=next(a for a in run["artifacts"] if a["id"]==execution["C-003"])
+        path=app.state.store.artifacts/record["filename"]
+        tampered=path.read_text(encoding="utf-8").replace('"producer": "blackbox-worker"','"producer": "tampered"',1)
+        assert tampered!=path.read_text(encoding="utf-8")
+        path.write_text(tampered,encoding="utf-8")
+        response=decide(hypothesis,"inconclusive",execution["C-003"],threats=["T-002"])
+        assert response.status_code==409 and response.json()["detail"]=="Evidence integrity check failed",response.text
 
 
 async def test_postgres_checkpoints_and_resume_do_not_duplicate_executions(tmp_path):
@@ -358,7 +436,7 @@ async def test_postgres_checkpoints_and_resume_do_not_duplicate_executions(tmp_p
     original=store.get(run["id"])
     assert original["stage"]=="complete",original.get("error")
     assert len(original["executions"])==3
-    checkpoints=store._execute("SELECT count(*) FROM checkpoints WHERE thread_id=?",(run["id"],)).fetchone()[0]
+    checkpoints=store._execute(placeholders("SELECT count(*) FROM checkpoints WHERE thread_id=?",store.postgres),(run["id"],)).fetchone()[0]
     assert checkpoints>0
     restarted=Engine(store,url)
     restarted.start(run["id"],resume=True)
@@ -369,14 +447,18 @@ async def test_postgres_checkpoints_and_resume_do_not_duplicate_executions(tmp_p
     store.close()
 
 
-@pytest.mark.parametrize("server,client",[("SQL_ASCII","ascii"),("UTF8","ascii"),("SQL_ASCII","utf-8")])
+# MULE_INTERNAL has no Python codec: psycopg raises NotSupportedError when asked for the connection's Python encoding.
+@pytest.mark.parametrize("server,client",[("SQL_ASCII","SQL_ASCII"),("UTF8","SQL_ASCII"),("SQL_ASCII","UTF8"),("UTF8","MULE_INTERNAL")])
 def test_store_refuses_a_non_utf8_postgres_database(tmp_path,monkeypatch,server,client):
     import psycopg
     closed=[]
     class Info:
-        encoding=client
+        @property
+        def encoding(self):
+            if client=="MULE_INTERNAL":raise psycopg.NotSupportedError("codec not available in Python: 'MULE_INTERNAL'")
+            return {"UTF8":"utf-8","SQL_ASCII":"ascii"}[client]
         @staticmethod
-        def parameter_status(name):return server if name=="server_encoding" else None
+        def parameter_status(name):return {"server_encoding":server,"client_encoding":client}.get(name)
     class Conn:
         info=Info()
         def close(self):closed.append(True)
@@ -385,6 +467,74 @@ def test_store_refuses_a_non_utf8_postgres_database(tmp_path,monkeypatch,server,
     with pytest.raises(ValueError,match="UTF8"):
         Store(tmp_path/"data","postgresql://synthetic/db")
     assert closed==[True]
+
+
+def test_limitations_come_in_chinese_and_english_in_the_same_order():
+    # The console shows limitations_zh in its Chinese interface and limitations in English, matched by position.
+    from vibe_audit.api import LIMITATIONS, LIMITATIONS_ZH
+    assert len(LIMITATIONS)==len(LIMITATIONS_ZH)
+    assert all(text.isascii() for text in LIMITATIONS)
+    assert all(any("一"<=c<="鿿" for c in text) for text in LIMITATIONS_ZH)
+
+
+@pytest.mark.parametrize("backend",["sqlite","postgres"])
+def test_events_are_appended_once_and_never_rewritten_with_the_run(tmp_path,backend):
+    """Each save writes the run's body and only the events not yet stored; reads put them back in sequence."""
+    url=os.getenv("VIBEAUDIT_TEST_DATABASE_URL") if backend=="postgres" else None
+    if backend=="postgres" and not url:
+        pytest.skip("Provide dedicated PostgreSQL integration database")
+    store=Store(tmp_path,url)
+    try:
+        run_id="run-"+uuid.uuid4().hex
+        event=lambda seq:{"seq":seq,"at":f"2026-10-09T00:00:0{seq}Z","stage":"intake","message":f"Event {seq}","level":"info","agent_id":None}
+        run={"id":run_id,"name":"events","mode":"demo","status":"running","stage":"intake","created_at":"2026-10-09T00:00:00Z","updated_at":"",
+             "manifest":{"name":"events","mode":"demo","parent_run_id":None},"events":[event(1),event(2),event(3)],"usage":{"requests":0},"error":None}
+        store.save(run)
+        count=lambda:store._execute(placeholders("SELECT count(*) FROM events WHERE run_id=?",store.postgres),(run_id,)).fetchone()[0]
+        body=lambda:json.loads(store._execute(placeholders("SELECT payload FROM runs WHERE id=?",store.postgres),(run_id,)).fetchone()[0])
+        assert count()==3 and "events" not in body()
+        # A later save with two more events inserts those two; the stored three are not written again.
+        run["events"]+=[event(4),event(5)]
+        writes=[]
+        execute=store._execute
+        store._execute=lambda sql,args=():(writes.append(sql) if sql==store.sql["insert_event"] else None) or execute(sql,args)
+        store.save(run)
+        assert len(writes)==2 and count()==5
+        assert [e["seq"] for e in store.get(run_id)["events"]]==[1,2,3,4,5]
+        assert [e["seq"] for e in store.events_after(run_id,3)]==[4,5] and store.events_after(run_id,5)==[]
+        assert store.summary(run_id)["status"]=="running" and "events" not in store.summary(run_id)
+        assert all("events" not in entry for entry in store.summaries())
+        assert [e["seq"] for e in next(r for r in store.list() if r["id"]==run_id)["events"]]==[1,2,3,4,5]
+        with pytest.raises(RunNotFound):
+            store.events_after("missing",0)
+        # A row written before events had their own table carries them in its body: read as they are, moved on the next save.
+        legacy_id="run-"+uuid.uuid4().hex
+        legacy={**run,"id":legacy_id,"events":[event(1),event(2)]}
+        execute(store.sql["upsert_run"],(legacy_id,json.dumps(legacy),"2026-10-09T00:00:00Z"))
+        assert [e["seq"] for e in store.get(legacy_id)["events"]]==[1,2] and store.events_after(legacy_id,0)==[]
+        stored=store.get(legacy_id)
+        stored["events"].append(event(3))
+        store.save(stored)
+        assert [e["seq"] for e in store.get(legacy_id)["events"]]==[1,2,3] and [e["seq"] for e in store.events_after(legacy_id,0)]==[1,2,3]
+        assert "events" not in json.loads(execute(store.sql["run"],(legacy_id,)).fetchone()[0])
+    finally:
+        store.close()
+
+
+def test_store_sql_table_holds_only_bound_placeholders_and_differs_by_dialect_alone(tmp_path):
+    """Every statement is a constant: values are bound, never spliced, so a ? is always a placeholder and % never appears."""
+    import re
+    from vibe_audit import store as store_module
+    for name, text in store_module.SQL.items():
+        assert "%" not in text, name
+        assert "?" not in "".join(re.findall(r"'[^']*'", text)), f"{name}: a ? inside quotes would be rewritten on PostgreSQL"
+    for_sqlite, for_postgres = store_module.dialect(store_module.SQL, False), store_module.dialect(store_module.SQL, True)
+    assert for_sqlite == store_module.SQL and for_sqlite is not store_module.SQL
+    assert set(for_postgres) == set(store_module.SQL)
+    assert all("?" not in text and text.count("%s") == store_module.SQL[name].count("?") for name, text in for_postgres.items())
+    sqlite_store = Store(tmp_path / "data")
+    assert sqlite_store.sql == store_module.SQL and not sqlite_store.postgres
+    sqlite_store.close()
 
 
 @pytest.mark.skipif(os.name != "posix" or (hasattr(os, "geteuid") and os.geteuid() == 0), reason="Needs POSIX permissions that apply to this user")
@@ -418,46 +568,3 @@ def test_a_retest_takes_only_the_cases_testing_the_selected_findings(tmp_path):
         cases = child.json()["manifest"]["cases"]
         assert cases and all(set(c["threat_ids"]) & set(observed["threat_ids"]) for c in cases)
         assert len(cases) < len(run["cases"])
-
-
-def test_a_decision_on_tampered_evidence_is_a_conflict_not_a_crash(tmp_path):
-    app = create_app(tmp_path, testing=True)
-    with TestClient(app) as client:
-        client.headers["X-CSRF-Token"] = client.get("/api/session", headers={"X-VibeAudit-Token": app.state.session_token}).json()["csrf_token"]
-        _, run = client.portal.call(demo, app.state.store)
-        hypothesis = next(f for f in run["findings"] if f["state"] == "hypothesis")
-        passed = next(e for e in run["executions"] if e["status"] == "pass")
-        record = next(a for a in run["artifacts"] if a["id"] == passed["evidence_id"])
-        stored = app.state.store.artifacts / record["filename"]
-        stored.chmod(0o644)
-        stored.write_text(json.dumps({"run_id": run["id"], "content": {"result": {"status": "pass"}}}), encoding="utf-8")
-        body = {"decision": "refuted", "rationale": "x", "evidence_ids": [passed["evidence_id"]], "threat_ids": hypothesis.get("threat_ids") or ["T-001"]}
-        response = client.post(f"/api/runs/{run['id']}/findings/{hypothesis['id']}/decision", json=body)
-        assert response.status_code == 409, response.text
-
-
-@pytest.mark.parametrize("backend",["sqlite","postgres"])
-async def test_a_save_writes_only_new_versions_and_survives_a_lost_connection(tmp_path,monkeypatch,backend):
-    url=os.getenv("VIBEAUDIT_TEST_DATABASE_URL") if backend=="postgres" else None
-    if backend=="postgres" and not url:
-        pytest.skip("Provide dedicated PostgreSQL integration database")
-    store=Store(tmp_path,url)
-    _,run=await demo(store)
-    execute=store._execute
-    inserts=[]
-    def count(sql,args=()):
-        if sql.startswith(("INSERT INTO entity_versions","INSERT INTO relations")): inserts.append(sql)
-        return execute(sql,args)
-    monkeypatch.setattr(store,"_execute",count)
-    store.save(run)
-    assert inserts==[]
-    run["findings"][0]["title"]="a new version"
-    store.save(run)
-    assert 0<len(inserts)<5
-    monkeypatch.setattr(store,"_execute",execute)
-    if backend=="postgres":
-        store.conn.close()
-        run["name"]="after reconnect"
-        store.save(run)
-        assert store.get(run["id"])["name"]=="after reconnect"
-    store.close()

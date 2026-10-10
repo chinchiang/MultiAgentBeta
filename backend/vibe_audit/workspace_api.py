@@ -3,11 +3,11 @@ from __future__ import annotations
 
 from copy import deepcopy
 import asyncio
-import re
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from .domain import ModelProfile, RunInput, now
+from .adapters import case_headers_allowed, model_header_vocabulary
 from .policy import PolicyError
 
 
@@ -100,6 +100,17 @@ def workspace_router(store, engine, source_roots, *, session):
         if cases:
             manifest["cases"] = [{k: v for k, v in case.items() if k not in
                                   {"hash", "source_digest", "threat_model_hash"}} for case in cases]
+        # A retest keeps the parent's manifest, so a model-designed case whose headers that manifest never listed
+        # would only be refused later by the case gate, after the white-box stage had spent its budget. Say so now.
+        refused = sorted(str(case.get("id", "?")) for case in manifest.get("cases", []) if case.get("designed_by") == "model"
+                         and not all(case_headers_allowed(step.get("headers"), model_designed=True,
+                                                          vocabulary=model_header_vocabulary(manifest, step.get("method", "GET"), step.get("path")))
+                                     for step in [case, *[p for p in case.get("preconditions", []) if isinstance(p, dict)]]))
+        if refused:
+            raise PolicyError("This retest would copy model-designed cases (" + ", ".join(refused) + ") whose headers the original "
+                              "run's allowed_requests[].model_headers do not list, so the case gate would refuse them. A retest cannot "
+                              "change the original scope: create a new assessment that lists those header values for their method and "
+                              "path, or supply operator-written cases.")
         model = RunInput.model_validate(manifest)
         if model.mode == "live":
             path = Path(model.source_path).resolve()
@@ -110,6 +121,16 @@ def workspace_router(store, engine, source_roots, *, session):
 
     @router.post("/runs/{run_id}/findings/{finding_id}/decision")
     async def decision(run_id: str, finding_id: str, data: FindingDecision, request: Request):
+        # Read, change and save under the store's lock, on one worker thread: a second decision, or the engine's own
+        # save, waits its turn instead of overwriting this one. The lock is re-entrant for that thread, so the store's
+        # own methods still take it; the event loop never holds it while waiting on the thread, which would deadlock.
+        return await asyncio.to_thread(decide, run_id, finding_id, data, request.state.actor)
+
+    def decide(run_id: str, finding_id: str, data: FindingDecision, actor: str):
+        with store.lock:
+            return decide_locked(run_id, finding_id, data, actor)
+
+    def decide_locked(run_id: str, finding_id: str, data: FindingDecision, actor: str):
         run = store.get(run_id)
         if run["status"] in {"running", "cancelling"}:
             raise PolicyError("Cannot change a finding while its assessment is running")
@@ -144,21 +165,23 @@ def workspace_router(store, engine, source_roots, *, session):
         try:
             statuses = [store.evidence(records[key], run_id)["content"]["result"]["status"] for key in data.evidence_ids]
         except (ValueError, OSError):
-            # The same integrity refusal the evidence and report endpoints give.
             raise HTTPException(409, "Evidence integrity check failed") from None
         if data.decision == "refuted" and "pass" not in statuses:
             raise PolicyError("Refuting a finding needs an execution in which the security property held")
         if data.decision == "refuted" and any(e["status"] == "fail" for e in run["executions"] if tests_threats(e)):
             raise PolicyError("A case testing these threats observed a violation in this run; the finding cannot be refuted")
-        entry = {**data.model_dump(), "threat_ids": sorted(threats), "at": now(), "actor": request.state.actor, "previous_state": finding["state"]}
+        entry = {**data.model_dump(), "threat_ids": sorted(threats), "at": now(), "actor": actor, "previous_state": finding["state"]}
         finding.setdefault("decisions", []).append(entry)
         finding["state"] = data.decision
         finding["counterevidence"] = data.evidence_ids
-        engine.event(run, f"Operator {request.state.actor} recorded an evidence-linked decision for " + finding_id)
+        engine.event(run, f"Operator {actor} recorded an evidence-linked decision for " + finding_id)
         return run
 
     @router.post("/runs/{run_id}/reconcile")
     async def reconcile(run_id: str, data: CleanupAttestation, request: Request):
-        return engine.reconcile(run_id, data.attestation, request.state.actor)
+        def reconcile_locked():
+            with store.lock:
+                return engine.reconcile(run_id, data.attestation, request.state.actor)
+        return await asyncio.to_thread(reconcile_locked)
 
     return router

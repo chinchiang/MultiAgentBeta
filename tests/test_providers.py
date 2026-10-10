@@ -7,6 +7,7 @@ import httpx
 import pytest
 
 from vibe_audit import providers
+from vibe_audit.messages import zh
 from vibe_audit.snapshot import snapshot_source, redact_text
 
 
@@ -62,8 +63,9 @@ async def test_local_only_denies_nonliteral_loopback(profile, policy, fake_provi
     assert not fake_provider[0]
 
 
-@pytest.mark.parametrize("endpoint", ["http://user:secret@127.0.0.1:11434/v1", "http://127.0.0.1:11434/v1?key=secret", "http://127.0.0.1:11434/v1#fragment", "http://127.0.0.1:11434\\@evil.test/"],
-                         ids=["userinfo", "query", "fragment", "backslash"])
+@pytest.mark.parametrize("endpoint", ["http://user:secret@127.0.0.1:11434/v1", "http://127.0.0.1:11434/v1?key=secret", "http://127.0.0.1:11434/v1#fragment", "http://127.0.0.1:11434\\@evil.test/",
+                                      "http://127.0.0.1:0/v1", "http://127.0.0.1:11434/v1\n", "http://127%2e0.0.1:11434/v1"],
+                         ids=["userinfo", "query", "fragment", "backslash", "port-zero", "control-character", "percent-escape"])
 @pytest.mark.asyncio
 async def test_endpoint_ambiguity_rejected(profile, policy, fake_provider, endpoint):
     profile["endpoint"] = endpoint
@@ -129,8 +131,13 @@ def test_credential_origin_bindings_and_defaults(monkeypatch):
         "VIBEAUDIT_OPENAI_API_KEY=https://gateway.example:8443,VIBEAUDIT_LOCAL_KEY=http://[::1]:8001,VIBEAUDIT_LOCAL_KEY=http://127.0.0.1:8001"})
     assert bound["VIBEAUDIT_OPENAI_API_KEY"] == {"https://gateway.example:8443"}
     assert bound["VIBEAUDIT_LOCAL_KEY"] == {"http://[::1]:8001", "http://127.0.0.1:8001"}
+    # An origin is read the way targets are read: IDNA for a non-ASCII host, the default port left out of the text.
+    assert providers.credential_origins({"VIBEAUDIT_MODEL_CREDENTIAL_ORIGINS": "VIBEAUDIT_KEY=https://模型.例子:443/"}) ["VIBEAUDIT_KEY"] == {"https://xn--xgs754b.xn--fsqu00a"}
     for raw in ["VIBEAUDIT_KEY", "OPENAI_API_KEY=https://api.openai.com", "VIBEAUDIT_KEY=https://api.example.com/v1",
-                "VIBEAUDIT_KEY=ftp://api.example.com", "VIBEAUDIT_KEY=https://user:pw@api.example.com"]:
+                "VIBEAUDIT_KEY=ftp://api.example.com", "VIBEAUDIT_KEY=https://user:pw@api.example.com", "VIBEAUDIT_KEY=https://api.example.com:0",
+                "VIBEAUDIT_KEY=https://api.example.com?x", "VIBEAUDIT_KEY=https://api.example.com#f",
+                # The tool's own settings share the prefix; a binding under one of their names is refused like a credential reference.
+                "VIBEAUDIT_DATABASE_URL=https://api.example.com", "VIBEAUDIT_SESSION_TOKEN=https://api.example.com"]:
         with pytest.raises(providers.ProviderError) as err:
             providers.credential_origins({"VIBEAUDIT_MODEL_CREDENTIAL_ORIGINS": raw})
         assert err.value.code == "invalid_credential_binding"
@@ -343,6 +350,7 @@ def test_snapshot_redacts_excludes_secret_files_and_hashes(tmp_path):
     assert result["routes"][0]["confidence"] == "heuristic"
     assert snapshot_source(str(tmp_path))["digest"] == result["digest"]
     assert any("excluded without reading" in gap for gap in result["gaps"])
+    assert all(zh(gap) is not None for gap in result["gaps"]), result["gaps"]
 
 
 def test_snapshot_symlink_is_not_read(tmp_path):
@@ -354,17 +362,19 @@ def test_snapshot_symlink_is_not_read(tmp_path):
     result = snapshot_source(str(tmp_path))
     assert [f["path"] for f in result["files"]] == ["real.py"]
     assert any("symlink" in gap for gap in result["gaps"])
+    assert all(zh(gap) is not None for gap in result["gaps"]), result["gaps"]
 
 
 def test_snapshot_limits_and_typescript_routes(tmp_path, monkeypatch):
     from vibe_audit import snapshot
     monkeypatch.setattr(snapshot, "MAX_FILE_BYTES", 80)
     (tmp_path / "huge.py").write_text("x" * 100, encoding="utf-8")
-    (tmp_path / "web.ts").write_text('router.post("/api/audit", handler);', encoding="utf-8")
+    (tmp_path / "web.ts").write_text('// routes\nrouter.post("/api/audit", handler);', encoding="utf-8")
     result = snapshot_source(str(tmp_path))
     assert len(result["files"]) == 1
-    assert result["routes"][0]["method"] == "POST"
-    assert any("limit" in gap for gap in result["gaps"])
+    assert result["routes"] == [{"method": "POST", "path": "/api/audit", "file": "web.ts", "line": 2, "confidence": "heuristic"}]
+    assert "File/byte limit omitted: huge.py" in result["gaps"]
+    assert all(zh(gap) is not None for gap in result["gaps"]), result["gaps"]
 
 
 def test_redaction_known_token_private_key_bearer_and_url():
@@ -557,11 +567,17 @@ def test_snapshot_skips_container_and_cluster_credential_dirs(tmp_path):
     result = snapshot_source(str(tmp_path))
     assert [f["path"] for f in result["files"]] == ["app.py"]
     assert {"Excluded directory: .docker", "Excluded directory: .kube"} <= set(result["gaps"])
+    assert all(zh(gap) is not None for gap in result["gaps"]), result["gaps"]
 
 
 def test_next_root_route_is_slash():
     from vibe_audit.snapshot import _routes
     assert _routes("app/route.ts", "export async function GET() {};")[0]["path"] == "/"
+    assert _routes("src/app/api/items/route.js", "// handlers\nexport function POST() {}") == [
+        {"method": "POST", "path": "/api/items", "file": "src/app/api/items/route.js", "line": 2, "confidence": "heuristic"}]
+    assert _routes("lib/app/route.py", "export function GET() {}") == []
+    assert _routes("api.py", '@router.route("/any")\n@app.delete("/x")')[1] == {"method": "DELETE", "path": "/x", "file": "api.py", "line": 2, "confidence": "heuristic"}
+    assert _routes("api.py", '@router.route("/any")')[0]["method"] == "UNKNOWN"
 
 
 def test_tokenizer_loader_rejects_unknown_network_assets():
@@ -570,6 +586,58 @@ def test_tokenizer_loader_rejects_unknown_network_assets():
     with pytest.raises(providers.ProviderError) as error:
         tiktoken.load.read_file_cached("https://unapproved.example/tokenizer", "abc")
     assert error.value.code == "tokenizer_unavailable"
+
+
+@pytest.mark.parametrize("content,expected", [
+    ("-----BEGIN RSA PRIVATE KEY-----\nabc\n-----END RSA PRIVATE KEY-----", "[REDACTED_PRIVATE_KEY]"),
+    ('password = "hunter2"', "password = [REDACTED]"),
+    ("api_key: abcdef123", "api_key: [REDACTED]"),
+    ("export DB_PASSWORD=hunter2", "export DB_PASSWORD=[REDACTED]"),
+    ("define('AUTH_TOKEN', 'abc');", "define('AUTH_TOKEN', '[REDACTED]');"),
+    ("Server=x;Password=hunter2;Database=y", "Server=x;Password=[REDACTED];Database=y"),
+    ('"auth": "dXNlcjpwYXNz"', '"auth": "[REDACTED]"'),
+    ("key AKIAABCDEFGHIJKLMNOP end", "key [REDACTED_TOKEN] end"),
+    ("Authorization: Bearer abcdefghij1234", "Authorization: Bearer [REDACTED]"),
+    ("postgres://user:pw@host/db", "postgres://[REDACTED]@host/db"),
+])
+def test_redaction_replaces_each_secret_form_exactly(content, expected):
+    # The marker is what reviewers and the report see; a prefix or the value's quotes must survive unchanged.
+    assert redact_text(content) == expected
+
+
+@pytest.mark.parametrize("name,secret", [
+    (".env", True), (".env.local", True), ("credentials", True), ("credentials.json", True), ("my-credentials.yaml", True),
+    ("service-account.json", True), ("gcp_service_account.json", True), ("private-key.txt", True), ("private_key.txt", True),
+    ("secret.yaml", True), ("secrets.toml", True), ("SECRET.YAML", True), ("CREDENTIALS.JSON", True), ("app.pem", True),
+    ("cert.CRT", True), ("store.jks", True), ("id_rsa", True), (".npmrc", True),
+    ("app.py", False), ("secretary.py", False), ("credential.py", False), ("secrets_test.py", False), ("password_policy.md", False), ("env.py", False),
+])
+def test_secret_designated_names(name, secret):
+    from pathlib import Path
+    from vibe_audit.snapshot import _secret_path
+    assert _secret_path(Path("/repo") / name) is secret
+
+
+def test_snapshot_refuses_symlinked_ancestors_and_skips_linked_directories(tmp_path):
+    real = tmp_path / "real"; real.mkdir()
+    (real / "app.py").write_text("print('ok')", encoding="utf-8")
+    other = tmp_path / "other"; other.mkdir()
+    (other / "hidden.py").write_text("print('never')", encoding="utf-8")
+    try:
+        (tmp_path / "link").symlink_to(real, target_is_directory=True)
+        (real / "linked").symlink_to(other, target_is_directory=True)
+    except OSError:
+        pytest.skip("OS does not permit creating symlinks for this account")
+    with pytest.raises(ValueError, match="symlink/reparse ancestors"):
+        snapshot_source(str(tmp_path / "link"))
+    with pytest.raises(ValueError, match="symlink/reparse ancestors"):
+        snapshot_source(str(tmp_path / "link" / "nested"))
+    result = snapshot_source(str(real))
+    assert [f["path"] for f in result["files"]] == ["app.py"]
+    assert result["gaps"] == ["Skipped symlink/reparse path: linked"]
+    assert result["files"][0]["redacted"] is False and result["bytes_read"] == len("print('ok')")
+    with pytest.raises(ValueError, match="existing source directory"):
+        snapshot_source("")
 
 
 @pytest.mark.asyncio

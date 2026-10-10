@@ -19,7 +19,9 @@ import sys
 import tempfile
 import uuid
 
+from .diagnostics import note_failure
 from .lease import LeaseStore,LeaseError,canonical_hash
+from .settings import runtime_config
 from .staging import remove_private_tree
 
 HERE=Path(__file__).resolve().parent
@@ -33,7 +35,7 @@ class WorkerBlocked(RuntimeError):
 
 def load_config(profile_id="default",config_path=None):
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}",profile_id): raise WorkerBlocked("Invalid runtime profile ID")
-    path=config_path or os.getenv("VIBEAUDIT_RUNTIME_CONFIG")
+    path=config_path or runtime_config()
     if not path: raise WorkerBlocked("Trusted runtime configuration is not provisioned")
     data=json.loads(Path(path).read_text(encoding="utf-8"))
     profile=(data.get("profiles",data)).get(profile_id)
@@ -308,7 +310,8 @@ class WorkerRuntime:
             # Recorded with the run, so whether AppArmor, user namespaces or rootless mode also applied stays visible.
             return {"available":True,"isolation":"docker_network_none","production_ready":True,
                     "security_options":sorted(item[0].removeprefix("name=") for item in options)}
-        except Exception:
+        except Exception as exc:
+            note_failure("docker daemon verification",exc)
             return {"available":False,"reason":"Local Linux Docker daemon could not be verified"}
 
     async def tool_inventory(self):
@@ -329,7 +332,8 @@ class WorkerRuntime:
                     pass
             rows.append({"id":tool,"available":installed,"implemented":True,"image_pin":pin,
                          "status":"provisioned" if installed else "blocked_provisioning_required",
-                         "detail":"固定版本隔離工具已備妥；每次執行仍需通過案例、範圍、預算與證據檢查。" if installed else "工具 adapter 已實作；需要本地 Linux、PostgreSQL 及已下載的固定映像。"})
+                         "detail":"固定版本隔離工具已備妥；每次執行仍需通過案例、範圍、預算與證據檢查。" if installed else "工具 adapter 已實作；需要本地 Linux、PostgreSQL 及已下載的固定映像。",
+                         "detail_en":"Pinned isolated tool is ready; every run still has to pass the case, scope, budget and evidence checks." if installed else "Tool adapter implemented; needs local Linux, PostgreSQL and the downloaded pinned image."})
         return rows
 
     def _normalize(self,spec,manifest):
@@ -390,153 +394,13 @@ class WorkerRuntime:
             spec,files=self._normalize(spec,manifest)
             if cancel_event is not None and cancel_event.is_set(): raise WorkerBlocked("Run was cancelled")
             if lease_hook: await lease_hook()
-            image=spec.get("image_pin") or self.images.get(spec["tool_id"]) or self.images.get("worker")
-            if self.backend=="docker" and (not isinstance(image,str) or not IMAGE.fullmatch(image)):
-                raise WorkerBlocked("Provision a trusted immutable worker image digest")
-            cases=spec.get("cases",[])
-            case_hash=cases[0]["hash"] if len(cases)==1 else canonical_hash({"cases":cases,"source_digest":manifest.get("source_digest")})
-            threat_hash=cases[0]["threat_model_hash"] if cases else spec.get("threat_model_hash","offline-whitebox")
-            binding_args=dict(run_id=manifest["run_id"],case_hash=case_hash,threat_hash=threat_hash,
-                              manifest_hash=canonical_hash(manifest),
-                              operation=spec["tool_id"]+(":"+spec["task_stage"] if spec.get("task_stage") in {"setup","cleanup"} else ""),
-                              repetition=repetition,spec_hash=canonical_hash(spec))
-            try:
-                # The supervisor limits the worker itself to timeout_seconds from its start; the lease
-                # must also cover container creation before it and teardown and journaling after it.
-                cap=await asyncio.to_thread(self.leases.issue,max_requests=min(spec.get("max_requests",100),manifest.get("budget",{}).get("max_requests",100)),
-                                      ttl_seconds=self.ttl,max_seconds=task_budget(spec["timeout_seconds"]),**binding_args)
-            except LeaseError:
-                # A controller crash after the worker finished must not turn paid,
-                # journaled work into an unreplayable collision; unfinished tasks
-                # keep their reconciliation path.
-                resumed=await asyncio.to_thread(self.leases.finished_result,**binding_args)
-                if resumed is None:
-                    raise
-                resumed["resumed_from_journal"]=True
-                return redact_credentials(finish_result(spec,resumed),manifest)
-            private=Path(tempfile.mkdtemp(prefix="w-",dir=self.root));os.chmod(private,0o700)
-            inputs=private/"inputs";out=private/"out";broker=private/"broker"
-            for directory,mode in [(inputs,0o755),(out,0o700),(broker,0o711)]: directory.mkdir();os.chmod(directory,mode)
-            for name,data in files.items():
-                path=inputs/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(data);os.chmod(path,0o444)
-            worker_id=uuid.uuid4().hex;name="vibeaudit-worker-"+worker_id
-            prefix=[self.docker,"--host","unix:///var/run/docker.sock"] if self.backend=="docker" else []
-            argv=docker_command(prefix=prefix,image=image,name=name,phase=spec["phase"],inputs=inputs,broker=broker,source_dir=spec.get("source_dir"),offline_db_dir=spec.get("offline_db_dir")) if self.backend=="docker" else [sys.executable,"-I",str(HERE/"worker_entry.py"),"worker",str(inputs/"_worker_task.json")]
-            # Only the supervisor receives target credential references; the
-            # worker task file contains cases/specification and relay access.
-            scope=phase_scope(manifest,spec["phase"])
-            narrow=supervisor_manifest(scope)
-            child_cap={k:v for k,v in cap.items() if k!="renewal_token"}
-            initial={"backend":self.backend,"spec":spec,"manifest":narrow,"capability":child_cap,"worker_id":worker_id,
-                     "database_path":self.leases.database_path,"database_url":self.leases.database_url,"broker_token":secrets.token_urlsafe(32),
-                     "inputs_dir":str(inputs),"broker_dir":str(broker),"result_file":str(private/"supervisor-result.json"),
-                     "argv":argv,"docker_prefix":prefix,"container_name":name}
-            options={"creationflags":0x08000200} if os.name=="nt" else {"start_new_session":True}
-            proc=await asyncio.create_subprocess_exec(sys.executable,"-I",str(HERE/"worker_entry.py"),"supervise",stdin=asyncio.subprocess.PIPE,stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.PIPE,
-                                                       env=_client_env(scope),limit=SUPERVISOR_FRAME+1,**options)
-            self.active[cap["task_id"]]={"pid":proc.pid,"capability":cap,"work_dir":str(private)}
-            async def send(value):
-                proc.stdin.write((json.dumps(value,separators=(",",":"))+"\n").encode());await proc.stdin.drain()
-            stop=asyncio.Event()
-            beat=errors=None
-            result=None
-            try:
-                # From here on the supervisor exists and the work directory holds unredacted
-                # input: any failure must run the teardown below, or the process and its
-                # container, socket and files outlive this call.
-                await send(initial)
-                async def heartbeat():
-                    transient=0
-                    while not stop.is_set():
-                        try:
-                            if cancel_event is not None and cancel_event.is_set(): raise WorkerBlocked("Cancelled")
-                            if lease_hook: await lease_hook()
-                            try:
-                                # Renewal is a durable database round trip: run it off the
-                                # event loop so a slow lease database cannot stall grant
-                                # replies or result reads for every other task.
-                                await asyncio.to_thread(self.leases.renew,cap)
-                            except LeaseError:
-                                raise
-                            except Exception:
-                                # One transient lease-database error must not kill a healthy
-                                # worker; three consecutive failures mean authority is gone.
-                                transient+=1
-                                if transient>=3: raise
-                                # Skip this tick's heartbeat so the counter can actually
-                                # accumulate; a short send gap stays inside the lease TTL.
-                            else:
-                                transient=0
-                                await send({"kind":"heartbeat"})
-                        except Exception:
-                            # The revoke can fail for the same reason the renewals did; the
-                            # heartbeat must still end quietly so the teardown below runs.
-                            await self._revoke(cap,"Controller revoked worker lease")
-                            try: await send({"kind":"cancel"})
-                            except Exception: pass
-                            return
-                        # Four ticks per TTL: the lease outlives two failed renewals and the third ends the worker.
-                        try: await asyncio.wait_for(stop.wait(),max(.05,self.ttl/4))
-                        except TimeoutError: pass
-                async def drain_stderr():
-                    total=0
-                    while data:=await proc.stderr.read(8192):
-                        total+=len(data)
-                        if total>256*1024:
-                            await self._revoke(cap,"Supervisor stderr limit exceeded")
-                            # Keep draining, so a chatty supervisor cannot block on a full pipe until the deadline.
-                            while await proc.stderr.read(8192): pass
-                            return
-                beat=asyncio.create_task(heartbeat())
-                errors=asyncio.create_task(drain_stderr())
-                # The supervisor may spend the same bounded create budget the worker's
-                # hard deadline allows, then its teardown: a shorter controller deadline
-                # would abandon a healthy worker and invent an unknown outcome for a
-                # task it never let finish.
-                deadline=asyncio.get_running_loop().time()+task_budget(spec["timeout_seconds"])+5
-                while True:
-                    raw=await asyncio.wait_for(proc.stdout.readline(),max(.1,deadline-asyncio.get_running_loop().time()))
-                    if not raw: break
-                    message=json.loads(raw)
-                    if message.get("kind")=="request":
-                        allow=False
-                        try:
-                            if cancel_event is not None and cancel_event.is_set(): raise WorkerBlocked("Cancelled")
-                            await request_hook(method=message["method"],path=message["path"],case_id=message.get("case_id"),identity=message.get("identity"),purpose=message.get("purpose"))
-                            allow=True
-                        except Exception: pass
-                        await send({"kind":"grant","request_id":message["request_id"],"allow":allow})
-                    elif message.get("kind")=="result": result=message["result"];break
-            except (Exception,asyncio.CancelledError):
-                await self._revoke(cap,"Controller stopped awaiting worker")
-                try: await send({"kind":"cancel"})
-                except Exception: pass
-            finally:
-                stop.set()
-                if beat: await asyncio.gather(beat,return_exceptions=True)
-                if proc.stdin and not proc.stdin.is_closing(): proc.stdin.close()
-                try: await asyncio.wait_for(asyncio.shield(proc.wait()),TEARDOWN_BUDGET)
-                except TimeoutError: pass  # Independent guardian remains responsible for teardown.
-                if errors: errors.cancel();await asyncio.gather(errors,return_exceptions=True)
-                self.active.pop(cap["task_id"],None)
-            # Without a result the supervisor is still the guardian tearing its container down, so it is not killed.
-            delivered=isinstance(result,dict)
-            if not delivered:
-                await self._revoke(cap,"No verified supervisor result")
-                result={"status":"outcome_unknown","reason":"No complete worker result; do not replay","cleanup_confirmed":False,"task_id":cap["task_id"]}
-            if delivered and proc.returncode is None:
-                # The supervisor delivered its result but outlived the grace period:
-                # nothing of value remains and a lingering broker socket or task
-                # file must not stay on disk. When cleanup was never confirmed the
-                # outcome is already unknown and demands reconciliation, so an
-                # untracked container stays the operator's documented case.
-                proc.kill()
-                try: await asyncio.wait_for(proc.wait(),5)
-                except TimeoutError: pass
-            if result.get("cleanup_confirmed") is True and proc.returncode is not None:
-                # The worker is gone; its inputs, outputs and unredacted supervisor record must not stay on disk.
-                result["work_dir_removed"]=remove_private_tree(private)
-            return redact_credentials(finish_result(spec,result),manifest)
+            image,binding_args=self._tool_binding(spec,manifest,repetition)
+            cap,resumed=await self._issue_or_resume(spec,manifest,binding_args)
+            if resumed is not None: return resumed
+            private=self._work_dir(files)
+            proc,initial,send=await self._launch_supervisor(spec,manifest,image,cap,private)
+            result=await self._supervise(spec,cap,proc,send,initial,cancel_event=cancel_event,request_hook=request_hook,lease_hook=lease_hook)
+            return await self._finish_tool_run(spec,manifest,cap,proc,private,result)
         except Exception as exc:
             if proc is not None:
                 # The supervisor started, so requests may have gone out and its teardown is unconfirmed.
@@ -551,13 +415,187 @@ class WorkerRuntime:
             # Our own gate messages are fixed local text; an OSError or unexpected
             # error string can embed host paths or database details, so only its
             # type name reaches the run record.
+            if not isinstance(exc,(WorkerBlocked,LeaseError)):
+                note_failure("worker prerequisites",exc)
             reason=str(exc) if isinstance(exc,(WorkerBlocked,LeaseError)) else f"{type(exc).__name__}: worker prerequisites failed before any dispatch"
             return {"status":"blocked","reason":reason,"cleanup_confirmed":True}
+
+
+    def _tool_binding(self,spec,manifest,repetition):
+        """The worker image and the immutable binding (run, case, threat, manifest, operation, repetition, spec) a lease is issued for."""
+        image=spec.get("image_pin") or self.images.get(spec["tool_id"]) or self.images.get("worker")
+        if self.backend=="docker" and (not isinstance(image,str) or not IMAGE.fullmatch(image)):
+            raise WorkerBlocked("Provision a trusted immutable worker image digest")
+        cases=spec.get("cases",[])
+        case_hash=cases[0]["hash"] if len(cases)==1 else canonical_hash({"cases":cases,"source_digest":manifest.get("source_digest")})
+        threat_hash=cases[0]["threat_model_hash"] if cases else spec.get("threat_model_hash","offline-whitebox")
+        binding_args=dict(run_id=manifest["run_id"],case_hash=case_hash,threat_hash=threat_hash,
+                          manifest_hash=canonical_hash(manifest),
+                          operation=spec["tool_id"]+(":"+spec["task_stage"] if spec.get("task_stage") in {"setup","cleanup"} else ""),
+                          repetition=repetition,spec_hash=canonical_hash(spec))
+        return image,binding_args
+
+    async def _issue_or_resume(self,spec,manifest,binding_args):
+        """(capability, None) for a task to run now, or (None, result) when this exact binding already finished and was journaled."""
+        try:
+            # The supervisor limits the worker itself to timeout_seconds from its start; the lease
+            # must also cover its startup, container creation, and teardown and journaling after it.
+            cap=await asyncio.to_thread(self.leases.issue,max_requests=min(spec.get("max_requests",100),manifest.get("budget",{}).get("max_requests",100)),
+                                  ttl_seconds=self.ttl,max_seconds=task_budget(spec["timeout_seconds"]),**binding_args)
+        except LeaseError:
+            # A controller crash after the worker finished must not turn paid,
+            # journaled work into an unreplayable collision; unfinished tasks
+            # keep their reconciliation path.
+            resumed=await asyncio.to_thread(self.leases.finished_result,**binding_args)
+            if resumed is None:
+                raise
+            resumed["resumed_from_journal"]=True
+            return None,redact_credentials(finish_result(spec,resumed),manifest)
+        return cap,None
+
+    def _work_dir(self,files):
+        """A private work tree: read-only inputs, the output and broker directories, owner-only."""
+        private=Path(tempfile.mkdtemp(prefix="w-",dir=self.root));os.chmod(private,0o700)
+        inputs=private/"inputs";out=private/"out";broker=private/"broker"
+        for directory,mode in [(inputs,0o755),(out,0o700),(broker,0o711)]: directory.mkdir();os.chmod(directory,mode)
+        for name,data in files.items():
+            path=inputs/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(data);os.chmod(path,0o444)
+        return private
+
+    async def _launch_supervisor(self,spec,manifest,image,cap,private):
+        """Start the independent supervisor process for this task; (process, its initial message, a sender for later messages)."""
+        inputs=private/"inputs";broker=private/"broker"
+        worker_id=uuid.uuid4().hex;name="vibeaudit-worker-"+worker_id
+        prefix=[self.docker,"--host","unix:///var/run/docker.sock"] if self.backend=="docker" else []
+        argv=docker_command(prefix=prefix,image=image,name=name,phase=spec["phase"],inputs=inputs,broker=broker,source_dir=spec.get("source_dir"),offline_db_dir=spec.get("offline_db_dir")) if self.backend=="docker" else [sys.executable,"-I",str(HERE/"worker_entry.py"),"worker",str(inputs/"_worker_task.json")]
+        # Only the supervisor receives target credential references; the
+        # worker task file contains cases/specification and relay access.
+        scope=phase_scope(manifest,spec["phase"])
+        narrow=supervisor_manifest(scope)
+        child_cap={k:v for k,v in cap.items() if k!="renewal_token"}
+        initial={"backend":self.backend,"spec":spec,"manifest":narrow,"capability":child_cap,"worker_id":worker_id,
+                 "database_path":self.leases.database_path,"database_url":self.leases.database_url,"broker_token":secrets.token_urlsafe(32),
+                 "inputs_dir":str(inputs),"broker_dir":str(broker),"result_file":str(private/"supervisor-result.json"),
+                 "argv":argv,"docker_prefix":prefix,"container_name":name}
+        options={"creationflags":0x08000200} if os.name=="nt" else {"start_new_session":True}
+        proc=await asyncio.create_subprocess_exec(sys.executable,"-I",str(HERE/"worker_entry.py"),"supervise",stdin=asyncio.subprocess.PIPE,stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.PIPE,
+                                                   env=_client_env(scope),limit=SUPERVISOR_FRAME+1,**options)
+        self.active[cap["task_id"]]={"pid":proc.pid,"capability":cap,"work_dir":str(private)}
+        async def send(value):
+            proc.stdin.write((json.dumps(value,separators=(",",":"))+"\n").encode());await proc.stdin.drain()
+        return proc,initial,send
+
+    async def _supervise(self,spec,cap,proc,send,initial,*,cancel_event,request_hook,lease_hook):
+        """Drive the supervisor to its result: heartbeats and renewals, stderr draining, request grants; always tears down."""
+        stop=asyncio.Event()
+        beat=errors=None
+        result=None
+        try:
+            # From here on the supervisor exists and the work directory holds unredacted
+            # input: any failure must run the teardown below, or the process and its
+            # container, socket and files outlive this call.
+            await send(initial)
+            async def heartbeat():
+                transient=0
+                while not stop.is_set():
+                    try:
+                        if cancel_event is not None and cancel_event.is_set(): raise WorkerBlocked("Cancelled")
+                        if lease_hook: await lease_hook()
+                        try:
+                            # Renewal is a durable database round trip: run it off the
+                            # event loop so a slow lease database cannot stall grant
+                            # replies or result reads for every other task.
+                            await asyncio.to_thread(self.leases.renew,cap)
+                        except LeaseError:
+                            raise
+                        except Exception:
+                            # One transient lease-database error must not kill a healthy
+                            # worker; three consecutive failures mean authority is gone.
+                            transient+=1
+                            if transient>=3: raise
+                            # Skip this tick's heartbeat so the counter can actually
+                            # accumulate; a short send gap stays inside the lease TTL.
+                        else:
+                            transient=0
+                            await send({"kind":"heartbeat"})
+                    except Exception:
+                        # The revoke can fail for the same reason the renewals did; the
+                        # heartbeat must still end quietly so the teardown below runs.
+                        await self._revoke(cap,"Controller revoked worker lease")
+                        try: await send({"kind":"cancel"})
+                        except Exception: pass
+                        return
+                    # Four ticks per TTL: the lease outlives two failed renewals and the third ends the worker.
+                    try: await asyncio.wait_for(stop.wait(),max(.05,self.ttl/4))
+                    except TimeoutError: pass
+            async def drain_stderr():
+                total=0
+                while data:=await proc.stderr.read(8192):
+                    total+=len(data)
+                    if total>256*1024:
+                        await self._revoke(cap,"Supervisor stderr limit exceeded")
+                        # Keep draining, so a chatty supervisor cannot block on a full pipe until the deadline.
+                        while await proc.stderr.read(8192): pass
+                        return
+            beat=asyncio.create_task(heartbeat())
+            errors=asyncio.create_task(drain_stderr())
+            # The supervisor may spend the same bounded startup and create budget the
+            # lease allows, then its teardown: a shorter controller deadline would abandon
+            # a healthy worker and invent an unknown outcome for a task it never let finish.
+            deadline=asyncio.get_running_loop().time()+task_budget(spec["timeout_seconds"])+5
+            while True:
+                raw=await asyncio.wait_for(proc.stdout.readline(),max(.1,deadline-asyncio.get_running_loop().time()))
+                if not raw: break
+                message=json.loads(raw)
+                if message.get("kind")=="request":
+                    allow=False
+                    try:
+                        if cancel_event is not None and cancel_event.is_set(): raise WorkerBlocked("Cancelled")
+                        await request_hook(method=message["method"],path=message["path"],case_id=message.get("case_id"),identity=message.get("identity"),purpose=message.get("purpose"))
+                        allow=True
+                    except Exception: pass
+                    await send({"kind":"grant","request_id":message["request_id"],"allow":allow})
+                elif message.get("kind")=="result": result=message["result"];break
+        except (Exception,asyncio.CancelledError) as exc:
+            note_failure(f"worker {cap['task_id']} supervision",exc)
+            await self._revoke(cap,"Controller stopped awaiting worker")
+            try: await send({"kind":"cancel"})
+            except Exception: pass
+        finally:
+            stop.set()
+            if beat: await asyncio.gather(beat,return_exceptions=True)
+            if proc.stdin and not proc.stdin.is_closing(): proc.stdin.close()
+            try: await asyncio.wait_for(asyncio.shield(proc.wait()),TEARDOWN_BUDGET)
+            except TimeoutError: pass  # Independent guardian remains responsible for teardown.
+            if errors: errors.cancel();await asyncio.gather(errors,return_exceptions=True)
+            self.active.pop(cap["task_id"],None)
+        return result
+
+    async def _finish_tool_run(self,spec,manifest,cap,proc,private,result):
+        """The result as the run sees it: unknown when none arrived, the supervisor reaped, the work tree removed once cleanup is confirmed, artifacts decoded, credentials redacted."""
+        # Without a result the supervisor is still the guardian tearing its container down, so it is not killed.
+        delivered=isinstance(result,dict)
+        if not delivered:
+            await self._revoke(cap,"No verified supervisor result")
+            result={"status":"outcome_unknown","reason":"No complete worker result; do not replay","cleanup_confirmed":False,"task_id":cap["task_id"]}
+        if delivered and proc.returncode is None:
+            # The supervisor delivered its result but outlived the grace period:
+            # nothing of value remains and a lingering broker socket or task
+            # file must not stay on disk. When cleanup was never confirmed the
+            # outcome is already unknown and demands reconciliation, so an
+            # untracked container stays the operator's documented case.
+            proc.kill()
+            try: await asyncio.wait_for(proc.wait(),5)
+            except TimeoutError: pass
+        if result.get("cleanup_confirmed") is True and proc.returncode is not None:
+            # The worker is gone; its inputs, outputs and unredacted supervisor record must not stay on disk.
+            result["work_dir_removed"]=remove_private_tree(private)
+        return redact_credentials(finish_result(spec,result),manifest)
 
     async def _revoke(self,cap,reason):
         """Best-effort revoke during teardown: the lease expires on its own if the database is down."""
         try: await asyncio.to_thread(self.leases.revoke,cap["id"],reason)
-        except Exception: pass
+        except Exception as exc: note_failure("lease revoke during teardown",exc)
 
     async def run_case(self,manifest,case,*,cancel_event,request_hook,lease_hook=None,repetition=0):
         return supervised_verdict(case,await self.execute_tool({"operation":"http_case","tool_id":"http_case","cases":[case],"phase":"blackbox", "timeout_seconds":min(120,manifest.get("budget",{}).get("max_seconds",120))},manifest=manifest,cancel_event=cancel_event,request_hook=request_hook,lease_hook=lease_hook,repetition=repetition))

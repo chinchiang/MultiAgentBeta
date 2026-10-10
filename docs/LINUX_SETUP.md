@@ -2,9 +2,9 @@
 
 ## 執行需求
 
-Python 3.12+、Node 24（建置 UI／TS fixture）、PostgreSQL、支援 recursive read-only bind mount 的 Linux kernel/Docker（Docker 25 以上；supervisor 直接呼叫 Docker Engine API，與 daemon 協商版本，最高使用 1.52、最低需要 1.44），以及授權 staging。實際驗收版本見 VALIDATION.md。Windows 原生控制台可跑 demo；live 控制程序和 Docker workers 一起放在 Linux/WSL2。
+Python 3.12+、Node 24（建置 UI／TS fixture）、PostgreSQL、支援 recursive read-only bind mount 的 Linux kernel/Docker（Docker 25 以上；supervisor 直接呼叫 Docker Engine API，與 daemon 協商版本，最高使用 1.52、最低需要 1.44），以及授權 staging。實際驗收版本見 VALIDATION.md。Windows 原生控制台可跑 demo；live 控制處理程序和 Docker workers 一起放在 Linux/WSL2。
 
-模型、靶場與憑證不由安裝程序自動建立。以下下載與建置是管理者的明確 provisioning；評估期間不安裝套件、不拉取映像。
+模型、靶場與憑證不由安裝程式自動建立。以下下載與建置是管理者的明確 provisioning；評估期間不安裝套件、不拉取映像。
 
 ## 1. 安裝控制台
 
@@ -19,13 +19,13 @@ npm run build
 cd ..
 ```
 
-已交付 frontend/dist 可直接提供本地 UI。Linux 啟動器也允許用 VIBEAUDIT_PYTHON 指定既有受測 venv。
+同樣的步驟也可以用 `sh scripts/setup.sh` 一次完成（`VIBEAUDIT_PYTHON` 可指定建立 venv 用的直譯器，需 3.12 以上）。已交付 frontend/dist 可直接提供本地 UI。Linux 啟動器也允許用 VIBEAUDIT_PYTHON 指定既有受測 venv。
 
-requirements.lock.txt 為每個鎖定版本列出 PyPI 上所有發布檔的 sha256，pip 以 hash 檢查模式安裝：下載的檔案不符，或有依賴沒有鎖定，安裝都會中止，不會自動改抓其他版本。調整版本後執行 `python scripts/hash-lock.py --write` 重新產生 hash。
+requirements.lock.txt 為每個鎖定版本列出 PyPI 上所有發布檔的 sha256，pip 以 hash 檢查模式安裝：下載的檔案不符，或有相依套件沒有鎖定，安裝都會中止，不會自動改抓其他版本。調整版本後執行 `python scripts/hash-lock.py --write` 重新產生 hash。
 
 ## 2. 資料庫與工作目錄
 
-準備專用 PostgreSQL role/database，允許建立本工具的表與 LangGraph checkpoint。以 VIBEAUDIT_DATABASE_URL 保存連線資訊，勿把密碼寫進專案設定或 prompt。使用管理者預建的資料目錄，控制程序對其有權限；受測來源只放在明確准許的根目錄。
+準備專用 PostgreSQL role/database，允許建立本工具的表與 LangGraph checkpoint。以 VIBEAUDIT_DATABASE_URL 保存連線資訊，勿把密碼寫進專案設定或 prompt。使用管理者預建的資料目錄，控制處理程序對其有權限；受測來源只放在明確准許的根目錄。
 
 ```sh
 export VIBEAUDIT_DATABASE_URL='postgresql://USER:PASSWORD@127.0.0.1:5432/vibeaudit'
@@ -38,7 +38,7 @@ export VIBEAUDIT_SOURCE_ROOTS='/srv/authorized-test-sources'
 ## 3. 預建 worker 與工具
 
 ```sh
-docker build --build-arg BASE_IMAGE=python@sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b94cd8ebbe06a9 -t vibeaudit-worker:test deploy/worker
+docker build --build-arg BASE_IMAGE=public.ecr.aws/docker/library/python@sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b94cd8ebbe06a9 -t vibeaudit-worker:test deploy/worker
 docker build -f deploy/scanners/Dockerfile.gitleaks -t vibeaudit-gitleaks:8.30.1 deploy/scanners
 docker build -f deploy/scanners/Dockerfile.osv -t vibeaudit-osv:2.3.5 deploy/scanners
 docker build -f deploy/worker/Dockerfile.tools.locked -t vibeaudit-tools:integration deploy/worker
@@ -46,7 +46,7 @@ docker pull semgrep/semgrep:1.153.0
 docker pull ghcr.io/zaproxy/zaproxy:2.17.0
 ```
 
-worker 的 `BASE_IMAGE` 必須是單行的 `<name>@sha256:<64 hex>`，否則建置失敗；provision-runtime.py 也不記錄沒有 digest 基礎映像標籤（`org.opencontainers.image.base.name`）的 worker。這個標籤是映像自己的宣告，只用來擋下誤用 tag，不是來源證明。映像標籤只用於 provisioning。下個步驟將本地實際 image ID 寫進設定；runner 只接受 immutable SHA256。工具映像的確切 Python/npm 鎖定檔在 deploy/worker/locks；Dockerfile.tools 保留原始 provisioning 配方，Dockerfile.tools.locked 使用捕獲的完整依賴鎖定檔。固定 image ID 與驗收版本另存於 docs/runtime-images.json。跨架構或重建後必須重新跑工具契約，不能假設 image ID 相同。
+基底映像以 `public.ecr.aws/docker/library/` 這個 Docker 官方映像的 ECR Public 鏡像指定（digest 與 Docker Hub 相同，但沒有匿名 pull 速率限制）；只有 semgrep 只在 Docker Hub 發佈。worker 的 `BASE_IMAGE` 必須是單行的 `<name>@sha256:<64 hex>`，否則建置失敗；provision-runtime.py 也不記錄沒有 digest 基礎映像標籤（`org.opencontainers.image.base.name`）的 worker。這個標籤是映像自己的宣告，只用來擋下誤用 tag，不是來源證明。映像標籤只用於 provisioning。下個步驟將本地實際 image ID 寫進設定；runner 只接受 immutable SHA256。工具映像的確切 Python/npm 鎖定檔在 deploy/worker/locks；Dockerfile.tools 保留原始 provisioning 配方，Dockerfile.tools.locked 使用捕獲的完整相依套件鎖定檔。固定 image ID 與驗收版本另存於 docs/runtime-images.json。跨架構或重建後必須重新跑工具契約，不能假設 image ID 相同。
 
 ## 4. 離線漏洞資料與 runtime profile
 
@@ -56,7 +56,7 @@ worker 的 `BASE_IMAGE` 必須是單行的 `<name>@sha256:<64 hex>`，否則建�
 export VIBEAUDIT_RUNTIME_CONFIG='/etc/vibeaudit/runtime.json'
 ```
 
-OSV provisioning 下載官方完整 PyPI/npm 生態系 archive，不外送本機依賴清單。資料日期、來源、雜湊與涵蓋範圍保存在 manifest.json；評估時再次固定該 manifest 和 archive hashes。離線模式不包含 commit-level matching，資料更新後為新的 resource version。
+OSV provisioning 下載官方完整 PyPI/npm 生態系 archive，不外送本機相依套件清單。資料日期、來源、雜湊與涵蓋範圍保存在 manifest.json；評估時再次固定該 manifest 和 archive hashes。離線模式不包含 commit-level matching，資料更新後為新的 resource version。
 
 ## 5. 啟動與配置
 
@@ -104,7 +104,7 @@ npm run build
 cd ..
 ```
 
-The shipped frontend/dist directly serves the local UI. The Linux launcher also allows VIBEAUDIT_PYTHON to point at an existing venv under test.
+`sh scripts/setup.sh` runs the same steps in one go (`VIBEAUDIT_PYTHON` names the interpreter the venv is created with; 3.12 or newer). The shipped frontend/dist directly serves the local UI. The Linux launcher also allows VIBEAUDIT_PYTHON to point at an existing venv under test.
 
 requirements.lock.txt lists, for each locked version, the sha256 of every release file on PyPI, and pip installs in hash-checking mode: if a downloaded file does not match, or any dependency is not locked, the install aborts — it never silently switches to another version. After adjusting versions, run `python scripts/hash-lock.py --write` to regenerate the hashes.
 
@@ -123,7 +123,7 @@ The USER/PASSWORD above are placeholders. Validation uses a local peer role in W
 ## 3. Pre-build the worker and tools
 
 ```sh
-docker build --build-arg BASE_IMAGE=python@sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b94cd8ebbe06a9 -t vibeaudit-worker:test deploy/worker
+docker build --build-arg BASE_IMAGE=public.ecr.aws/docker/library/python@sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b94cd8ebbe06a9 -t vibeaudit-worker:test deploy/worker
 docker build -f deploy/scanners/Dockerfile.gitleaks -t vibeaudit-gitleaks:8.30.1 deploy/scanners
 docker build -f deploy/scanners/Dockerfile.osv -t vibeaudit-osv:2.3.5 deploy/scanners
 docker build -f deploy/worker/Dockerfile.tools.locked -t vibeaudit-tools:integration deploy/worker
@@ -131,7 +131,7 @@ docker pull semgrep/semgrep:1.153.0
 docker pull ghcr.io/zaproxy/zaproxy:2.17.0
 ```
 
-The worker's `BASE_IMAGE` must be a single-line `<name>@sha256:<64 hex>` or the build fails; provision-runtime.py also refuses a worker without a digest base-image label (`org.opencontainers.image.base.name`). The label is the image's own claim; it catches an accidental tag and is not proof of provenance. Image tags are used for provisioning only. The next step writes the actual local image IDs into the configuration; the runner accepts only immutable SHA256 values. The exact Python/npm lockfiles for the tool images are in deploy/worker/locks; Dockerfile.tools keeps the original provisioning recipe, while Dockerfile.tools.locked uses the captured full dependency lockfiles. The pinned image IDs and validated versions are also stored in docs/runtime-images.json. After a cross-architecture build or any rebuild you must re-run the tool contracts; never assume the image IDs are unchanged.
+Base images are named through `public.ecr.aws/docker/library/`, the ECR Public mirror of the Docker official images (the same digests as Docker Hub, without its anonymous pull rate limit); only semgrep is published on Docker Hub alone. The worker's `BASE_IMAGE` must be a single-line `<name>@sha256:<64 hex>` or the build fails; provision-runtime.py also refuses a worker without a digest base-image label (`org.opencontainers.image.base.name`). The label is the image's own claim; it catches an accidental tag and is not proof of provenance. Image tags are used for provisioning only. The next step writes the actual local image IDs into the configuration; the runner accepts only immutable SHA256 values. The exact Python/npm lockfiles for the tool images are in deploy/worker/locks; Dockerfile.tools keeps the original provisioning recipe, while Dockerfile.tools.locked uses the captured full dependency lockfiles. The pinned image IDs and validated versions are also stored in docs/runtime-images.json. After a cross-architecture build or any rebuild you must re-run the tool contracts; never assume the image IDs are unchanged.
 
 ## 4. Offline vulnerability data and the runtime profile
 

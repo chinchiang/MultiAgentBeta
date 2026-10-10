@@ -1,0 +1,37 @@
+{
+  "modules": {
+    "src/vibe_audit/policy.py": 14,
+    "src/vibe_audit/adapters.py": 36,
+    "src/vibe_audit/catalog.py": 3,
+    "src/vibe_audit/lease.py": 8,
+    "src/vibe_audit/snapshot.py": 12,
+    "src/vibe_audit/messages.py": 0
+  },
+  "functions": {
+    "vibe_audit.adapters.x__origin": 3,
+    "vibe_audit.adapters.x__prepare_request": 4,
+    "vibe_audit.adapters.x__request": 4,
+    "vibe_audit.adapters.x_bound_model_credentials": 2,
+    "vibe_audit.adapters.x_control_plane_target": 3,
+    "vibe_audit.adapters.x_execute_case": 6,
+    "vibe_audit.adapters.x_model_header_vocabulary": 3,
+    "vibe_audit.adapters.x_secret_forms": 1,
+    "vibe_audit.adapters.x_state_changing": 1,
+    "vibe_audit.adapters.x_unbound_target_credentials": 5,
+    "vibe_audit.adapters.xǁ_PinnedHTTPConnectionǁconnect": 3,
+    "vibe_audit.adapters.xǁ_PinnedHTTPSConnectionǁconnect": 1,
+    "vibe_audit.catalog.xǁCatalogRegistryǁ__init__": 2,
+    "vibe_audit.catalog.xǁCatalogRegistryǁentries": 1,
+    "vibe_audit.lease.x_canonical_hash": 2,
+    "vibe_audit.lease.xǁLeaseStoreǁ_row": 1,
+    "vibe_audit.lease.xǁLeaseStoreǁclaim": 1,
+    "vibe_audit.lease.xǁLeaseStoreǁfinished_result": 1,
+    "vibe_audit.lease.xǁLeaseStoreǁissue": 2,
+    "vibe_audit.lease.xǁLeaseStoreǁrenew": 1,
+    "vibe_audit.policy.xǁPolicyǁauthorize": 12,
+    "vibe_audit.policy.xǁPolicyǁcase_gate": 2,
+    "vibe_audit.snapshot.x__linklike": 1,
+    "vibe_audit.snapshot.x__routes": 4,
+    "vibe_audit.snapshot.x_snapshot_source": 7
+  }
+}

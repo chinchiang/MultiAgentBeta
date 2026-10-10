@@ -94,13 +94,27 @@ function compile(source, name, overrides = {}) {
   mod._compile(output.outputText, mod.filename);
   return mod.exports;
 }
-const api = compile(await readFile(resolve(root, 'src/api.ts'), 'utf8'), 'api.ts');
-const extensions = compile(await readFile(resolve(root, 'src/extensions.tsx'), 'utf8'), 'extensions.tsx', { './api': api, './extensions.css': {} });
+const i18n = compile(await readFile(resolve(root, 'src/i18n.ts'), 'utf8'), 'i18n.ts');
+const api = compile(await readFile(resolve(root, 'src/api.ts'), 'utf8'), 'api.ts', { './i18n': i18n });
+// The engine's messages read in Chinese through the table the real backend serves, as in the browser.
+const messages = compile(await readFile(resolve(root, 'src/messages.ts'), 'utf8'), 'messages.ts', { './api': { api: path => request(path) }, './i18n': i18n });
+await messages.loadMessages();
+assert.equal(messages.zh('Oracle kind is not implemented.'), '尚未實作這種 oracle。', 'The console must read the backend message table.');
+const extensions = compile(await readFile(resolve(root, 'src/extensions.tsx'), 'utf8'), 'extensions.tsx', { './api': api, './extensions.css': {}, './i18n': i18n, './messages': messages });
+// The screens, each compiled with the modules it imports, as the bundle links them.
+const ui = compile(await readFile(resolve(root, 'src/ui.tsx'), 'utf8'), 'ui.tsx', { './i18n': i18n });
+const screens = { './api': api, './extensions': extensions, './i18n': i18n, './messages': messages, './ui': ui };
+const runDetail = compile(await readFile(resolve(root, 'src/run-detail.tsx'), 'utf8'), 'run-detail.tsx', screens);
+const createForm = compile(await readFile(resolve(root, 'src/create-form.tsx'), 'utf8'), 'create-form.tsx', screens);
+const capabilitiesView = compile(await readFile(resolve(root, 'src/capabilities.tsx'), 'utf8'), 'capabilities.tsx', screens);
+const components = { ...ui, ...runDetail, ...createForm, ...capabilitiesView };
 const source = await readFile(resolve(root, 'src/App.tsx'), 'utf8');
 // Vite statically replaces import.meta.env.* at build time (false for a
 // production bundle); transpileModule cannot transform import.meta, so the
-// smoke applies the same substitution before compiling.
-const components = compile(source.replace(/import\.meta\.env\.\w+/g, 'false') + '\nexport { RunDetail, CreateForm, CapabilitiesView, SafeText };', 'App.tsx', { './api': api, './extensions': extensions });
+// smoke applies the same substitution before compiling. The shell is compiled
+// so that a broken import there fails the smoke too.
+const app = compile(source.replace(/import\.meta\.env\.\w+/g, 'false'), 'App.tsx', { ...screens, './capabilities': capabilitiesView, './create-form': createForm, './run-detail': runDetail });
+assert.equal(typeof app.default, 'function', 'App.tsx must export the shell component.');
 const noop = () => {};
 const render = (component, props) => renderToStaticMarkup(React.createElement(component, props));
 const tabs = ['overview', 'trace', 'findings', 'evidence', 'activity'];
@@ -114,6 +128,21 @@ for (const tab of tabs) {
 }
 assert(render(components.CreateForm, { onCreate: async () => {}, busy: false, connected: true }).includes('合成示範'));
 assert(render(components.CapabilitiesView, { capabilities, session }).includes('已知限制'));
+assert(render(components.CapabilitiesView, { capabilities, session }).includes(capabilities.limitations_zh[0]));
+// The same components in the English interface: interface labels switch, and none of the Chinese ones remain.
+i18n.setLang('en');
+for (const tab of tabs) {
+  const html = render(components.RunDetail, { run, tab, setTab: noop, action: async () => {}, busy: '' });
+  assert(html.includes('Synthetic demo · not a real security assessment'), `Missing English synthetic banner in ${tab}`);
+  assert(html.includes('Incomplete') && !html.includes('未完整完成'), `Completion state not in English in ${tab}`);
+  assert(html.includes('Overview and models') && !html.includes('總覽與模型'), `Tabs not in English in ${tab}`);
+}
+const englishForm = render(components.CreateForm, { onCreate: async () => {}, busy: false, connected: true });
+assert(englishForm.includes('Synthetic demo') && englishForm.includes('Create and start') && !englishForm.includes('建立並開始'));
+const englishCapabilities = render(components.CapabilitiesView, { capabilities, session });
+assert(englishCapabilities.includes('Known limitations') && englishCapabilities.includes(capabilities.limitations[0]));
+assert(capabilities.tools.every(tool => englishCapabilities.includes(tool.detail_en.replace(/'/g, '&#x27;'))));
+i18n.setLang('zh-Hant');
 const hostile = '<script>alert("unsafe")</script><img src=x onerror=alert(1)>';
 const safeHtml = render(components.SafeText, { value: hostile });
 assert(!safeHtml.includes('<script>') && !safeHtml.includes('<img'));

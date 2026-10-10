@@ -30,7 +30,7 @@ async def test_selected_ai_tool_is_used_inside_reset_effect_cleanup_lifecycle(tm
     async def hook(**ctx): pass
     try:
         with RunningFixture([sys.executable, str(FIXTURES/"ai-agent/server.py"), "--mode", mode, "--port", "0"]) as target:
-            result = await run_fixture_case(runtime, manifest(target.origin, c), c, fixture_profile="synthetic-ai-v1",
+            result = await run_fixture_case(runtime, manifest(target.origin, c, monkeypatch), c, fixture_profile="synthetic-ai-v1",
                 cancel_event=asyncio.Event(), request_hook=hook, repetitions=2)
             assert result["status"] == expected, result
             assert result["cleanup_confirmed"] and len(result["effect_bundles"]) == 2

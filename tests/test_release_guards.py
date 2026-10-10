@@ -10,7 +10,7 @@ from vibe_audit.domain import RunInput
 from vibe_audit.policy import PolicyError
 from vibe_audit.service import Engine, report_markdown
 from vibe_audit.store import Store
-from vibe_audit.worker_entry import Supervisor
+from vibe_audit.worker_entry import Supervisor, without_host_paths
 
 
 def supervisor(monkeypatch):
@@ -48,6 +48,38 @@ def test_supervisor_allows_only_planned_headers_and_json(monkeypatch):
             instance.allowed_request(request(headers=headers))
 
 
+def test_docker_startup_errors_keep_their_words_but_not_this_hosts_paths():
+    error = 'docker: Error response from daemon: invalid mount config for type "bind": bind source path does not exist: /home/op/.vibe/w-abc/inputs; see /var/run/docker.sock'
+    assert without_host_paths(error) == 'docker: Error response from daemon: invalid mount config for type "bind": bind source path does not exist: <path>; see <path>'
+    assert without_host_paths(r"C:\Users\op\data\w-1 is in use; version 1.2.3; rate 3/4; a/b") == "<path> is in use; version 1.2.3; rate 3/4; a/b"
+    assert without_host_paths("no path here") == "no path here"
+
+
+def test_failure_notes_name_the_type_and_location_never_the_message(tmp_path):
+    import logging
+    from vibe_audit import diagnostics
+    records = []
+    handler = logging.Handler()
+    handler.emit = lambda record: records.append(record.getMessage())
+    diagnostics.log.addHandler(handler)
+    diagnostics.log.setLevel(logging.INFO)
+    try:
+        try:
+            raise RuntimeError("Bearer sk-live-secret-token body")
+        except RuntimeError as exc:
+            diagnostics.note_failure("run r1 stage review", exc)
+        diagnostics.note_failure("no traceback", ValueError("nothing"))
+    finally:
+        diagnostics.log.removeHandler(handler)
+    assert records[0].startswith("run r1 stage review: RuntimeError at test_release_guards.py:")
+    assert "secret" not in records[0] and "body" not in records[0]
+    assert records[1] == "no traceback: ValueError at unknown location"
+    path = diagnostics.configure(tmp_path)
+    assert path == tmp_path / "vibe-audit.log" and (path.stat().st_mode & 0o777) == 0o600
+    assert "workbench started" in path.read_text(encoding="utf-8")
+    diagnostics.log.handlers.clear()
+
+
 def test_report_markdown_never_interprets_untrusted_html_or_links():
     run = {"name":'<script>alert(1)</script>',"id":"r","mode":"demo","status":"complete",
         "findings":[{"severity":"high","state":"hypothesis",
@@ -59,6 +91,23 @@ def test_report_markdown_never_interprets_untrusted_html_or_links():
     assert "[click](javascript:" not in report
     assert "Capability limits" in report
     assert run["name"].startswith("<script>")
+
+
+def test_chinese_report_uses_chinese_wording_and_escapes_the_same_way():
+    run = {"name":'<script>alert(1)</script>',"id":"r","mode":"demo","status":"incomplete",
+        "report_note":"SYNTHETIC DEMO ONLY: not real model or application validation",
+        "findings":[{"severity":"high","state":"hypothesis","title":"[click](javascript:alert(1))","evidence_ids":["e1","e2"]}],
+        "gaps":["<img src=x onerror=alert(1)>"],"executions":[{"case_id":"C-1","status":"outcome_unknown","reason":"sent"}],
+        "limitations":["General bound"],"manifest":{"parent_run_id":"p1","parent_finding_ids":["f1"]}}
+    report = report_markdown(run, "zh-Hant")
+    assert "<script>" not in report and "<img " not in report and "[click](javascript:" not in report
+    for text in ("## 發現", "## 涵蓋缺口", "## 執行紀錄", "## 能力限制", "模式：合成示範｜狀態：未完整完成", "- [高 / 待驗證假設]",
+                 "  證據：e1、e2", "- C-1：結果不明", "複測對象：p1（發現：f1）", "僅為合成示範：不是真實模型或應用程式的驗證"):
+        assert text in report, text
+    # An unknown code is shown as it is rather than dropped.
+    assert "[mystery / hypothesis]" in report_markdown({**run, "findings":[{**run["findings"][0], "severity":"mystery"}]})
+    with pytest.raises(ValueError):
+        report_markdown(run, "fr")
 
 
 async def test_optional_reporter_can_order_but_cannot_invent_findings(tmp_path):

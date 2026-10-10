@@ -8,7 +8,10 @@
     "dev": "vite --host 127.0.0.1",
     "build": "tsc -b && vite build",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
     "smoke": "node scripts/contract-smoke.mjs",
+    "check:i18n": "node scripts/check-i18n.mjs",
+    "check:messages": "node scripts/check-messages.mjs",
     "preview": "vite preview --host 127.0.0.1"
   },
   "dependencies": {
@@ -16,10 +19,14 @@
     "react-dom": "19.3.0"
   },
   "devDependencies": {
+    "@testing-library/dom": "10.4.2",
+    "@testing-library/react": "16.3.3",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
-    "@vitejs/plugin-react": "4.7.0",
-    "typescript": "5.8.3",
-    "vite": "6.4.3"
+    "@vitejs/plugin-react": "6.1.2",
+    "happy-dom": "20.14.6",
+    "typescript": "5.9.3",
+    "vite": "8.3.4",
+    "vitest": "5.0.3"
   }
 }

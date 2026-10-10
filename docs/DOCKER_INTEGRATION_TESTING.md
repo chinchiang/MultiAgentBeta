@@ -1,6 +1,6 @@
 # Linux 完整 Docker 整合測試
 
-VALIDATION.md 的「重跑」只示範 tests/test_tool_runners.py。本文記錄以一般使用者帳號、Docker 與暫存 PostgreSQL 執行整個 tests/ 的步驟，以及 2026-10-03 實際遇到的設定問題。映像須先依 LINUX_SETUP.md 第 3 節 provision；能操作 Docker daemon 的帳號屬高權限信任邊界。
+.github/workflows/integration.yml 在 GitHub Actions 上以同樣的步驟跑整套測試（必要時先把 Docker 升級到支援 Engine API v1.52 的版本，再以容器啟動 PostgreSQL；映像由 deploy/ 建置），每個 PR 與 main 的 push 都會執行。VALIDATION.md 的「重跑」只示範 tests/test_tool_runners.py。本文記錄以一般使用者帳號、Docker 與暫存 PostgreSQL 執行整個 tests/ 的步驟，以及 2026-10-03 實際遇到的設定問題。映像須先依 LINUX_SETUP.md 第 3 節 provision；能操作 Docker daemon 的帳號屬高權限信任邊界。
 
 ## 1. 暫存 PostgreSQL
 
@@ -16,10 +16,11 @@ mkdir -p /tmp/va-pgsock
 
 ## 2. 測試用 runtime profile
 
-正式 profile 的 work_root（/var/lib/vibeaudit/workers）屬於專用控制帳號。以自己的帳號測試時另產生一份，讓 work_root 指向自己可寫的目錄；腳本會從本機 Docker 讀出 image ID，不必手抄。
+正式 profile 的 work_root（/var/lib/vibeaudit/workers）屬於專用控制帳號。以自己的帳號測試時另產生一份，讓 work_root 指向自己可寫的目錄；腳本會從本機 Docker 讀出 image ID，不必手抄。三個離線掃描器測試與完整 pipeline 測試會掛載 profile 的 offline_db_dir（`--offline-db` 預設為 /opt/vibeaudit/osv），所以要先佈建離線 OSV 資料；目錄不存在時，這些測試會以 SandboxBlocked 或「OSV offline database needs a provisioning manifest」失敗，不會 skip。
 
 ```sh
-.venv/bin/python scripts/provision-runtime.py --output /tmp/va-runtime.json --work-root /tmp/va-workers
+.venv/bin/python scripts/provision-offline-db.py /tmp/va-osv
+.venv/bin/python scripts/provision-runtime.py --output /tmp/va-runtime.json --work-root /tmp/va-workers --offline-db /tmp/va-osv
 mkdir -p /tmp/va-workers
 ```
 
@@ -61,6 +62,15 @@ export VIBEAUDIT_TEST_NODE="$(command -v node)"   # 必須是 Node 24
 | 黑箱案例全部是 blocked，原因為 Supervisor could not prepare the worker | work_root 太長，`<work_root>/w-XXXXXXXX/broker/broker.sock` 超過 Linux unix socket 路徑上限 107 bytes | work_root 最多 77 bytes，例如第 2 節的 /tmp/va-workers。現在 preflight 會直接以「work_root is too long for the worker broker socket」回報不可用 |
 | 完整 pipeline 測試停在 whitebox，錯誤為 Incomplete review or source mismatch | cabb124 把審查輸入的 `focus` 改為 `core_questions` 與 `untrusted_commander_focus`，這個只在真實 Docker 下執行的測試沒有跟著改 | 已修正 tests/test_local_pipeline.py |
 
+## 2026-10-09 遇到的問題
+
+| 現象 | 原因 | 處理 |
+|---|---|---|
+| promptfoo 與 PyRIT 的 4 個整合測試以 `TypeError: manifest() missing 1 required positional argument: 'monkeypatch'` 失敗 | 5fd7836（10-06）讓 tests/test_fixture_protocol.py 的 manifest() 需要 monkeypatch，這支測試沒跟著改；10-06 的主機沒有工具映像，這些案例當時為 skip | 已修正 tests/test_tool_runners.py |
+| 三個離線掃描器測試為 blocked（SandboxBlocked），完整 pipeline 停在 preflight，錯誤為 OSV offline database needs a provisioning manifest | runtime profile 的 offline_db_dir 預設 /opt/vibeaudit/osv，但主機沒有佈建離線資料 | 第 2 節已加上 provision-offline-db.py 步驟 |
+| 工具映像建置在 pip 步驟出現 CERTIFICATE_VERIFY_FAILED | 建置主機的出站 HTTPS 經過會重新終止 TLS 的代理，容器內不信任其 CA | 本機測試以衍生 Dockerfile 用 `RUN --mount=type=secret` 只在 pip 與 npm 安裝步驟掛載代理 CA，相依套件仍來自 deploy/worker/locks；CA 不寫入映像，repo 的 Dockerfile 不變 |
+| initdb 拒絕以 root 執行 | PostgreSQL 不允許超級使用者帳號持有資料目錄 | 以一般使用者執行第 1 節的指令 |
+
 ## 清理
 
 ```sh
@@ -72,7 +82,7 @@ export VIBEAUDIT_TEST_NODE="$(command -v node)"   # 必須是 Node 24
 ---
 # Full Docker integration testing on Linux
 
-The "re-run" in VALIDATION.md only demonstrates tests/test_tool_runners.py. This document records the steps for running the whole tests/ suite with a regular user account, Docker, and a throwaway PostgreSQL, as well as the configuration problems actually encountered on 2026-10-03. The images must first be provisioned as in section 3 of LINUX_SETUP.md; an account that can operate the Docker daemon is a high-privilege trust boundary.
+.github/workflows/integration.yml runs the whole suite the same way on GitHub Actions (first upgrading Docker to a release with Engine API v1.52 when needed, then starting PostgreSQL in a container; images built from deploy/) for every pull request and every push to main. The "re-run" in VALIDATION.md only demonstrates tests/test_tool_runners.py. This document records the steps for running the whole tests/ suite with a regular user account, Docker, and a throwaway PostgreSQL, as well as the configuration problems actually encountered on 2026-10-03. The images must first be provisioned as in section 3 of LINUX_SETUP.md; an account that can operate the Docker daemon is a high-privilege trust boundary.
 
 ## 1. Throwaway PostgreSQL
 
@@ -88,10 +98,11 @@ mkdir -p /tmp/va-pgsock
 
 ## 2. Runtime profile for testing
 
-The production profile's work_root (/var/lib/vibeaudit/workers) belongs to the dedicated control account. When testing under your own account, generate a separate profile whose work_root points to a directory you can write; the script reads the image IDs from the local Docker, so no manual copying is needed.
+The production profile's work_root (/var/lib/vibeaudit/workers) belongs to the dedicated control account. When testing under your own account, generate a separate profile whose work_root points to a directory you can write; the script reads the image IDs from the local Docker, so no manual copying is needed. The three offline scanner tests and the full pipeline test mount the profile's offline_db_dir (`--offline-db` defaults to /opt/vibeaudit/osv), so provision the offline OSV data first; without that directory those tests fail with SandboxBlocked or "OSV offline database needs a provisioning manifest" rather than skipping.
 
 ```sh
-.venv/bin/python scripts/provision-runtime.py --output /tmp/va-runtime.json --work-root /tmp/va-workers
+.venv/bin/python scripts/provision-offline-db.py /tmp/va-osv
+.venv/bin/python scripts/provision-runtime.py --output /tmp/va-runtime.json --work-root /tmp/va-workers --offline-db /tmp/va-osv
 mkdir -p /tmp/va-workers
 ```
 
@@ -132,6 +143,15 @@ The first four items are incomplete test-environment configuration; the last ite
 | PostgreSQL tests fail with `TypeError: a bytes-like object is required, not 'str'` | initdb ran under the C/POSIX locale without an encoding, so the cluster defaulted to SQL_ASCII; psycopg returns every text column of such a database as bytes | The initdb in section 1 now passes `-E UTF8`. An existing cluster can recreate the database with `CREATE DATABASE … ENCODING 'UTF8' TEMPLATE template0`. LeaseStore and Store now refuse a database or connection client_encoding other than UTF8 outright with "must use UTF8 encoding" |
 | Every black-box case is blocked with Supervisor could not prepare the worker | work_root is so long that `<work_root>/w-XXXXXXXX/broker/broker.sock` exceeds the 107-byte Linux unix socket path limit | Keep work_root at 77 bytes or less, such as /tmp/va-workers in section 2. Preflight now reports the runtime unavailable with "work_root is too long for the worker broker socket" |
 | The full pipeline test stops at whitebox with Incomplete review or source mismatch | cabb124 renamed the review input `focus` to `core_questions` and `untrusted_commander_focus`; this test runs only under real Docker and was not updated | Fixed in tests/test_local_pipeline.py |
+
+## Problems encountered on 2026-10-09
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| The 4 promptfoo and PyRIT integration tests fail with `TypeError: manifest() missing 1 required positional argument: 'monkeypatch'` | 5fd7836 (10-06) made manifest() in tests/test_fixture_protocol.py take monkeypatch and this test was not updated; the 10-06 host had no tools image, so these cases were skipped then | Fixed in tests/test_tool_runners.py |
+| The three offline scanner tests are blocked (SandboxBlocked) and the full pipeline stops at preflight with OSV offline database needs a provisioning manifest | The runtime profile's offline_db_dir defaults to /opt/vibeaudit/osv, but the host had no offline data | Section 2 now includes the provision-offline-db.py step |
+| The tools image build fails at the pip step with CERTIFICATE_VERIFY_FAILED | The build host's outbound HTTPS goes through a proxy that re-terminates TLS, and the containers do not trust its CA | For local testing a derived Dockerfile mounts the proxy CA with `RUN --mount=type=secret` for the pip and npm install steps only; dependencies still come from deploy/worker/locks, the CA is not written into the image, and the repository's Dockerfile is unchanged |
+| initdb refuses to run as root | PostgreSQL does not let a superuser account own the data directory | Run the section 1 commands as an ordinary user |
 
 ## Cleanup
 

@@ -9,14 +9,13 @@ import asyncio
 import copy
 import hashlib
 import json
-import os
 import re
-from pathlib import Path
 from typing import Protocol
 from urllib.parse import urlsplit
 
 from .adapters import evaluate_oracle
 from .effect_collector import EffectCollector, EffectGateway
+from .settings import fixture_config
 
 CONTROL = {"X-Fixture-Control": "local-synthetic-control"}
 PROFILES = {"synthetic-ai-v1", "synthetic-web-v1"}
@@ -72,9 +71,8 @@ def register_target_adapter(name, profile):
 
 def _profile(name):
     if name not in _REGISTERED:
-        config = os.environ.get("VIBEAUDIT_FIXTURE_CONFIG")
-        if config:
-            path = Path(config)
+        path = fixture_config()
+        if path is not None:
             if not path.is_file() or path.stat().st_size > 262144:
                 raise ValueError("Trusted fixture config missing or oversized")
             profiles = json.loads(path.read_text(encoding="utf8"))

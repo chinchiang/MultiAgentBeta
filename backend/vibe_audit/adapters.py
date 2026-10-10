@@ -78,6 +78,21 @@ def bound_model_credentials(environ=None):
 TARGET_CREDENTIAL_ORIGINS_ENV = "VIBEAUDIT_TARGET_CREDENTIAL_ORIGINS"
 
 
+def parse_bindings(text, parse_value, *, reserved=RESERVED_ENV):
+    """{name: {value}} of a credential-binding variable: NAME=value entries, comma-separated, a name repeating for
+    several values. A name must be a VIBEAUDIT_ credential name that is not one of this tool's own settings, and each
+    value is read by parse_value; a bad entry is a ValueError, which the caller turns into its own refusal.
+    """
+    bound = {}
+    for entry in filter(None, (item.strip() for item in text.split(","))):
+        name, _, value = entry.partition("=")
+        name = name.strip()
+        if not _CREDENTIAL_ENV.fullmatch(name) or name in reserved:
+            raise ValueError("Not a credential binding")
+        bound.setdefault(name, set()).add(parse_value(value.strip()))
+    return bound
+
+
 def target_credential_origins(environ=None):
     """The target origins each test identity credential may be sent to, as the operator's environment states them.
 
@@ -86,18 +101,10 @@ def target_credential_origins(environ=None):
     NAME=origin entries, comma-separated; a name may repeat for several origins. Nothing is bound by default.
     """
     environ = os.environ if environ is None else environ
-    bound = {}
-    for entry in filter(None, (item.strip() for item in environ.get(TARGET_CREDENTIAL_ORIGINS_ENV, "").split(","))):
-        name, _, value = entry.partition("=")
-        name = name.strip()
-        try:
-            if not _CREDENTIAL_ENV.fullmatch(name) or name in RESERVED_ENV:
-                raise AdapterBlocked("")
-            origin = _origin({"target_url": value.strip()})
-        except AdapterBlocked:
-            raise AdapterBlocked(f"{TARGET_CREDENTIAL_ORIGINS_ENV} entries must be VIBEAUDIT_NAME=scheme://host[:port]") from None
-        bound.setdefault(name, set()).add(origin)
-    return bound
+    try:
+        return parse_bindings(environ.get(TARGET_CREDENTIAL_ORIGINS_ENV, ""), parse_origin)
+    except ValueError:
+        raise AdapterBlocked(f"{TARGET_CREDENTIAL_ORIGINS_ENV} entries must be VIBEAUDIT_NAME=scheme://host[:port]") from None
 
 
 def unbound_target_credentials(manifest, environ=None):
@@ -285,23 +292,48 @@ def _cancelled(event):
     return event is not None and event.is_set()
 
 
-def _origin(manifest):
+_DEFAULT_PORTS = {"http": 80, "https": 443, "postgres": 5432, "postgresql": 5432}
+
+
+def parse_origin(value, *, allow_path=False):
+    """(scheme, host, port) of one exact HTTP(S) origin; ValueError for anything else.
+
+    The one parser for targets, model endpoints, credential bindings and run input, so every check reads an origin
+    the same way: scheme http or https; a hostname, IDNA-encoded and lowercased (an IPv6 literal without its
+    brackets); no userinfo, query, fragment, whitespace or control character, backslash, or percent-escape in the
+    authority; port 1..65535, the scheme's default when absent (":0" is a port, not a missing one). A path is refused
+    unless allow_path, which model endpoints such as .../v1 need. The supervisor loads this module on its own, so it
+    stays standard-library only.
+    """
     try:
-        raw = manifest.get("target_url", "")
-        if not isinstance(raw, str) or any(ord(c) < 33 for c in raw):
+        if not isinstance(value, str) or any(ord(c) < 33 for c in value) or "\\" in value:
             raise ValueError
-        parts = urlsplit(raw)
+        parts = urlsplit(value)
         if (parts.scheme not in {"http", "https"} or not parts.hostname
                 or parts.username is not None or parts.password is not None
-                or parts.path not in {"", "/"} or parts.query or parts.fragment
-                or "\\" in raw or "%" in parts.netloc):
+                or parts.query or parts.fragment or "%" in parts.netloc
+                or (not allow_path and parts.path not in {"", "/"})):
             raise ValueError
-        host = parts.hostname.encode("idna").decode("ascii").lower()
-        port = parts.port or (443 if parts.scheme == "https" else 80)
-        if not 1 <= port <= 65535:
+        host = parts.hostname.encode("idna").decode("ascii").lower()  # pragma: no mutate (codec names are case-insensitive)
+        port = parts.port if parts.port is not None else _DEFAULT_PORTS[parts.scheme]
+        if port < 1:  # urlsplit itself refuses a port above 65535
             raise ValueError
         return parts.scheme, host, port
     except (ValueError, TypeError, UnicodeError):
+        raise ValueError("Not a single exact HTTP(S) origin") from None
+
+
+def format_origin(scheme, host, port, *, omit_default_port=False):
+    """The origin text of parse_origin's parts: scheme://host[:port], an IPv6 host in brackets."""
+    suffix = "" if omit_default_port and port == _DEFAULT_PORTS[scheme] else f":{port}"
+    return f"{scheme}://{f'[{host}]' if ':' in host else host}{suffix}"
+
+
+def _origin(manifest):
+    """The run's target as (scheme, host, port), or the refusal every target check reports."""
+    try:
+        return parse_origin(manifest.get("target_url", ""))
+    except ValueError:
         raise AdapterBlocked("Target must be a single exact HTTP(S) origin without credentials, path or query.") from None
 
 
@@ -339,13 +371,12 @@ def target_ip_refused(address):
     return address.version == 4 and address.is_reserved
 
 
-_DEFAULT_PORTS = {"http": 80, "https": 443, "postgres": 5432, "postgresql": 5432}
-
-
 def control_plane_target(manifest, endpoints):
     """The console or database endpoint (host:port) the target would reach, or None.
 
-    The supervisor connects from the console's own host, so a loopback target can be the console itself.
+    The supervisor connects from the console's own host, so a loopback target can be the console itself. The
+    endpoints are the operator's own configuration (a database URL carries userinfo and a path), so they are only
+    split into host and port here, never validated as origins.
     """
     _, host, port = _origin(manifest)
     try:
@@ -433,6 +464,14 @@ class _PinnedHTTPSConnection(_PinnedHTTPConnection):
             raise
 
 
+def _put_header(headers, name, value):
+    """Set one header, replacing a name that differs only in letter case and keeping its place in the wire order."""
+    lower = name.lower()
+    if not any(key.lower() == lower for key in headers):
+        return {**headers, name: value}
+    return {(name if key.lower() == lower else key): (value if key.lower() == lower else old) for key, old in headers.items()}
+
+
 def _prepare_request(manifest, case, *, transport_headers=None):
     """transport_headers are added by trusted transport code (the supervisor's Content-Type for a body it forwards):
     they are not a model's choice, so they skip the per-endpoint model vocabulary but keep the same wire order."""
@@ -444,23 +483,29 @@ def _prepare_request(manifest, case, *, transport_headers=None):
             or "\\" in path or "#" in path or any(ord(c) < 33 for c in path)):
         raise AdapterBlocked("Case path must be origin-relative and must not contain control characters.")
     try:
-        path.encode("ascii")
+        path.encode("ascii")  # pragma: no mutate (codec names are case-insensitive)
     except UnicodeError:
         raise AdapterBlocked("Case path must use ASCII URL encoding.") from None
     headers = {"Accept": "application/json", "Accept-Encoding": "identity", "Connection": "close"}
     supplied = case.get("headers") or {}
     model_designed = case.get("designed_by") == "model"
-    vocabulary = model_header_vocabulary(manifest, method, path) if model_designed and manifest.get("relay") is not True else None
+    # Inside the relay the vocabulary is not consulted (case_headers_allowed), so computing it there changes nothing.
+    vocabulary = model_header_vocabulary(manifest, method, path) if model_designed else None
     if not case_headers_allowed(supplied, model_designed=model_designed, relay=manifest.get("relay") is True,
                                 vocabulary=vocabulary):
         raise AdapterBlocked("Case contains an unsupported, routing or credential-bearing request header.")
+    # HTTP names ignore letter case, so two spellings in one map would put two values for one header on the wire.
+    if len({name.lower() for name in supplied}) != len(supplied):
+        raise AdapterBlocked("Case repeats a request header name in another letter case.")
     if transport_headers:
-        supplied = {**supplied, **transport_headers}
+        for name, value in transport_headers.items():
+            supplied = _put_header(supplied, name, value)
         if model_designed:
             supplied = dict(sorted(supplied.items()))
     # A supplied Accept takes the default's place, so an explicit application/json and none at all look the same on the
     # wire; a model's other names follow in sorted order (case_headers_allowed), never in an order the model chose.
-    headers.update(supplied)
+    for name, value in supplied.items():
+        headers = _put_header(headers, name, value)
     secrets = []
     identity = case.get("identity")
     if identity is not None:
@@ -490,12 +535,12 @@ def _prepare_request(manifest, case, *, transport_headers=None):
         if method in {"GET", "HEAD"}:
             raise AdapterBlocked("GET and HEAD cases cannot contain a request body.")
         try:
-            body = json.dumps(body, ensure_ascii=False, allow_nan=False).encode("utf-8")
+            body = json.dumps(body, ensure_ascii=False, allow_nan=False).encode("utf-8")  # pragma: no mutate (None reads as False; codec names are case-insensitive)
         except (ValueError, TypeError):
             raise AdapterBlocked("Request body must be finite JSON data.") from None
         if len(body) > MAX_REQUEST_BYTES:
             raise AdapterBlocked("Request body exceeds the configured byte limit.")
-        headers["Content-Type"] = "application/json"
+        headers = _put_header(headers, "Content-Type", "application/json")
     return method, path, headers, body, secrets
 
 
@@ -504,10 +549,12 @@ def _request(scheme, host, port, pinned_ip, method, path, headers, body, timeout
     conn = connection_type(host, port, pinned_ip=pinned_ip, timeout=timeout)
     deadline = time.monotonic() + timeout
     watchdog = None
+    expired = threading.Event()
     try:
         conn.connect()
         transport_socket = conn.sock
         def end_transport():
+            expired.set()
             try:
                 transport_socket.shutdown(socket.SHUT_RDWR)
             except OSError:
@@ -519,23 +566,27 @@ def _request(scheme, host, port, pinned_ip, method, path, headers, body, timeout
         watchdog.start()
         conn.request(method, path, body=body, headers=headers)
         response = conn.getresponse()
+        # A closed socket ends the status line, the headers and the body quietly: it is a timeout, not a response.
+        if expired.is_set():
+            raise TimeoutError
         if 300 <= response.status < 400:
             return {"status_code": response.status, "body": "", "complete": False, "redirect_blocked": True}
-        encoding = response.getheader("Content-Encoding", "identity").lower()
+        encoding = response.getheader("Content-Encoding", "identity").lower()  # pragma: no mutate (header names and the default are compared case-insensitively)
         if encoding not in {"", "identity"}:
             raise ResponseLimitError("Compressed responses are unsupported; no oracle was evaluated.")
-        length = response.getheader("Content-Length")
+        length = response.getheader("Content-Length")  # pragma: no mutate (header names are case-insensitive)
         if length is not None:
             try:
-                if int(length) < 0 or int(length) > MAX_RESPONSE_BYTES:
-                    raise ResponseLimitError("Response exceeds the configured byte limit.")
+                length = int(length)
             except ValueError:
                 raise ResponseLimitError("Invalid response length; no oracle was evaluated.") from None
+            if length < 0 or length > MAX_RESPONSE_BYTES:
+                raise ResponseLimitError("Response exceeds the configured byte limit.")
         chunks = []
         size = 0
         while True:
             remaining = deadline - time.monotonic()
-            if remaining <= 0:
+            if remaining <= 0:  # pragma: no mutate (the exact instant cannot be hit; the watchdog ends the transport then)
                 raise TimeoutError
             # With Connection: close, HTTPResponse may own the socket after
             # HTTPConnection.sock has been cleared by getresponse().
@@ -552,13 +603,20 @@ def _request(scheme, host, port, pinned_ip, method, path, headers, body, timeout
             if size > MAX_RESPONSE_BYTES:
                 raise ResponseLimitError("Response exceeds the configured byte limit.")
         raw = b"".join(chunks)
-        if length is not None and len(raw) != int(length):
+        if expired.is_set():
+            raise TimeoutError
+        if length is not None and len(raw) != length:
             raise ResponseLimitError("Response was incomplete; no oracle was evaluated.")
         try:
-            text = raw.decode("utf-8", errors="strict")
+            text = raw.decode("utf-8", errors="strict")  # pragma: no mutate (the defaults are the same codec and strictness)
         except UnicodeError:
             raise ResponseLimitError("Only complete UTF-8 responses can be evaluated.") from None
         return {"status_code": response.status, "body": text, "complete": True, "bytes": size}
+    except Exception:
+        # Whatever the cut socket made http.client raise, the deadline is what ended the exchange.
+        if expired.is_set():
+            raise TimeoutError from None
+        raise
     finally:
         if watchdog is not None:
             watchdog.cancel()
@@ -649,7 +707,7 @@ async def execute_case(manifest: dict, case: dict, *, cancel_event, request_hook
         return _result("blocked", "Run was cancelled before a request.")
     requests = 0
     observations = []
-    current_method = "GET"
+    current_method = "GET"  # pragma: no mutate (every request sets it before any transport error can be raised)
     try:
         scheme, host, port = _origin(manifest)
         # Validate the main request before allowing even positive-control I/O.
@@ -672,15 +730,12 @@ async def execute_case(manifest: dict, case: dict, *, cancel_event, request_hook
                     or not control["required_text"]
                     or any(not isinstance(t, str) or not t for t in control["required_text"])):
                 raise AdapterBlocked("Positive controls require a name, GET path, expected 2xx status and explicit required text.")
-            request = {"method": "GET", "path": control.get("path"), "headers": control.get("headers") or {},
-                       "identity": control.get("identity"), "body": None, "designed_by": case.get("designed_by")}
+            request = {"path": control.get("path"), "headers": control.get("headers") or {}, "identity": control.get("identity"), "designed_by": case.get("designed_by")}
             _prepare_request(manifest, request)
             controls.append((control, request))
 
         async def dispatch(request):
             nonlocal requests, current_method
-            if _cancelled(cancel_event):
-                raise AdapterBlocked("Run was cancelled before a request.")
             method, path, headers, body, secrets = _prepare_request(manifest, request)
             current_method = method
             # Resolution is bounded separately. The connected numeric IP cannot
@@ -761,8 +816,11 @@ async def execute_case(manifest: dict, case: dict, *, cancel_event, request_hook
 def tool_capabilities() -> list[dict]:
     tools = ["semgrep", "osv", "gitleaks", "zap", "schemathesis", "playwright", "promptfoo", "pyrit"]
     return [{"id": name, "available": False, "status": "implemented_requires_runtime", "implemented": True, "cli_detected": bool(shutil.which(name)),
-             "detail": "Adapter 已實作；尚未配置可驗證的 Linux 隔離執行環境與固定工具映像。"} for name in tools] + [
+             "detail": "Adapter 已實作；尚未配置可驗證的 Linux 隔離執行環境與固定工具映像。",
+             "detail_en": "Adapter implemented; no verifiable isolated Linux runtime or pinned tool image is configured yet."} for name in tools] + [
         {"id": "synthetic_demo", "available": True, "status": "synthetic_only", "implemented": True,
-         "detail": "可執行本地合成流程；不會呼叫真實模型或驗證其偵測品質。"},
+         "detail": "可執行本地合成流程；不會呼叫真實模型或驗證其偵測品質。",
+         "detail_en": "Runs the local synthetic flow; it calls no real model and does not verify detection quality."},
         {"id": "tool_effect_collector", "available": False, "status": "target_binding_required", "implemented": True,
-         "detail": "獨立事件及副作用收集器已實作；實際目標必須配置可信 binding，無觀測時不判定通過。"}]
+         "detail": "獨立事件及副作用收集器已實作；實際目標必須配置可信 binding，無觀測時不判定通過。",
+         "detail_en": "Independent event and side-effect collector implemented; a real target needs a trusted binding, and nothing passes without an observation."}]

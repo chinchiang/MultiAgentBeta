@@ -4,14 +4,18 @@ React + TypeScript + Vite 前端，Apache-2.0。介面使用繁體中文；所�
 
 ## 建置與使用
 
-需 Node.js 24，與專案其餘部分一致（TS fixture 以內建 type stripping 執行）；UI 建置本身使用 Vite 6，Node 18、20 或 22+ 也可建置。
+需 Node.js 24，與專案其餘部分一致（TS fixture 以內建 type stripping 執行）；UI 建置本身使用 Vite 8，Node 20.19+ 或 22.12+ 也可建置。
 
 ```powershell
 cd frontend
 npm ci
 npm run typecheck
+npm test
+npm run check:i18n
 npm run build
 ```
+
+`npm test` 以 vitest 在 happy-dom 模擬的瀏覽器裡跑 `tests/` 的單元與元件測試（語言切換、引擎訊息對照、API 用戶端、表單與畫面），不需要後端；`npm run smoke` 才會連真實後端。
 
 建置檔案在 `dist/`。正常使用時由 FastAPI 在同一個本地 origin 提供前端；啟動後端後開啟它印出的 `http://127.0.0.1:8000/#token=…`。
 
@@ -21,6 +25,7 @@ npm run build
 
 ## 實際連線行為
 
+- 介面有正體中文與英文兩種語言，右上角按鈕切換，選擇記在這個瀏覽器的 localStorage；無法使用儲存空間時維持中文。每段可見文字都在使用處寫成 `t('中文','English')`（見 `src/i18n.ts`）。
 - 啟動時從網址 fragment 取出啟動權杖（只存在記憶體並自網址移除），以 `X-VibeAudit-Token` 呼叫 `/api/session` 取得 HttpOnly session cookie 與 CSRF token。cookie 不分 port，所以所有 API 請求（含 GET）都加上 `X-CSRF-Token`；token 存在此分頁的 sessionStorage，重新整理時以它向 `/api/session` 證明 session，新分頁需重新開啟啟動網址。
 - 建立評估依序呼叫 `POST /api/runs`、`POST /api/runs/{id}/start`。
 - 以 fetch 讀取 SSE（EventSource 無法帶 header）的 `progress` / `done` 更新進度，執行中每 2.5 秒再同步一次狀態。執行結束後停止更新。
@@ -54,7 +59,7 @@ npm run build
 
 後端啟動後，設定 `VIBEAUDIT_SESSION_TOKEN` 為後端的啟動權杖再執行 `npm run smoke`，或 `npm run smoke -- --base-url http://127.0.0.1:8000`。只接受數字 loopback HTTP origin，會留下明確標示的合成評估紀錄。
 
-此檢查實際建立與啟動 demo，驗證三份合成 review、`pass/fail/inconclusive` 結果、所有證據讀取、三種報告，再使用真實 Run 資料渲染 React 的五個報告分頁，並驗證不可信 HTML 以文字跳脫。這是 API 與 React SSR 整合測試；不包含瀏覽器點擊、視覺截圖、SSE 重連或真實 LLM／目標驗證。表單互動與窄螢幕仍需依上述功能驗收步驟檢查。
+此檢查實際建立與啟動 demo，驗證三份合成 review、`pass/fail/inconclusive` 結果、所有證據讀取、三種報告，再使用真實 Run 資料渲染 React 的五個報告分頁，並驗證不可信 HTML 以文字跳脫。這是 API 與 React SSR 整合測試；不包含瀏覽器點選、視覺截圖、SSE 重連或真實 LLM／目標驗證。表單互動與窄螢幕仍需依上述功能驗收步驟檢查。
 
 ---
 # Vibe Audit Local Workbench
@@ -63,14 +68,18 @@ React + TypeScript + Vite frontend, Apache-2.0. The interface uses 繁體中文;
 
 ## Build and Usage
 
-Node.js 24 is required, consistent with the rest of the project (the TS fixture runs with built-in type stripping); the UI build itself uses Vite 6, and Node 18, 20, or 22+ can also build it.
+Node.js 24 is required, consistent with the rest of the project (the TS fixture runs with built-in type stripping); the UI build itself uses Vite 8, and Node 20.19+ or 22.12+ can also build it.
 
 ```powershell
 cd frontend
 npm ci
 npm run typecheck
+npm test
+npm run check:i18n
 npm run build
 ```
+
+`npm test` runs the unit and component tests in `tests/` (language switch, engine message table, API client, form and screens) with vitest in a happy-dom simulated browser and needs no backend; `npm run smoke` is the one that talks to a real backend.
 
 The built files are in `dist/`. In normal use, FastAPI serves the frontend on the same local origin; after starting the backend, open the `http://127.0.0.1:8000/#token=…` it prints.
 
@@ -80,6 +89,7 @@ Dev mode uses `npm run dev`, defaulting to `http://127.0.0.1:5173`, with `/api` 
 
 ## Actual Connection Behavior
 
+- The interface is in Traditional Chinese (Taiwan) or English. The button at the top right switches it, and the choice is stored in this browser's localStorage; if storage is unavailable the console stays in Chinese. Every visible string is written where it is used as `t('中文','English')` (see `src/i18n.ts`).
 - At startup, the launcher token is taken from the URL fragment (kept only in memory and removed from the URL), and `/api/session` is called with `X-VibeAudit-Token` to obtain an HttpOnly session cookie and a CSRF token. Cookies are not port-scoped, so all API requests (including GET) include `X-CSRF-Token`; the token is stored in this tab's sessionStorage, and on refresh it is used to prove the session to `/api/session`; a new tab must reopen the launcher URL.
 - Creating an evaluation calls `POST /api/runs` and then `POST /api/runs/{id}/start` in order.
 - SSE is read via fetch (EventSource cannot send headers) for `progress` / `done` updates to progress, with an extra status sync every 2.5 seconds while a run is in progress. Updates stop after the run ends.

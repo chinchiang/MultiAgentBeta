@@ -5,7 +5,6 @@ import copy
 import hashlib
 import json
 import html
-import os
 import re
 import uuid
 from datetime import datetime
@@ -15,7 +14,9 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import InMemorySaver
 
 from .catalog import CatalogError
+from .diagnostics import note_failure
 from .domain import RunInput, digest, new_run, now
+from .messages import zh
 from .policy import Policy, PolicyError, elapsed_seconds, sealed
 from .store import Store
 from .contracts import (CORE_REVIEW_QUESTIONS, CaseDesignProposal, CommanderProposal, ArchitectureProposal,
@@ -56,6 +57,7 @@ class Engine:
                 run["status"]="cancelling" if run.get("workers_pending_cleanup") else "incomplete"
                 run["error"]=("Controller restarted after a request was sent; reset the target and continue in a new run" if settled
                             else "Controller restarted; resume re-checks every gate against the stored run")
+                run["error_zh"]=zh(run["error"])
                 if run.get("attempt_started_at"):
                     # The interrupted attempt was active until its last save at the latest.
                     attempt=(datetime.fromisoformat(run["updated_at"])-datetime.fromisoformat(run["attempt_started_at"])).total_seconds()
@@ -149,6 +151,7 @@ class Engine:
         self.runs[run_id]=run
         run["status"]="running"
         run["error"]=None
+        run["error_zh"]=None
         run["started_at"]=run.get("started_at") or now()
         run["attempt_started_at"]=now()
         self.event(run,"Resuming journaled workflow" if resume else "Starting evidence-gated workflow")
@@ -283,12 +286,14 @@ class Engine:
                 self.event(run,"Workflow returned after cancellation; no further capabilities remain", "warning")
                 return
             run["status"]="cancelling" if run.get("workers_pending_cleanup") else "blocked" if isinstance(exc,PolicyError) else "failed"
+            note_failure(f"run {run['id']} stage {run.get('stage')}",exc)
             # Exception bodies from provider/targets can include sensitive data: never expose them.
             # Policy and catalog messages are fixed local text, so they stay diagnosable.
             from .providers import ProviderError
             # ProviderError text is fixed local wording that never embeds provider bodies or credentials.
             run["error"]=(str(exc) if isinstance(exc,(PolicyError,CatalogError)) else f"Model call failed ({exc.code}): {exc}" if isinstance(exc,ProviderError)
                         else f"{type(exc).__name__}: operation failed; no successful verification claimed")
+            run["error_zh"]=zh(run["error"])
             self.event(run,run["error"],"error")
         finally:
             self.policy.revoke(run["id"])
@@ -687,6 +692,7 @@ class Engine:
         for p in profiles:
             result=done[p["id"]] if p["id"] in done else results[p["id"]]
             if isinstance(result,BaseException):
+                note_failure(f"run {run['id']} review {p['id']}",result)
                 # Policy and provider messages are fixed local text; anything else keeps only its type name.
                 reason=(str(result) if isinstance(result,PolicyError) else f"Model call failed ({result.code}): {result}" if isinstance(result,ProviderError)
                         else type(result).__name__)
@@ -961,7 +967,37 @@ def model_body_denied(run:dict,case:dict)->bool:
                    for r in run["manifest"].get("allowed_requests",[]))
 
 
-def report_markdown(run:dict)->str:
+# Report languages: English (the default, for existing callers) and Traditional Chinese for the console's Chinese interface.
+REPORT_LANGUAGES=("en","zh-Hant")
+_REPORT_TEXT={
+    "en":{"run":"Run: {id}","retest":"Retest of: {parent} (findings: {findings})","mode":"Mode: {mode} | Status: {status}",
+          "error":"Error: {error}","note":"Incomplete report; workflow has not finished","findings":"## Findings","evidence":"  Evidence: {ids}",
+          "gaps":"## Coverage gaps","executions":"## Executions","limits":"## Capability limits","sep":", ","execution":"- {case}: {status} — {reason}",
+          "counter":"  Challenger counterevidence: {text}","missing":"  Challenger missing evidence: {text}","retested":"  Retest {run}: {outcome}"},
+    "zh-Hant":{"run":"執行：{id}","retest":"複測對象：{parent}（發現：{findings}）","mode":"模式：{mode}｜狀態：{status}",
+               "error":"錯誤：{error}","note":"報告未完整；流程尚未結束","findings":"## 發現","evidence":"  證據：{ids}",
+               "gaps":"## 涵蓋缺口","executions":"## 執行紀錄","limits":"## 能力限制","sep":"、","execution":"- {case}：{status} — {reason}",
+               "counter":"  反證審查員的反證：{text}","missing":"  反證審查員指出缺少的證據：{text}","retested":"  複測 {run}：{outcome}"},
+}
+# Chinese labels for the codes a report shows, the same wording as the console. Unknown codes stay as they are.
+_REPORT_LABELS_ZH={
+    "run_status":{"created":"待啟動","awaiting_approval":"待核准案例","running":"執行中","cancelling":"停止中","cancelled":"已停止",
+                  "completed":"已完成","incomplete":"未完整完成","blocked":"受阻","failed":"執行失敗"},
+    "execution_status":{"pass":"未觀測到違規","fail":"觀測到違規","inconclusive":"證據不足","blocked":"受阻",
+                        "execution_error":"執行錯誤","outcome_unknown":"結果不明"},
+    "mode":{"demo":"合成示範","live":"實際評估"},
+    "severity":{"critical":"嚴重","high":"高","medium":"中","low":"低","info":"資訊"},
+    "state":{"hypothesis":"待驗證假設","corroborated_static":"靜態佐證","validated_dynamic":"動態驗證","refuted":"已排除","inconclusive":"尚無定論","resolved_in_retest":"複測已修正"},
+    "retest_outcome":{"pass":"全部通過","fail":"再次觀測到違規","inconclusive":"證據不足","untraced":"沒有可追溯的案例"},
+    "note":{"SYNTHETIC DEMO ONLY: not real model or application validation":"僅為合成示範：不是真實模型或應用程式的驗證",
+            "Results cover only executed cases and available evidence; unresolved gaps remain visible":"結果只涵蓋已執行的案例與現有證據；未解決的缺口會保持可見"},
+}
+
+
+def report_markdown(run:dict,lang:str="en")->str:
+    if lang not in REPORT_LANGUAGES:
+        raise ValueError("Unsupported report language")
+    text=_REPORT_TEXT[lang]
     # Escape untrusted values before Markdown consumers can interpret them.
     def safe(value):
         value=html.escape(str(value),quote=True).replace("\r"," ").replace("\n"," ")
@@ -969,6 +1005,22 @@ def report_markdown(run:dict)->str:
         value=re.sub(r"(?i)\bwww\.","www[.]",value.replace("://","[:]//"))
         return "".join("\\"+c if c in "\\\x60*_{}[]()#!|" else c for c in value)
     run=copy.deepcopy(run)
+    if lang=="zh-Hant":
+        # Codes become labels before escaping, so every value still passes through safe().
+        label=lambda kind,value:_REPORT_LABELS_ZH[kind].get(value,value) if isinstance(value,str) else value
+        run["status"]=label("run_status",run.get("status"))
+        run["mode"]=label("mode",run.get("mode"))
+        if "report_note" in run: run["report_note"]=label("note",run["report_note"])
+        # The engine's own fixed text reads in Chinese; model, scanner and target text stays as it is.
+        said=lambda value:zh(value) or value
+        if run.get("error"): run["error"]=said(run["error"])
+        run["gaps"]=[said(value) for value in run["gaps"]]
+        for finding in run["findings"]:
+            finding["severity"]=label("severity",finding["severity"]); finding["state"]=label("state",finding["state"])
+            finding["title"]=said(finding["title"])
+        for execution in run["executions"]:
+            execution["status"]=label("execution_status",execution["status"])
+            execution["reason"]=said(execution.get("reason",""))
     for key in ("name","id","mode","status","report_note"):
         if key in run: run[key]=safe(run[key])
     challenges={}
@@ -976,10 +1028,11 @@ def report_markdown(run:dict)->str:
         challenges.setdefault(item.get("finding_id"),[]).append(item)
     for finding in run["findings"]:
         challenged=challenges.get(finding.get("id"),[])
-        notes=[*(f"Challenger counterevidence: {item.get('counterevidence')}" for item in challenged if item.get("counterevidence")),
-               *(f"Challenger missing evidence: {item.get('missing_evidence')}" for item in challenged if item.get("missing_evidence")),
-               *(f"Retest {item.get('run_id')}: {item.get('outcome')}" for item in finding.get("retests",[]))]
-        finding["notes"]=[safe(note[:1000]) for note in notes]
+        outcome=lambda value:_REPORT_LABELS_ZH["retest_outcome"].get(value,value) if lang=="zh-Hant" else value
+        # Model and run text is escaped before it fills the fixed wording.
+        finding["notes"]=[*(text["counter"].format(text=safe(str(item["counterevidence"])[:1000])) for item in challenged if item.get("counterevidence")),
+                          *(text["missing"].format(text=safe(str(item["missing_evidence"])[:1000])) for item in challenged if item.get("missing_evidence")),
+                          *(text["retested"].format(run=safe(item.get("run_id")),outcome=safe(outcome(item.get("outcome")))) for item in finding.get("retests",[]))]
         for key in ("severity","state","title"): finding[key]=safe(finding[key])
         finding["evidence_ids"]=[safe(value) for value in finding["evidence_ids"]]
     for execution in run["executions"]:
@@ -987,16 +1040,15 @@ def report_markdown(run:dict)->str:
     run["gaps"]=[safe(value) for value in run["gaps"]]
     manifest=run.get("manifest") or {}
     # A retest report says what it re-checks, so a clean result is not read as a fresh assessment.
-    retest=[f"Retest of: {safe(manifest['parent_run_id'])} (findings: {', '.join(safe(value) for value in manifest.get('parent_finding_ids',[]))})"] if manifest.get("parent_run_id") else []
-    error=[f"Error: {safe(run['error'])}"] if run.get("error") else []
-    lines=[f"# {run['name']}","",f"Run: {run['id']}",*retest,f"Mode: {run['mode']} | Status: {run['status']}",*error,"",run.get("report_note","Incomplete report; workflow has not finished"),"","## Findings",""]
+    retest=[text["retest"].format(parent=safe(manifest["parent_run_id"]),findings=text["sep"].join(safe(value) for value in manifest.get("parent_finding_ids",[])))] if manifest.get("parent_run_id") else []
+    error=[text["error"].format(error=safe(run["error"]))] if run.get("error") else []
+    lines=[f"# {run['name']}","",text["run"].format(id=run["id"]),*retest,text["mode"].format(mode=run["mode"],status=run["status"]),*error,"",run.get("report_note",text["note"]),"",text["findings"],""]
     for f in run["findings"]:
-        lines.extend([f"- [{f['severity']} / {f['state']}] {f['title']}",f"  Evidence: {', '.join(f['evidence_ids'])}",*("  "+note for note in f["notes"])])
-    lines.extend(["","## Coverage gaps",""]+["- "+str(g) for g in run["gaps"]])
-    lines.extend(["","## Executions",""]+[f"- {e['case_id']}: {e['status']} — {e['reason']}" for e in run["executions"]])
-    lines.extend(["","## Capability limits",""]+["- "+safe(value) for value in run.get("limitations",[])])
+        lines.extend([f"- [{f['severity']} / {f['state']}] {f['title']}",text["evidence"].format(ids=text["sep"].join(f["evidence_ids"])),*f["notes"]])
+    lines.extend(["",text["gaps"],""]+["- "+str(g) for g in run["gaps"]])
+    lines.extend(["",text["executions"],""]+[text["execution"].format(case=e["case_id"],status=e["status"],reason=e["reason"]) for e in run["executions"]])
+    lines.extend(["",text["limits"],""]+["- "+safe(value) for value in run.get("limitations",[])])
     return "\n".join(lines)
-
 
 SARIF_LEVELS={"validated_dynamic":"error","corroborated_static":"warning","hypothesis":"note","inconclusive":"note","refuted":"none","resolved_in_retest":"none"}
 # Line breaks, other controls and bidi or zero-width marks, which can hide or reorder text in a viewer.

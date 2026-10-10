@@ -51,7 +51,19 @@ def test_model_headers_are_canonicalized_and_repeats_refused():
     with pytest.raises(ValueError, match="repeats a header name"):
         canonical_model_headers({"Accept": "*/*", "ACCEPT": "text/html"})
     # A name outside the vocabulary keeps its spelling, so the gate still sees and refuses it.
+    assert canonical_model_headers({"X-Tenant": "b"}) == {"X-Tenant": "b"}
     assert case_headers_allowed(canonical_model_headers({"X-Tenant": "b"}), model_designed=True, vocabulary=LISTED) is False
+    # Anything that is not a header map, or a name that is not text, is left for the gate to refuse.
+    assert canonical_model_headers(["Accept"]) == ["Accept"] and canonical_model_headers({7: "x"}) == {7: "x"}
+
+
+def test_request_method_defaults_to_get_and_accepts_only_known_methods():
+    assert _prepare_request({}, {"path": "/a"})[0] == "GET"
+    for method in ("PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"):
+        assert _prepare_request({}, {"method": method, "path": "/a"})[0] == method
+    for method in ("get", "TRACE", "CONNECT", None):
+        with pytest.raises(AdapterBlocked, match="Unsupported HTTP method"):
+            _prepare_request({}, {"method": method, "path": "/a"})
 
 
 def test_model_request_sends_defaults_then_its_names_in_sorted_order():
@@ -169,6 +181,30 @@ def test_supervisor_rechecks_the_model_vocabulary_before_tb_target(monkeypatch):
     # The same headers in an operator-written case are allowed.
     model_supervisor(monkeypatch, designed_by=None, headers=tampered).allowed_request(request)
 
+
+
+def _named(headers, name):
+    return [(k, v) for k, v in headers.items() if k.lower() == name.lower()]
+
+
+def test_operator_header_names_replace_defaults_and_transport_whatever_their_letter_case():
+    # HTTP names ignore letter case: an operator's "accept" takes the default Accept's place, and the JSON body the
+    # adapter serializes keeps one Content-Type, so the target never sees two conflicting values.
+    case = {"method": "POST", "path": "/orders", "headers": {"accept": "text/html", "content-type": "application/xml"},
+            "body": {"a": 1}}
+    _, _, headers, body, _ = _prepare_request({}, case)
+    assert _named(headers, "Accept") == [("accept", "text/html")] and list(headers)[0] == "accept"
+    assert _named(headers, "Content-Type") == [("Content-Type", "application/json")] and body == b'{"a": 1}'
+    # Two spellings of one name in an operator's own map are a repeat with two values: refuse rather than pick one.
+    with pytest.raises(AdapterBlocked, match="letter case"):
+        _prepare_request({}, {"method": "GET", "path": "/a", "headers": {"X-Trace": "1", "x-trace": "2"}})
+
+
+def test_supervisor_sends_one_content_type_for_an_operator_step_in_any_letter_case(monkeypatch):
+    sealed = {"content-type": "application/xml"}
+    supervisor = model_supervisor(monkeypatch, designed_by=None, headers=sealed)
+    headers = supervisor.allowed_request(chat_request(sealed))[4]
+    assert _named(headers, "Content-Type") == [("Content-Type", "application/json")]
 
 @pytest.mark.parametrize("environ,shared", [
     # A key bound to a model origin is a model credential even when this run's models do not use it.

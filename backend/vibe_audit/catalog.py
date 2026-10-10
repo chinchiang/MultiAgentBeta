@@ -4,12 +4,12 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-import os
 from pathlib import Path
 
 from jsonschema import Draft202012Validator, ValidationError
 
 from .schemas import CATALOG_ENTRY_SCHEMA
+from .settings import catalog_root
 
 _ENTRY_VALIDATOR = Draft202012Validator(CATALOG_ENTRY_SCHEMA)
 
@@ -19,8 +19,7 @@ class CatalogError(ValueError):
 
 
 def default_catalog_root() -> Path:
-    configured = os.getenv("VIBEAUDIT_CATALOG_ROOT")
-    return Path(configured) if configured else Path(__file__).resolve().parents[2] / "catalogs"
+    return catalog_root()
 
 
 def _read_checked(root: Path, relative: str, expected: str) -> bytes:

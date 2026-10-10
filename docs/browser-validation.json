@@ -1,12 +1,13 @@
 {
   "status": "passed",
   "mode": "synthetic",
-  "run_id": "3fbd445d-992d-4616-8263-09136c4ba2ed",
+  "run_id": "bf1be98c-d978-45a1-88ed-1bc7a20e2f01",
   "exports": 3,
   "saved_project": true,
   "trace_loaded": true,
   "retest_created": true,
   "retest_started": false,
+  "language_switch": true,
   "page_errors": 0,
   "horizontal_overflow": false
 }

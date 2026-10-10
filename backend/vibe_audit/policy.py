@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import time
-from urllib.parse import urlsplit, unquote
 from datetime import datetime, timezone
 
 from .adapters import case_headers_allowed, model_header_vocabulary
-from .domain import digest, now
+from .domain import digest
 
 
 class PolicyError(RuntimeError):
@@ -80,7 +79,7 @@ class Policy:
         if not requirements or len(requirements)!=len(tm["requirements"]):
             raise PolicyError("Threat model requires unique security requirement objects")
         for requirement in requirements.values():
-            self.standards(requirement.get("standard_ids",[]),run.get("catalog_manifest"))
+            self.standards(requirement.get("standard_ids",[]))  # the catalog version was checked once above
             if not requirement.get("statement") or not requirement.get("source"):
                 raise PolicyError("Security requirement lacks statement or provenance")
         tids=set()

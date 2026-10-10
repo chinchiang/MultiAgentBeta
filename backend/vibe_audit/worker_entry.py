@@ -16,6 +16,7 @@ import ipaddress
 import json
 import os
 from pathlib import Path
+import re
 import signal
 import socket
 import socketserver
@@ -25,7 +26,6 @@ import sys
 import threading
 import time
 import uuid
-from urllib.parse import urlsplit
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0,str(HERE))
@@ -90,6 +90,12 @@ def read_frame(stream,limit=MAX_FRAME):
     if not isinstance(value,dict):
         raise ValueError("Invalid IPC frame")
     return value
+
+
+def without_host_paths(text):
+    """Docker's own words with every absolute path replaced: a create error names the bind-mounted work directory
+    and the daemon socket, which say where this host keeps its data."""
+    return re.sub(r"(?<![\w.~-])(?:[A-Za-z]:)?[\\/](?:[\w.~-]+[\\/])*[\w.~-]+", "<path>", text)
 
 
 def clean_env(extra=None):
@@ -371,7 +377,7 @@ class Supervisor:
         # Transport-generated headers are not part of the reviewed request.
         headers=dict(step.get("headers",{}))
         transport={"Content-Type":"application/json"} if raw else None
-        if transport: headers.pop("Content-Type",None)
+        if transport: headers={k:v for k,v in headers.items() if k.lower()!="content-type"}
         # This is the last trusted hop before tb-target: model-written headers are checked here against the model
         # vocabulary and the operator's per-endpoint list again, not only by the controller's case gate and the
         # untrusted worker. The supervisor's own Content-Type is transport, not a model choice.
@@ -611,7 +617,7 @@ class Supervisor:
                 try:
                     _,create_error=created.communicate(timeout=min(CREATE_BUDGET,self.spec["timeout_seconds"]))
                     if created.returncode:
-                        self.startup_diagnostic=create_error.decode("utf-8",errors="replace")[:1000]
+                        self.startup_diagnostic=without_host_paths(create_error.decode("utf-8",errors="replace")[:1000])
                         raise ValueError("Container creation failed")
                 finally:
                     if created.poll() is None: terminate_tree(created)
@@ -681,12 +687,8 @@ class Supervisor:
             self.lease.close()
 
 
-def container_worker(task):
-    """Runs in an unprivileged network-none namespace (or explicit test process)."""
-    spec=task["spec"]
-    # An absolute deadline also bounds a worker if its supervisor dies during
-    # daemon operations. Exiting container PID 1 ends its entire PID namespace.
-    timer=threading.Timer(max(0,task["hard_deadline_unix"]-time.time()),lambda:os._exit(124));timer.daemon=True;timer.start()
+def _relay_server(task):
+    """The loopback HTTP relay the worker's tool talks to; every request is forwarded to the supervisor's broker, which decides."""
     class Relay(BaseHTTPRequestHandler):
         def log_message(self,*args): pass
         def do_GET(self): self.forward()
@@ -725,12 +727,16 @@ def container_worker(task):
                 if connection: connection.close()
     server=ThreadingHTTPServer(("127.0.0.1",0),Relay);server.daemon_threads=True
     threading.Thread(target=server.serve_forever,daemon=True).start()
-    relay=f"http://127.0.0.1:{server.server_port}"
+    return server
+
+
+def _stage_inputs(spec,task,relay):
+    """(inputs, out, writable): the read-only inputs checked against the digests the capability was issued for, copied
+    to a writable tree with the relay origin filled in."""
     inputs=Path("/inputs" if task["backend"]=="docker" else os.getcwd())
     out=Path("/out" if task["backend"]=="docker" else str(inputs.parent/"out"))
     writable=Path("/tmp/vibeaudit-inputs" if task["backend"]=="docker" else str(inputs.parent/"prepared"))
     writable.mkdir(parents=True,exist_ok=True)
-    import shutil
     for path in inputs.rglob("*"):
         if path.is_file() and path.name!="_worker_task.json":
             destination=writable/path.relative_to(inputs);destination.parent.mkdir(parents=True,exist_ok=True)
@@ -740,82 +746,117 @@ def container_worker(task):
             try: raw=raw.decode("utf-8").replace("{relay_origin}",relay).encode()
             except UnicodeDecodeError: pass
             destination.write_bytes(raw)
+    return inputs,out,writable
+
+
+def _run_http_case(spec,relay):
+    """One sealed case, sent once through the relay by the same adapter the controller uses."""
+    import adapters
+    case=copy.deepcopy(spec["cases"][0])
+    cid=case["id"]
+    # The controller schedules each repetition as its own task; one task sends the case once.
+    case["repetitions"]=1
+    def remap(value):
+        identity=value.pop("identity",None)
+        headers=value.setdefault("headers",{});headers["X-Vibe-Case"]=cid
+        if identity: headers["X-Vibe-Identity"]=identity
+    remap(case)
+    for control in case.get("preconditions",[]):
+        if isinstance(control,dict): remap(control)
+    async def allowed(**_): return None
+    result=asyncio.run(adapters.execute_case({"mode":"live","target_url":relay,"relay":True,"allowed_target_ips":["127.0.0.1"],"auth_profiles":[],"run_id":spec.get("run_id")},case,cancel_event=asyncio.Event(),request_hook=allowed))
+    return result
+
+
+def _run_request_sequence(spec,relay_port):
+    """The steps of a request sequence, in order, until one is refused by the supervisor (the relay answers 502)."""
+    results=[];sequence_ok=True
+    for step in spec.get("requests",[]):
+        conn=http.client.HTTPConnection("127.0.0.1",relay_port,timeout=RELAY_TIMEOUT+2)
+        headers={**step.get("headers",{}),"X-Vibe-Case":step.get("case_id") or spec["cases"][0]["id"]}
+        if step.get("identity"): headers["X-Vibe-Identity"]=step["identity"]
+        body=json.dumps(step["body"]).encode() if step.get("body") is not None else None
+        if body is not None: headers["Content-Type"]="application/json"
+        conn.request(step.get("method","GET"),step["path"],body,headers)
+        response=conn.getresponse();text=response.read(MAX_BODY+1).decode();conn.close()
+        item={"id":step.get("id"),"status_code":response.status,"body":text,"complete":len(text.encode())<=MAX_BODY,"capture_success":response.getheader("X-Vibe-Capture-Success")=="true"}
+        results.append(item)
+        # The supervisor stops the sequence at an unmet step and refuses the next request; the relay answers 502.
+        if response.status==502:
+            sequence_ok=False
+            break
+    result={"status":"completed" if sequence_ok and len(results)==len(spec.get("requests",[])) else "inconclusive","observations":results,"requests":len(results),"exit_code":0,"stdout":"","stderr":"","artifacts":{}}
+    return result
+
+
+def _run_selftest(spec,task,out):
+    """The isolation self-tests: report the namespace, or spawn or sleep so the supervisor's teardown is exercised."""
+    action=spec.get("selftest","echo")
+    if action=="spawn_child":
+        child=subprocess.Popen([sys.executable,"-c","import time; time.sleep(120)"],env=clean_env(),stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        (out/"child_pid.txt").write_text(str(child.pid))
+        time.sleep(120)
+    elif action=="sleep": time.sleep(float(spec.get("sleep_seconds",120)))
+    result={"status":"completed","exit_code":0,"stdout":json.dumps({"pid":os.getpid(),"source_visible":Path("/src").exists(),"broker_offered":task.get("broker") is not None,"uid":os.getuid() if hasattr(os,"getuid") else None,"interfaces":[name for _,name in socket.if_nameindex()]}),"stderr":"","artifacts":{}}
+    if action=="forge":
+        # A worker that claims fields only its supervisor may set; the supervisor must drop them.
+        result.update(deployment_changed=True,work_dir_removed=True,resumed_from_journal=True,simulated=False,isolation="forged",broker_observations=[{"case_id":"forged"}])
+    return result
+
+
+def _run_tool(spec,task,relay,writable,out):
+    """A fixed tool command: bounded output capture, bounded artifact collection, no shell."""
+    argv=[s.replace("{relay_origin}",relay).replace("/inputs/",str(writable)+os.sep) for s in spec["argv"]]
+    if spec.get("tool_id")=="zap" and task["backend"]=="docker":
+        argv[0]="/zap/zap.sh"
+    env=clean_env({"VIBEAUDIT_RELAY_ORIGIN":relay,"HOME":"/tmp" if task["backend"]=="docker" else str(writable)})
+    if spec.get("tool_id")=="osv": env["OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY"]="/opt/osv-db"
+    proc=spawn(argv,cwd=str(writable),env=env)
+    limit=spec.get("max_output_bytes",256*1024)
+    captures=[bytearray(),bytearray()];exceeded=threading.Event()
+    def read_output(stream,dest):
+        while True:
+            chunk=stream.read(8192)
+            if not chunk: break
+            available=max(0,limit-len(dest));dest.extend(chunk[:available])
+            if len(chunk)>available: exceeded.set();terminate_tree(proc);break
+    readers=[threading.Thread(target=read_output,args=(stream,dest),daemon=True) for stream,dest in zip((proc.stdout,proc.stderr),captures)]
+    for thread in readers: thread.start()
+    code=proc.wait()
+    for thread in readers: thread.join(timeout=2)
+    artifacts={};total=0
+    for name in spec.get("output_files",[]):
+        path=out/name
+        if path.is_symlink() or not path.is_file() or any(p.is_symlink() for p in path.parents): continue
+        if path.stat().st_size>limit: exceeded.set();break
+        raw=path.read_bytes()
+        total+=len(raw)
+        if total>limit: exceeded.set();break
+        artifacts[name]=base64.b64encode(raw).decode()
+    result={"status":"incomplete" if exceeded.is_set() else "completed","exit_code":code,"stdout":bytes(captures[0]).decode("utf-8",errors="replace"),"stderr":bytes(captures[1]).decode("utf-8",errors="replace"),"artifacts":artifacts,"output_limit_exceeded":exceeded.is_set()}
+    return result
+
+
+def container_worker(task):
+    """Runs in an unprivileged network-none namespace (or explicit test process)."""
+    spec=task["spec"]
+    # An absolute deadline also bounds a worker if its supervisor dies during
+    # daemon operations. Exiting container PID 1 ends its entire PID namespace.
+    timer=threading.Timer(max(0,task["hard_deadline_unix"]-time.time()),lambda:os._exit(124));timer.daemon=True;timer.start()
+    server=_relay_server(task)
+    relay=f"http://127.0.0.1:{server.server_port}"
+    inputs,out,writable=_stage_inputs(spec,task,relay)
     operation=spec.get("operation","tool")
     if operation=="http_case":
-        import adapters
-        case=copy.deepcopy(spec["cases"][0])
-        cid=case["id"]
-        # The controller schedules each repetition as its own task; one task sends the case once.
-        case["repetitions"]=1
-        def remap(value):
-            identity=value.pop("identity",None)
-            headers=value.setdefault("headers",{});headers["X-Vibe-Case"]=cid
-            if identity: headers["X-Vibe-Identity"]=identity
-        remap(case)
-        for control in case.get("preconditions",[]):
-            if isinstance(control,dict): remap(control)
-        async def allowed(**_): return None
-        result=asyncio.run(adapters.execute_case({"mode":"live","target_url":relay,"relay":True,"allowed_target_ips":["127.0.0.1"],"auth_profiles":[],"run_id":spec.get("run_id")},case,cancel_event=asyncio.Event(),request_hook=allowed))
+        result=_run_http_case(spec,relay)
     elif operation=="request_sequence":
-        results=[];sequence_ok=True
-        for step in spec.get("requests",[]):
-            conn=http.client.HTTPConnection("127.0.0.1",server.server_port,timeout=RELAY_TIMEOUT+2)
-            headers={**step.get("headers",{}),"X-Vibe-Case":step.get("case_id") or spec["cases"][0]["id"]}
-            if step.get("identity"): headers["X-Vibe-Identity"]=step["identity"]
-            body=json.dumps(step["body"]).encode() if step.get("body") is not None else None
-            if body is not None: headers["Content-Type"]="application/json"
-            conn.request(step.get("method","GET"),step["path"],body,headers)
-            response=conn.getresponse();text=response.read(MAX_BODY+1).decode();conn.close()
-            item={"id":step.get("id"),"status_code":response.status,"body":text,"complete":len(text.encode())<=MAX_BODY,"capture_success":response.getheader("X-Vibe-Capture-Success")=="true"}
-            results.append(item)
-            # The supervisor stops the sequence at an unmet step and refuses the next request; the relay answers 502.
-            if response.status==502:
-                sequence_ok=False
-                break
-        result={"status":"completed" if sequence_ok and len(results)==len(spec.get("requests",[])) else "inconclusive","observations":results,"requests":len(results),"exit_code":0,"stdout":"","stderr":"","artifacts":{}}
+        result=_run_request_sequence(spec,server.server_port)
     elif operation=="selftest":
-        action=spec.get("selftest","echo")
-        if action=="spawn_child":
-            child=subprocess.Popen([sys.executable,"-c","import time; time.sleep(120)"],env=clean_env(),stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-            (out/"child_pid.txt").write_text(str(child.pid))
-            time.sleep(120)
-        elif action=="sleep": time.sleep(float(spec.get("sleep_seconds",120)))
-        result={"status":"completed","exit_code":0,"stdout":json.dumps({"pid":os.getpid(),"source_visible":Path("/src").exists(),"broker_offered":task.get("broker") is not None,"uid":os.getuid() if hasattr(os,"getuid") else None,"interfaces":[name for _,name in socket.if_nameindex()]}),"stderr":"","artifacts":{}}
-        if action=="forge":
-            # A worker that claims fields only its supervisor may set; the supervisor must drop them.
-            result.update(deployment_changed=True,work_dir_removed=True,resumed_from_journal=True,simulated=False,isolation="forged",broker_observations=[{"case_id":"forged"}])
+        result=_run_selftest(spec,task,out)
     else:
-        argv=[s.replace("{relay_origin}",relay).replace("/inputs/",str(writable)+os.sep) for s in spec["argv"]]
-        if spec.get("tool_id")=="zap" and task["backend"]=="docker":
-            argv[0]="/zap/zap.sh"
-        env=clean_env({"VIBEAUDIT_RELAY_ORIGIN":relay,"HOME":"/tmp" if task["backend"]=="docker" else str(writable)})
-        if spec.get("tool_id")=="osv": env["OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY"]="/opt/osv-db"
-        proc=spawn(argv,cwd=str(writable),env=env)
-        limit=spec.get("max_output_bytes",256*1024)
-        captures=[bytearray(),bytearray()];exceeded=threading.Event()
-        def read_output(stream,dest):
-            while True:
-                chunk=stream.read(8192)
-                if not chunk: break
-                available=max(0,limit-len(dest));dest.extend(chunk[:available])
-                if len(chunk)>available: exceeded.set();terminate_tree(proc);break
-        readers=[threading.Thread(target=read_output,args=(stream,dest),daemon=True) for stream,dest in zip((proc.stdout,proc.stderr),captures)]
-        for thread in readers: thread.start()
-        code=proc.wait()
-        for thread in readers: thread.join(timeout=2)
-        artifacts={};total=0
-        for name in spec.get("output_files",[]):
-            path=out/name
-            if path.is_symlink() or not path.is_file() or any(p.is_symlink() for p in path.parents): continue
-            if path.stat().st_size>limit: exceeded.set();break
-            raw=path.read_bytes()
-            total+=len(raw)
-            if total>limit: exceeded.set();break
-            artifacts[name]=base64.b64encode(raw).decode()
-        result={"status":"incomplete" if exceeded.is_set() else "completed","exit_code":code,"stdout":bytes(captures[0]).decode("utf-8",errors="replace"),"stderr":bytes(captures[1]).decode("utf-8",errors="replace"),"artifacts":artifacts,"output_limit_exceeded":exceeded.is_set()}
+        result=_run_tool(spec,task,relay,writable,out)
     server.shutdown();server.server_close()
     sys.stdout.buffer.write(packed(result));sys.stdout.buffer.flush()
-
 
 def not_started(reason):
     return {"status":"blocked","reason":reason+"; no worker was started","cleanup_confirmed":True,"broker_observations":[],"not_started":True}
@@ -830,7 +871,7 @@ if __name__=="__main__":
             # A failed claim, lease-store connection or spec check leaves nothing to clean up; say so, so the
             # controller does not wait for an operator attestation about a worker that never existed.
             sys.stdout.buffer.write(packed({"kind":"result","result":not_started("Supervisor could not claim its capability")}));sys.stdout.buffer.flush()
-            raise SystemExit(2)
+            raise SystemExit(2) from None
         supervisor.run()
     elif sys.argv[1]=="worker":
         container_worker(json.loads(Path(sys.argv[2]).read_text(encoding="utf-8")))
