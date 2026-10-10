@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from vibe_audit import policy as policy_module
 from vibe_audit.catalog import load_catalogs
 from vibe_audit.domain import digest
 from vibe_audit.policy import Policy, PolicyError, elapsed_seconds, sealed
@@ -290,3 +291,159 @@ def test_authorize_in_a_live_run_binds_requests_to_the_sealed_case(run):
     refusal("Request is not a step in the sealed test case", method="GET", path="/admin", identity="alice")
     refusal("Identity is outside the sealed case scope", identity="carol")
     refusal("Identity is outside the sealed case scope")
+
+
+def test_threat_gate_reads_each_optional_field_by_its_exact_name(run):
+    policy = Policy()
+
+    def passes(change):
+        record = copy.deepcopy(run)
+        change(record, record["threat_model"])
+        reseal(record)
+        policy.threat_gate(record)
+        return record
+
+    # Absent lists read as empty; a requirement without threats is derived and allowed.
+    passes(lambda r, tm: tm.pop("standards"))
+    passes(lambda r, tm: tm["requirements"][0].pop("standard_ids"))
+    passes(lambda r, tm: tm["requirements"].append({"id": "R-D", "statement": "s", "source": "model", "source_kind": "derived"}))
+    # A threat may reference every asset, and a requirement every threat: the subset checks are inclusive.
+    passes(lambda r, tm: tm["threats"][0].update(asset_ids=["user", "orders", "agent"]))
+    passes(lambda r, tm: tm["requirements"][0].update(threat_ids=["T-001", "T-002"]))
+    # An operator requirement with a threat mapped to it passes.
+    passes(lambda r, tm: (tm["threats"][0].update(requirement_id="R-OP"),
+                          tm["requirements"].append({"id": "R-OP", "statement": "s", "source": "operator", "source_kind": "operator", "threat_ids": ["T-001"], "standard_ids": []})))
+    # The catalog version is checked once, against the run's frozen manifest, before any identifier is resolved.
+    stale = copy.deepcopy(run); stale["catalog_manifest"] = {"schema_version": 1}; stale["threat_model"]["standards"] = []
+    for requirement in stale["threat_model"]["requirements"]:
+        requirement["standard_ids"] = []
+    reseal(stale)
+    refused(policy.threat_gate, stale, "Catalog version differs from the run's frozen reference data")
+    missing = copy.deepcopy(run); del missing["threat_model"]["requirements"]; reseal(missing)
+    refused(policy.threat_gate, missing, "Threat model requires unique security requirement objects")
+
+
+def test_case_gate_reads_each_optional_field_by_its_exact_name(run):
+    policy = Policy()
+
+    def passes(change, base=None):
+        record = copy.deepcopy(base or run)
+        change(record, record["cases"][0])
+        reseal(record)
+        policy.case_gate(record)
+        return record
+
+    passes(lambda r, c: c.pop("preconditions"))
+    passes(lambda r, c: c.pop("repetitions"))
+    passes(lambda r, c: c.update(repetitions=20))
+    passes(lambda r, c: c.update(side_effects=True, cleanup="restore the fixture"))
+    passes(lambda r, c: c.update(observation_mode="instrumented_observation"))
+    for adapter in ("ai_http", "fixture", "zap", "schemathesis", "playwright", "promptfoo", "pyrit"):
+        passes(lambda r, c, adapter=adapter: c.update(adapter=adapter))
+    # One case may cover every automated threat when they share a requirement.
+    def shared(r, c):
+        r["threat_model"]["threats"][1]["requirement_id"] = "R-001"
+        r["threat_model"]["requirements"][0]["threat_ids"] = ["T-001", "T-002"]
+        r["cases"][2]["requirement_id"] = "R-001"
+        c.update(threat_ids=["T-001", "T-002"], requirement_id="R-001")
+    passes(shared)
+    # A model-designed case without a request method is a GET; its headers and its preconditions' headers must be in
+    # the operator's vocabulary for that method and path, read from the request's own fields.
+    def vocabulary(r, c):
+        r["manifest"]["allowed_requests"] = [{"method": "GET", "path": "/orders/private", "model_headers": {"Accept": ["application/json"]}},
+                                             {"path": "/orders/mine", "model_headers": {"Accept-Language": ["en"]}}]
+        r["manifest"].pop("auth_profiles", None)
+        rehash_manifest(r)
+        c.pop("method"); c.pop("preconditions")
+        c.update(designed_by="model", headers={"Accept": "application/json"})
+    passes(vocabulary)
+    def with_precondition(r, c):
+        vocabulary(r, c)
+        c["preconditions"] = [{"path": "/orders/mine", "headers": {"Accept-Language": "en"}}]
+    passes(with_precondition)
+    def posted(r, c):
+        vocabulary(r, c)
+        r["manifest"]["allowed_requests"][0]["method"] = "POST"; rehash_manifest(r)
+        c["method"] = "POST"
+    passes(posted)
+    def wrong_path(r, c):
+        vocabulary(r, c)
+        c["preconditions"] = [{"path": "/orders/private", "headers": {"Accept-Language": "en"}}]
+    with pytest.raises(PolicyError, match="^" + re.escape(HEADER_RULE)):
+        passes(wrong_path)
+    # A live precondition without a method is a GET inside the declared scope; a sealed fixture profile passes.
+    from vibe_audit.fixture_protocol import fixture_profile_hash
+    as_live = live(copy.deepcopy(run))
+    passes(lambda r, c: c["preconditions"].append({"path": "/orders/private"}), base=as_live)
+    passes(lambda r, c: c.pop("preconditions"), base=as_live)
+    passes(lambda r, c: c.update(fixture_profile="synthetic-web-v1", fixture_profile_hash=fixture_profile_hash("synthetic-web-v1")), base=as_live)
+
+    def broken(change, message):
+        record = copy.deepcopy(run)
+        change(record, record["cases"][0])
+        reseal(record)
+        refused(policy.case_gate, record, message)
+
+    broken(lambda r, c: c.pop("threat_ids"), "Case threat traceability is broken")
+    broken(lambda r, c: c.pop("oracle"), "Case needs an executable oracle and observation requirements")
+    # Missing threats are listed in order, comma separated.
+    none = copy.deepcopy(run); none["cases"] = []
+    refused(policy.case_gate, none, "Automated threats without cases: T-001, T-002")
+    none["manifest"]["cases"] = [{"id": "operator-chosen"}]; rehash_manifest(none)
+    policy.case_gate(none)
+    assert none["gaps"][-1] == "Automated threats without a provided case were not tested: T-001, T-002"
+
+
+def test_authorize_reads_each_step_and_identity_by_its_exact_name(run, monkeypatch):
+    policy = Policy()
+    record = live(run)
+    scope = [("GET", "/orders/private"), ("POST", "/orders/private"), ("GET", "/orders/mine"), ("POST", "/reset"), ("GET", "/admin"), ("GET", "/setup"),
+             ("GET", "/session"), ("GET", "/cleanup"), ("DELETE", "/orders/private"), ("GET", "/control-only"), ("GET", "/allowed-only")]
+    record["manifest"]["allowed_requests"] = [{"method": method, "path": path} for method, path in scope]
+    rehash_manifest(record)
+    case, other = record["cases"][:2]
+    case.pop("session_reset", None)
+    case.update(method="POST", body={}, identity="alice", preconditions=[{"method": "POST", "path": "/reset", "identity": "dave"}, {"path": "/control-only"}],
+                steps=["note", {"method": "GET"}, {"path": "/orders/mine"}], setup={"path": "/setup"}, reset=[{"method": "DELETE", "path": "/orders/private"}],
+                session_reset=[{"path": "/session"}], cleanup=[{"method": "get", "path": "/cleanup"}], allowed_requests=[{"path": "/allowed-only", "identity": "frank"}])
+    for key in ("method", "preconditions", "allowed_requests"):
+        other.pop(key, None)
+    reseal(record)
+    policy.case_gate(record)
+    record.update(status="running", stage="blackbox")
+    record["usage"]["requests"] = 0
+    idle = threading.Event()
+    # The case's own method, its preconditions (a GET when they name no method), the steps of every phase and its
+    # allowed requests are read by name and compared case-insensitively; each path below is reachable through one of them only.
+    policy.authorize(record, case, idle, identity="alice")
+    policy.authorize(record, case, idle, method="POST", path="/reset", identity="dave")
+    policy.authorize(record, case, idle, method="GET", path="/control-only", identity="alice")
+    policy.authorize(record, case, idle, method="GET", path="/orders/mine", identity="alice")
+    policy.authorize(record, case, idle, method="GET", path="/setup", identity="alice")
+    policy.authorize(record, case, idle, method="DELETE", path="/orders/private", identity="alice")
+    policy.authorize(record, case, idle, method="GET", path="/session", identity="alice")
+    policy.authorize(record, case, idle, method="GET", path="/cleanup", identity="alice")
+    policy.authorize(record, case, idle, method="GET", path="/allowed-only", identity="frank")
+    assert record["usage"]["requests"] == 9
+    for method, path in (("GET", "/admin"), ("GET", "/orders/private")):
+        with pytest.raises(PolicyError, match="^Request is not a step in the sealed test case$"):
+            policy.authorize(record, case, idle, method=method, path=path, identity="alice")
+    with pytest.raises(PolicyError, match="^Identity is outside the sealed case scope$"):
+        policy.authorize(record, case, idle, identity="erin")
+    # A case with neither preconditions nor allowed requests is authorized for its own request alone.
+    policy.authorize(record, other, idle)
+    with pytest.raises(PolicyError, match="^Request is not a step in the sealed test case$"):
+        policy.authorize(record, other, idle, method="GET", path="/orders/mine")
+    # The capability is valid up to and including its expiry instant.
+    receipt = policy.receipts[record["id"]]
+    monkeypatch.setattr(policy_module.time, "monotonic", lambda: receipt[3])
+    policy.authorize(record, case, idle, identity="alice")
+    monkeypatch.setattr(policy_module.time, "monotonic", lambda: receipt[3] + 1e-6)
+    with pytest.raises(PolicyError, match="^Missing or expired execution capability$"):
+        policy.authorize(record, case, idle, identity="alice")
+    monkeypatch.setattr(policy_module.time, "monotonic", lambda: receipt[3] - 1)
+    # A live manifest that declares no requests authorizes none.
+    record["manifest"].pop("allowed_requests"); rehash_manifest(record)
+    policy.receipts[record["id"]] = (record["manifest_hash"], *receipt[1:])
+    with pytest.raises(PolicyError, match="^Request method and exact path were not authorized in run scope$"):
+        policy.authorize(record, case, idle, identity="alice")
