@@ -423,6 +423,22 @@ ZH.update({
     "Only a Bedrock model uses an AWS profile": "只有 Bedrock 模型會使用 AWS profile",
 })
 
+
+# Contract rules a model answer can break (contracts.py); shown when an answer fails validation.
+ZH.update({
+    "A challenge needs counterevidence or missing evidence": "反證項目需要反證或指出缺少的證據",
+    "A relative snapshot path is required": "需要快照內的相對路徑",
+    "Blocked threat needs a concrete reason": "標為 blocked 的威脅需要具體原因",
+    "Dataflow references an unknown asset": "資料流引用了不存在的資產",
+    "Duplicate graph identifier": "威脅模型中有重複的識別碼",
+    "Evidence cites a file outside the frozen snapshot": "證據引用了凍結快照以外的檔案",
+    "Evidence quote does not match its snapshot location": "證據引文與快照中的位置不符",
+    "Evidence quote is too short to locate its claim": "證據引文太短，無法定位其主張",
+    "Model changed an operator-provided security requirement": "模型改動了操作者提供的安全需求",
+    "Requirement references an unknown threat": "安全需求引用了不存在的威脅",
+    "Threat references an unknown graph object": "威脅引用了不存在的資產或資料流",
+})
+
 PATTERNS = [
     (r"Model output failed local JSON/schema validation \((.+)\)", "模型輸出未通過本機 JSON／格式驗證（{0}）"),
     (r"AWS profile (.+) is not allowed; list it in (\w+)", "AWS profile {0} 未獲允許；請把它列在 {1}"),

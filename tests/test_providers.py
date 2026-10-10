@@ -789,3 +789,15 @@ async def test_a_failed_validation_names_the_field_and_rule_but_not_the_answer(p
     assert error.value.code == "schema_validation" and "ok: type" in str(error.value) and "leaked" not in str(error.value)
     # The retry tells the model the same location, so it can fix that field.
     assert "(ok: type)" in calls[1][5][-1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_a_broken_contract_rule_is_named_in_its_own_fixed_words(profile, policy, fake_provider):
+    from vibe_audit.contracts import ChallengeProposal
+    calls, answers = fake_provider
+    answers[:] = [response('{"challenges":[{"finding_id":"f1","counterevidence":"","missing_evidence":""}]}')]
+    policy["response_schema"] = ChallengeProposal.model_json_schema()
+    policy["contract_check"] = ChallengeProposal.model_validate
+    with pytest.raises(providers.ProviderError) as error:
+        await providers.generate_json(profile, "Review", {}, policy)
+    assert "A challenge needs counterevidence or missing evidence" in str(error.value)

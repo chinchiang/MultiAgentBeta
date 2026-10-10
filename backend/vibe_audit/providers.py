@@ -425,7 +425,11 @@ def _validation_site(exc: BaseException) -> str:
         return f"{path(exc.absolute_path)}: {exc.validator}"
     if isinstance(exc, ContractViolation):
         first = exc.errors()[0] if exc.errors() else {}
-        return f"{path(first.get('loc', ()))}: {re.sub(r'[^a-z_]', '', str(first.get('type', 'invalid')))[:40]}"
+        kind = re.sub(r'[^a-z_]', '', str(first.get('type', 'invalid')))[:40]
+        # A contract rule's own message is fixed text from contracts.py; anything else might quote the answer.
+        from .messages import ZH
+        reason = str(first.get("msg", "")).removeprefix("Value error, ")
+        return f"{path(first.get('loc', ()))}: {reason if kind == 'value_error' and reason in ZH else kind}"
     if isinstance(exc, json.JSONDecodeError):
         return "not valid JSON"
     return "not a single JSON object"
