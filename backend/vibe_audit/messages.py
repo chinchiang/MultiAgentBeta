@@ -324,7 +324,6 @@ ZH.update({
     "Model input exceeds the bounded payload limit": "模型輸入超過 payload 上限",
     "Token budget exhausted": "token 預算已用完",
     "Model request denied by the policy reservation hook": "模型請求被政策預留 hook 拒絕",
-    "Model request failed; response and error body withheld; billed usage may be unknown": "模型請求失敗；回應與錯誤內容不予顯示；計費用量可能不明",
     "Model response has no verifiable usage; further calls stopped": "模型回應沒有可驗證的用量；已停止後續呼叫",
     "Provider-reported usage exceeded token budget; further calls stopped": "provider 回報的用量超過 token 預算；已停止後續呼叫",
     "Provider returned no completion": "provider 沒有回傳結果",
@@ -440,6 +439,7 @@ ZH.update({
 })
 
 PATTERNS = [
+    (r"Model request failed \(([A-Za-z0-9_ <-]+)\); response and error body withheld; billed usage may be unknown", "模型請求失敗（{0}）；回應與錯誤內容不予顯示；計費用量可能不明"),
     (r"Model endpoint answered HTTP (\d+); the request was not served and is treated as unbilled", "模型端點回應 HTTP {0}；請求沒有被處理，視為未計費"),
     (r"Model output failed local JSON/schema validation \((.+)\)", "模型輸出未通過本機 JSON／格式驗證（{0}）"),
     (r"AWS profile (.+) is not allowed; list it in (\w+)", "AWS profile {0} 未獲允許；請把它列在 {1}"),
