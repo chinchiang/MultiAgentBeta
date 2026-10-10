@@ -440,6 +440,8 @@ async def test_installed_litellm_sdk_uses_guarded_http_transport(profile, policy
     assert captured[0].headers["host"] == "127.0.0.1:11434"
     outbound = json.loads(captured[0].content)
     assert outbound["model"] == model
+    # Call plumbing must not reach the provider as request fields; strict APIs reject unknown ones.
+    assert not set(outbound) & {"input_callback", "success_callback", "failure_callback", "caching", "fallbacks", "num_retries"}
 
 
 @pytest.mark.asyncio

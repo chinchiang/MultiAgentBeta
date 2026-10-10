@@ -367,8 +367,7 @@ async def _complete(library, profile, provider, endpoint, credential, messages, 
                 **({} if profile.get("temperature") is None else {"temperature": profile["temperature"]}),
                 max_tokens=output_limit, timeout=timeout, stream=False, num_retries=0, max_retries=0,
                 fallbacks=None, drop_params=False, caching=False,
-                # No per-call callback lists: LiteLLM's Bedrock transform forwards unknown keywords to the model
-                # as request fields. The module-level callback lists are already empty (_load_litellm).
+                # No per-call callback lists, as below: they would reach the model as request fields.
             )
         if provider == "anthropic":
             from litellm.llms.custom_httpx.http_handler import AsyncHTTPHandler
@@ -387,7 +386,8 @@ async def _complete(library, profile, provider, endpoint, credential, messages, 
             temperature=profile.get("temperature", 0), max_tokens=output_limit,
             timeout=timeout, stream=False, num_retries=0, max_retries=0,
             fallbacks=None, drop_params=False, caching=False,
-            success_callback=[], failure_callback=[], input_callback=[],
+            # No per-call callback lists: LiteLLM 1.104 forwards unknown keywords into the request body, which
+            # strict APIs (Gemini, Bedrock) reject. The module-level callback lists are already empty.
         )
 
 
