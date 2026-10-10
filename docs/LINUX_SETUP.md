@@ -79,6 +79,10 @@ Bedrock 模型（provider `bedrock`）不使用金鑰變數，而是以操作者
 
 請求經 Converse API 送出，同樣只連往釘選的 IP、不跟隨 redirect、不重試。取得 SSO 暫時憑證時，boto3 可能會連 AWS SSO；這次連線不帶任何模型資料。
 
+### 只接受 JSON schema 的本地伺服器
+
+LM Studio 等伺服器不接受 `response_format: json_object`，只接受 `json_schema`。這類模型請把 `json_mode` 設為 `json_schema`：請求會帶上該階段的回應 schema，回覆一樣在本機依 schema 驗證。LM Studio 開啟 Require Authentication 時，把它的 API token 放在 `VIBEAUDIT_*` 變數，並在 `VIBEAUDIT_MODEL_CREDENTIAL_ORIGINS` 綁定到 `http://127.0.0.1:<port>`。
+
 ## 6. 自有 Target Adapter
 
 VIBEAUDIT_FIXTURE_CONFIG 可指向管理者編寫的 JSON registry。每個 profile 宣告 reset/session_reset/setup/cleanup、repetitions 及可選 collector_binding/collector_requests；case sealing 前會計算完整 lifecycle scope 與 profile hash。
@@ -174,6 +178,10 @@ A Bedrock model (provider `bedrock`) uses no key variable. Its requests are sign
 4. Set model_id to a Bedrock model or inference profile ID, such as `global.anthropic.claude-haiku-5-5`, and leave temperature empty.
 
 Requests go through the Converse API and, like every model call, only to the pinned IP, without redirects or retries. Fetching temporary SSO credentials may make boto3 contact AWS SSO; that connection carries no model data.
+
+### Local servers that accept only a JSON schema
+
+Servers such as LM Studio reject `response_format: json_object` and accept only `json_schema`. For those models set `json_mode` to `json_schema`: the request then carries the stage's response schema, and the answer is still validated locally against it. When LM Studio has Require Authentication on, put its API token in a `VIBEAUDIT_*` variable and bind it to `http://127.0.0.1:<port>` in `VIBEAUDIT_MODEL_CREDENTIAL_ORIGINS`.
 
 ## 6. Your own target adapter
 

@@ -331,13 +331,13 @@ async def _resolve_model_ip(endpoint: str) -> str:
         raise _NotSent("Model DNS resolution failed", code="endpoint_unavailable") from None
 
 
-async def _invoke(library, profile: dict, endpoint: str, origin: str, credential: str | dict, messages: list[dict], output_limit: int, timeout: float):
+async def _invoke(library, profile: dict, endpoint: str, origin: str, credential: str | dict, messages: list[dict], output_limit: int, timeout: float, schema: dict | None = None):
     provider = "openai" if profile["provider"] == "openai_compatible" else profile["provider"]
     transport = None
     try:
         pinned_ip = await _resolve_model_ip(endpoint)
         transport = _OriginTransport(origin, pinned_ip)
-        return await _complete(library, profile, provider, endpoint, credential, messages, output_limit, timeout, transport)
+        return await _complete(library, profile, provider, endpoint, credential, messages, output_limit, timeout, transport, schema)
     except asyncio.CancelledError:
         raise
     except Exception as exc:
@@ -348,7 +348,16 @@ async def _invoke(library, profile: dict, endpoint: str, origin: str, credential
         raise _unsent(exc) from None
 
 
-async def _complete(library, profile, provider, endpoint, credential, messages, output_limit, timeout, transport):
+def _response_format(profile: dict, schema: dict | None) -> dict:
+    """JSON mode by default; json_schema for servers that accept only a schema, such as LM Studio.
+
+    Either way the answer is still validated locally against the same schema."""
+    if profile.get("json_mode") == "json_schema":
+        return {"type": "json_schema", "json_schema": {"name": "response", "schema": schema or {"type": "object"}}}
+    return {"type": "json_object"}
+
+
+async def _complete(library, profile, provider, endpoint, credential, messages, output_limit, timeout, transport, schema=None):
     if provider == "bedrock":
         signing = {**credential, **await asyncio.to_thread(_aws_credentials, credential["aws_profile"])}
     async with httpx.AsyncClient(transport=transport, follow_redirects=False, trust_env=False, timeout=timeout, headers={"Accept-Encoding": "identity"}) as http_client:
@@ -381,7 +390,7 @@ async def _complete(library, profile, provider, endpoint, credential, messages, 
         return await library.acompletion(
             model=profile["model_id"], custom_llm_provider=provider,
             api_base=endpoint, api_key=credential, client=client,
-            messages=messages, response_format={"type": "json_object"},
+            messages=messages, response_format=_response_format(profile, schema),
             # None leaves the provider default, which some reasoning models require.
             temperature=profile.get("temperature", 0), max_tokens=output_limit,
             timeout=timeout, stream=False, num_retries=0, max_retries=0,
@@ -472,7 +481,7 @@ async def generate_json(profile: dict, system: str, payload: dict, policy: dict)
                 raise ProviderError("Model request denied by the policy reservation hook", code="request_denied", usage=usage.copy()) from None
         usage["model_calls"] += 1
         try:
-            response = await asyncio.wait_for(_invoke(library, profile, endpoint, origin, credential, messages, min(output_limit, remaining), timeout), timeout=timeout + 1)
+            response = await asyncio.wait_for(_invoke(library, profile, endpoint, origin, credential, messages, min(output_limit, remaining), timeout, schema), timeout=timeout + 1)
         except asyncio.CancelledError:
             raise
         except Exception as exc:

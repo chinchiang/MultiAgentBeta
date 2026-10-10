@@ -50,7 +50,7 @@ async def test_generation_uses_explicit_agent_and_metering(profile, policy, fake
     assert result["cost_usd"] is None
     assert len(calls) == 1
     assert calls[0][1]["id"] == "reviewer-a"
-    assert calls[0][-1] == 30
+    assert calls[0][7] == 30
 
 
 @pytest.mark.parametrize("endpoint,allow", [("https://api.example.com/v1", ["https://api.example.com"]), ("http://localhost:11434/v1", ["http://localhost:11434"]), ("http://192.168.1.5/v1", ["http://192.168.1.5"]), ("http://localhost:11434/v1", []), ("http://0.0.0.0:11434/v1", [])])
@@ -744,3 +744,24 @@ async def test_bedrock_without_a_login_sends_nothing_and_costs_nothing(monkeypat
     with pytest.raises(providers.ProviderError) as error:
         await providers.generate_json(bedrock_profile(), "Return JSON.", {}, bedrock_policy())
     assert error.value.code == "missing_credential" and error.value.usage["tokens_known"] is True and "aws sso login" in str(error.value)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("json_mode,expected", [("json_object", {"type": "json_object"}), ("json_schema", "schema")])
+async def test_json_mode_asks_for_the_schema_where_a_server_accepts_only_that(profile, policy, monkeypatch, json_mode, expected):
+    captured = []
+    def handler(request):
+        captured.append(json.loads(request.content))
+        body = {"id": "synthetic", "object": "chat.completion", "created": 1, **response()}
+        return httpx.Response(200, headers={"content-type": "application/json"}, stream=httpx.ByteStream(json.dumps(body).encode()))
+    def init(transport, origin, pinned_ip):
+        transport.origin, transport.pinned_ip, transport.dispatched = origin, pinned_ip, False
+        transport.inner = httpx.MockTransport(handler)
+    monkeypatch.setattr(providers._OriginTransport, "__init__", init)
+    result = await providers.generate_json({**profile, "json_mode": json_mode}, "Return JSON.", {}, policy)
+    assert result["data"] == {"ok": True}
+    sent = captured[0]["response_format"]
+    if expected == "schema":
+        assert sent["type"] == "json_schema" and sent["json_schema"]["schema"] == policy["response_schema"]
+    else:
+        assert sent == expected

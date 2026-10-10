@@ -49,6 +49,8 @@ class ModelProfile(StrictModel):
     credential_env: str = ""
     # Bedrock signs each request with the operator's AWS profile (for example an SSO login) instead of a key.
     aws_profile: str = Field(default="", max_length=128, pattern=r"^[A-Za-z0-9_.@+-]*$")
+    # How the endpoint is asked for JSON: json_object, or json_schema for servers that accept only a schema (LM Studio).
+    json_mode: Literal["json_object", "json_schema"] = "json_object"
     # None leaves the model's own default, which some reasoning models require.
     temperature: float | None = Field(default=0, ge=0, le=2)
     max_output_tokens: int = Field(default=3000, ge=256, le=16000)
