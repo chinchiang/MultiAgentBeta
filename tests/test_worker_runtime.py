@@ -517,10 +517,12 @@ async def test_cancel_closes_network_before_killing_process_tree(runtime):
     operation=asyncio.create_task(runtime.execute_tool({"operation":"selftest","selftest":"spawn_child","timeout_seconds":30},manifest=manifest(),cancel_event=cancel,request_hook=allow))
     for _ in range(500):
         active=list(runtime.active.values())
-        if active and (Path(active[0]["work_dir"])/"out/child_pid.txt").exists():break
+        # The worker creates the file before it writes the PID, so wait for the content, not the name.
+        pid_file=Path(active[0]["work_dir"])/"out/child_pid.txt" if active else None
+        if pid_file and pid_file.exists() and pid_file.read_text().strip():break
         await asyncio.sleep(.05)
     assert active
-    child_pid=int((Path(active[0]["work_dir"])/"out/child_pid.txt").read_text())
+    child_pid=int(pid_file.read_text())
     cancel.set();result=await asyncio.wait_for(operation,30)
     assert result["status"]=="outcome_unknown"
     assert result["lifecycle"].index("network_revoked")<result["lifecycle"].index("worker_termination_started")
