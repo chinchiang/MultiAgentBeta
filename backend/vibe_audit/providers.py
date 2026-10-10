@@ -405,6 +405,7 @@ async def generate_json(profile: dict, system: str, payload: dict, policy: dict)
             try:
                 await hook()
             except asyncio.CancelledError:
+                # Cancellation stays cancellation; the caller charges every attempt it reserved.
                 raise
             except Exception:
                 raise ProviderError("Model request denied by the policy reservation hook", code="request_denied", usage=usage.copy()) from None
@@ -449,6 +450,9 @@ async def generate_json(profile: dict, system: str, payload: dict, policy: dict)
                 raise ValueError("Invalid content")
             data = _strict_json(content)
             validator.validate(data)
+            # Contract rules a JSON schema cannot state (cross-references, non-empty content) get the same retry.
+            if check := policy.get("contract_check"):
+                check(data)
         except Exception:
             if attempt + 1 < max_attempts:
                 messages.append({"role": "user", "content": "The previous response did not validate. Return a JSON object satisfying the supplied schema. Do not add prose or code fences."})

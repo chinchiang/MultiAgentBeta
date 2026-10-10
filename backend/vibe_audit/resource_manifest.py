@@ -28,6 +28,9 @@ def resource_manifest(config, tools):
             raise ValueError("Unsupported OSV database manifest")
         if {e["ecosystem"] for e in data["ecosystems"]}!={"npm","PyPI"}:
             raise ValueError("Both Python and npm offline databases must be provisioned")
+        # The whole directory is mounted for osv-scanner, so an archive nobody hash-checked must not sit beside them.
+        if {p.name for p in (directory/"osv-scanner").iterdir()}-{"npm","PyPI"}:
+            raise ValueError("Offline vulnerability database directory holds unverified ecosystems")
         for entry in data["ecosystems"]:
             path=directory/"osv-scanner"/entry["ecosystem"]/"all.zip"
             if path.stat().st_size!=entry["bytes"] or file_hash(path)!=entry["sha256"]:

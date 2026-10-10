@@ -428,9 +428,11 @@ class TargetAddressTests(unittest.TestCase):
     def test_refused_target_addresses(self):
         import ipaddress
         refused = ["169.254.169.254", "169.254.1.1", "fe80::1", "fd00:ec2::254", "100.100.100.200", "0.0.0.0", "::",
-                   "224.0.0.1", "ff02::1", "255.255.255.255", "240.0.0.1", "::ffff:169.254.169.254", "fec0::1"]
+                   "224.0.0.1", "ff02::1", "255.255.255.255", "240.0.0.1", "::ffff:169.254.169.254", "fec0::1",
+                   # NAT64 and 6to4 spellings of the metadata address.
+                   "64:ff9b::a9fe:a9fe", "64:ff9b:1::a9fe:a9fe", "2002:a9fe:a9fe::1"]
         allowed = ["127.0.0.1", "127.0.0.2", "::1", "::ffff:127.0.0.1", "10.0.0.5", "192.168.1.5", "172.16.0.9",
-                   "100.64.0.1", "93.184.216.34", "2001:db8::1", "fd12:3456::1"]
+                   "100.64.0.1", "93.184.216.34", "2001:db8::1", "fd12:3456::1", "64:ff9b::5db8:d822"]
         self.assertEqual([a for a in refused if not adapters.target_ip_refused(ipaddress.ip_address(a))], [])
         self.assertEqual([a for a in allowed if adapters.target_ip_refused(ipaddress.ip_address(a))], [])
 

@@ -39,7 +39,12 @@ async function failure(response: Response): Promise<Error> {
   let data: unknown;
   try { data = await response.json(); } catch { return new Error(t(`無法讀取服務回應（HTTP ${response.status}）。請確認本地 API 已啟動。`,`Cannot read the service response (HTTP ${response.status}). Make sure the local API is running.`)); }
   const { detail, detail_zh } = (data ?? {}) as {detail?: unknown; detail_zh?: unknown};
-  const en = typeof detail === 'string' ? detail : JSON.stringify(detail ?? data);
+  // FastAPI reports a rejected body as a list of {loc, msg}; show each field and reason, not raw JSON.
+  const en = typeof detail === 'string' ? detail : Array.isArray(detail) ? detail.map(item => {
+    const {loc, msg} = (item ?? {}) as {loc?: unknown[]; msg?: unknown};
+    const field = Array.isArray(loc) ? loc.filter(part => part !== 'body').join('.') : '';
+    return `${field ? field + ': ' : ''}${typeof msg === 'string' ? msg : JSON.stringify(item)}`;
+  }).join('; ') : JSON.stringify(detail ?? data);
   return new ServiceError(typeof detail_zh === 'string' ? detail_zh : en, en);
 }
 export async function api<T>(path: string, body?: unknown, method: 'GET'|'POST'|'PUT' = body === undefined ? 'GET' : 'POST'): Promise<T> {

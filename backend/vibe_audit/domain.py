@@ -132,6 +132,8 @@ class RunInput(StrictModel):
 
     @model_validator(mode="after")
     def validate_live(self):
+        if self.parent_finding_ids and not self.parent_run_id:
+            raise ValueError("Retested findings need the parent run they belong to")
         ids = [p.id for p in self.models]
         if len(ids) != len(set(ids)):
             raise ValueError("Agent IDs must be unique")

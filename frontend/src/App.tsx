@@ -6,7 +6,7 @@ import { setLang, t, useLang } from './i18n';
 import { loadMessages } from './messages';
 import { RunDetail, type RunAction } from './run-detail';
 import type { Capabilities, Run, RunInput, RunSummary, Session } from './types';
-import { Icon, date } from './ui';
+import { Icon, STATUS, date } from './ui';
 
 // The shell: session, run list, navigation between the three views, and the live refresh of the selected run.
 export default function App() {
@@ -41,19 +41,23 @@ export default function App() {
     if (!selected || !['running','cancelling'].includes(selected.status)) return;
     let active = true;
     let fetching = false;
+    // Failed refreshes back off up to 30 s and report once, not every tick.
+    let delay = 2500;
+    let timer = 0;
     const refresh = async () => {
       if (fetching) return; fetching = true;
-      try { const run = await api<Run>(`/runs/${encodeURIComponent(selected.id)}`); if(active) syncRun(run); }
-      catch(e) { if(active) setError(t(`更新中斷：${e instanceof Error?e.message:'連線失敗'}。重新連線後可查看已保存進度。`,`Updates stopped: ${e instanceof Error?e.message:'connection failed'}. Reconnect to see the saved progress.`)); }
+      try { const run = await api<Run>(`/runs/${encodeURIComponent(selected.id)}`); if(active) {syncRun(run); delay = 2500;} }
+      catch(e) { if(active) {if(delay===2500)setError(t(`更新中斷：${e instanceof Error?e.message:'連線失敗'}。重新連線後可查看已保存進度。`,`Updates stopped: ${e instanceof Error?e.message:'connection failed'}. Reconnect to see the saved progress.`)); delay = Math.min(delay*2,30000);} }
       finally {fetching = false;}
     };
+    const tick = async () => {await refresh(); if(active) timer = window.setTimeout(tick,delay);};
     const stream = new AbortController();
     // Polling below keeps the view current if the event stream drops.
     streamEvents(`/runs/${encodeURIComponent(selected.id)}/events`,name=>{void refresh();if(name==='done'||name==='expired')stream.abort();},stream.signal).catch(()=>{});
-    const timer = window.setInterval(refresh,2500);
-    return ()=>{active=false;clearInterval(timer);stream.abort();};
+    timer = window.setTimeout(tick,delay);
+    return ()=>{active=false;clearTimeout(timer);stream.abort();};
   },[selected?.id,selected?.status,syncRun]);
-  async function selectRun(run:RunSummary) {setBusy('load');setError('');try {syncRun(await api<Run>(`/runs/${encodeURIComponent(run.id)}`));setView('runs');setTab('overview');}catch(e){setError(String(e));}finally{setBusy('');}}
+  async function selectRun(run:RunSummary) {setBusy('load');setError('');try {syncRun(await api<Run>(`/runs/${encodeURIComponent(run.id)}`));setView('runs');setTab('overview');}catch(e){setError(e instanceof Error?e.message:String(e));}finally{setBusy('');}}
   async function action(kind:RunAction) {if(!selected)return;let body={};if(kind==='approve-cases'){const count=selected.cases.filter(c=>c.designed_by==='model').length;if(!window.confirm(t(`將送出 ${selected.cases.length} 個已封存案例，其中 ${count} 個由模型設計。請先在「追溯」分頁核對每個案例的方法、路徑、標頭、本文與身分；核准只適用於目前這組案例。`,`This sends ${selected.cases.length} sealed cases, ${count} of them designed by a model. First check each case's method, path, headers, body and identity on the Trace tab; the approval covers only this set of cases.`)))return;body={receipt:selected.gate_receipts?.cases??''};}if(kind==='reconcile'){const attestation=window.prompt(t('監督程式未能確認工作容器已移除。請說明你如何確認已清理或重設測試環境。這段說明會存為證據；此執行之後不能再恢復，請以新的執行繼續。','The supervisor could not confirm that the worker container was removed. Describe how you confirmed the test environment was cleaned up or reset. This statement is stored as evidence; this run cannot be resumed afterwards, so continue with a new run.'))?.trim();if(!attestation)return;body={attestation};}setBusy(kind);setError('');try {syncRun(await api<Run>(`/runs/${encodeURIComponent(selected.id)}/${kind}`,body));}catch(e){setError(e instanceof Error?e.message:String(e));}finally{setBusy('');}}
   async function createRun(input:RunInput) {
     setBusy('create');setError('');
@@ -63,11 +67,11 @@ export default function App() {
   }
   return <div className="app-shell">
     <aside className="sidebar">
-      <a className="brand" href="#" onClick={e=>{e.preventDefault();setView('runs');}}><span className="brand-mark"><Icon name="shield" size={25}/></span><span>Vibe Audit<small>{t('安全驗證工作台','Security Workbench')}</small></span><span className="version">α</span></a>
+      <a className="brand" href="#" onClick={e=>{e.preventDefault();setView('runs');}}><span className="brand-mark"><Icon name="shield" size={25}/></span><span>Vibe Audit<small>{t('安全驗證工作台','Security Workbench')}</small></span><span className="version">0.2.1</span></a>
       <div className="workspace-tag"><span className="live-dot"/> LOCAL WORKSPACE</div>
-      <nav aria-label={t('主要導覽','Main navigation')}><button className={view==='runs'?'nav active':'nav'} onClick={()=>setView('runs')}><Icon name="grid"/>{t('評估工作台','Assessments')}<span className="nav-count">{runs.length}</span></button><button className={view==='create'?'nav active':'nav'} onClick={()=>setView('create')}><Icon name="plus"/>{t('新建評估','New assessment')}</button><button className={view==='capabilities'?'nav active':'nav'} onClick={()=>setView('capabilities')}><Icon name="chip"/>{t('工具與執行環境','Tools and runtime')}</button></nav>
+      <nav aria-label={t('主要導覽','Main navigation')}><button className={view==='runs'?'nav active':'nav'} aria-current={view==='runs'?'page':undefined} onClick={()=>setView('runs')}><Icon name="grid"/>{t('評估工作台','Assessments')}<span className="nav-count">{runs.length}</span></button><button className={view==='create'?'nav active':'nav'} aria-current={view==='create'?'page':undefined} onClick={()=>setView('create')}><Icon name="plus"/>{t('新建評估','New assessment')}</button><button className={view==='capabilities'?'nav active':'nav'} aria-current={view==='capabilities'?'page':undefined} onClick={()=>setView('capabilities')}><Icon name="chip"/>{t('工具與執行環境','Tools and runtime')}</button></nav>
       <div className="sidebar-label">{t('最近的評估','Recent assessments')}</div>
-      <div className="recent-list">{runs.slice(0,8).map(run=><button key={run.id} className={`recent ${selected?.id===run.id&&view==='runs'?'selected':''}`} onClick={()=>void selectRun(run)}><span className={`status-dot ${run.status}`}/><span className="recent-content"><strong>{run.name}</strong><small>{run.mode==='demo'?t('示範','Demo'):t('實際評估','Live assessment')} · {date(run.created_at)}</small></span></button>)}{!runs.length&&<p className="sidebar-empty">{t('每一次評估，都留下','Every assessment leaves')}<br/>{t('可追溯的證據。','traceable evidence.')}</p>}</div>
+      <div className="recent-list">{runs.slice(0,8).map(run=><button key={run.id} className={`recent ${selected?.id===run.id&&view==='runs'?'selected':''}`} onClick={()=>void selectRun(run)}><span className={`status-dot ${run.status}`}/><span className="recent-content"><strong>{run.name}</strong><small>{run.mode==='demo'?t('示範','Demo'):t('實際評估','Live assessment')} · {STATUS[run.status]??run.status} · {date(run.created_at)}</small></span></button>)}{!runs.length&&<p className="sidebar-empty">{t('每一次評估，都留下','Every assessment leaves')}<br/>{t('可追溯的證據。','traceable evidence.')}</p>}</div>
       <div className="sidebar-footer"><Icon name="lock" size={17}/><span>{t('執行於本機','Runs on this machine')}<small>{t('資料送往模型依你的設定','Data goes to models only as you configure')}</small></span></div>
     </aside>
     <div className="main-shell"><header className="topbar"><div className="breadcrumb">{t('工作空間','Workspace')} <Icon name="chevron" size={13}/><strong>{view==='create'?t('新建評估','New assessment'):view==='capabilities'?t('工具與執行環境','Tools and runtime'):t('評估工作台','Assessments')}</strong></div><div className="topbar-status"><button type="button" className="button secondary small lang-toggle" lang={lang==='en'?'zh-Hant':'en'} aria-label={t('切換為英文介面','Switch to the Chinese interface')} onClick={()=>setLang(lang==='en'?'zh-Hant':'en')}>{lang==='en'?'中文':'English'}</button><span className={session?'live-dot':'live-dot off'}/>{connecting?t('連線中','Connecting'):session?t('本地服務已連線','Local service connected'):t('服務未連線','Service not connected')}<button className="icon-button" aria-label={t('重新連線並更新','Reconnect and refresh')} title={t('重新連線並更新','Reconnect and refresh')} onClick={()=>void connect()} disabled={connecting}><Icon name="refresh" size={16}/></button>{session&&<button className="button secondary small" title={t('結束這個工作階段；之後要用啟動網址重新開啟','End this session; reopen with the startup URL afterwards')} onClick={()=>void logout()}>{t('登出','Sign out')}</button>}</div></header>

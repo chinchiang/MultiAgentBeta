@@ -392,7 +392,34 @@ STATUS_ZH = {
 
 # Messages that carry run-specific values. Each pattern matches the whole English text; the groups are copied
 # into the Chinese wording unchanged (they are IDs, names, sizes or another message).
+
+# 2026-10-10 deep-review fixes: worker, retest, intake and model-call messages.
+ZH.update({
+    "The parent assessment was running, so this retest's outcome was not written back to it": "上層評估正在執行，因此這次複測的結果沒有寫回上層",
+    "The worker returned a malformed result": "worker 回傳的結果格式錯誤",
+    "No case of the original assessment tests the selected findings' threats": "原始評估中沒有任何案例測試所選發現的威脅",
+    "Worker exceeded its time limit": "worker 超過時限",
+    "Broker is busy": "broker 忙碌中",
+    "The request deadline passed before the request was sent": "請求在送出前已超過期限",
+    "The sealed step has no request body": "封存的步驟沒有請求本文",
+    "Runtime profiles must use the Docker backend": "runtime profile 只能使用 Docker 後端",
+    "Docker Engine API 1.44 (Docker 25) or newer is required": "需要 Docker Engine API 1.44（Docker 25）以上",
+    "Worker artifacts must map names to base64 text": "worker 的 artifacts 必須是名稱對應 base64 文字",
+    "Operator declined the model-designed cases; no request was sent": "操作者退回模型設計的案例；沒有送出任何請求",
+    "Each positive control needs its own name and a request different from its case and other controls": "每個 positive control 都需要自己的名稱，且請求不得與其案例或其他 control 相同",
+    "Retested findings need the parent run they belong to": "被複測的發現必須附上它所屬的上層執行",
+    "Offline vulnerability database directory holds unverified ecosystems": "離線漏洞資料庫目錄含有未驗證的生態系",
+    "OSV-Scanner found no supported lockfile or manifest; dependency vulnerabilities were not checked.": "OSV-Scanner 找不到支援的鎖定檔或 manifest；未檢查依賴漏洞。",
+    "Reporter ordering skipped: the finding summaries exceed the model payload limit; findings keep their recorded order": "略過報告排序：發現摘要超過模型 payload 上限；發現維持原本記錄的順序",
+})
+
 PATTERNS = [
+    (r"This retest's outcome could not be written back to the parent assessment \((\w+)\)", "這次複測的結果無法寫回上層評估（{0}）"),
+    (r"Source could not be read \((\w+)\); check its permissions", "無法讀取原始碼（{0}）；請檢查權限"),
+    (r"(\w+): the controller failed after the worker started; do not replay", "{0}：worker 啟動後 controller 失敗；請勿重播"),
+    (r"(.+): the model payload limit omitted the text of (\d+) of (\d+) file\(s\), largest first; what they hold was not reviewed",
+     "{0}：受模型 payload 上限限制，{2} 個檔案中有 {1} 個（由大到小）省略了內容；這些內容沒有被審查"),
+    (r"Linked retest (.+) recorded its outcome for (\d+) finding\(s\)", "關聯複測 {0} 已記錄 {1} 個發現的結果"),
     (r"Automated threats without cases: (.+)", "自動化威脅沒有對應的案例：{0}"),
     (r"(.+) input exceeds the (\d+) KiB model payload limit even with only the cited files; narrow the source scope or the findings",
      "{0} 的輸入即使只保留引用的檔案，仍超過 {1} KiB 的模型 payload 上限；請縮小原始碼範圍或發現"),

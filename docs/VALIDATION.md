@@ -4,12 +4,48 @@
 
 本次已實際使用 Windows 控制台、WSL2/Linux、Docker 29.1.3、PostgreSQL 18.6 及固定版本的八種安全工具。09-24 原始驗證主機的 Windows 收據為 Python 3.12.14；10-05 的 Windows 收據為 Python 3.13.15（另以 Windows Python 3.12.10 驗證雜湊鎖定安裝），Linux 測試 venv 為 Python 3.14.4，Node 為 24.19.0。完整 Python/npm 相依套件與工具映像鎖定檔隨原始碼交付。映像與離線 OSV 資料本身不放進 ZIP。
 
+## 2026-10-10 深入審查修正
+
+這一輪修正了一次全面審查找到的問題（PR #39，分支 fix/deep-review-2026-10-10，已合併 main 到 c2a027f）。
+
+- 這一輪重跑的：
+  - Linux 全套回歸：1254 passed、22 skipped、4 subtests passed（linux-regression-2026-10-10.xml）。環境是 Python 3.12.15、PostgreSQL 18.6（CI 釘選的 digest）、Node 24.21.0。
+  - 以真 Docker 執行的隔離測試：88 passed、1 skipped、4 subtests passed（docker-isolation-2026-10-10.xml）。環境是 Docker 29.1.3；worker 映像以 CI 使用的 python digest 建置。
+  - 前端：型別檢查、vitest、i18n 與訊息表檢查、production build 都通過。
+  - ruff：通過。
+  - 依賴稽核：以釘選的 osv-scanner 檢查 requirements.lock.txt 與 frontend/package-lock.json，沒有已知漏洞。
+- 這一輪沒有在本機重跑的：
+  - 三種離線掃描器、五種動態工具、完整 pipeline：這台主機沒有這些映像，改由 integration.yml 在 CI 上執行。
+  - Windows 回歸與 Edge 真實瀏覽器檢查。
+- 已知、尚未處理：deploy/worker/locks 的工具映像依賴有 14 筆已知漏洞，分布在 11 個套件（osv.dev 2026-10-10）。它們來自 promptfoo 0.123.1 與 PyRIT 的相依套件，例如 simple-git、basic-ftp、sharp、werkzeug，其中幾筆在上游還沒有修正版。要處理必須更新工具版本、重建 tools 映像並重新驗收，所以這一輪沒有改動。dependency-drift.yml 目前沒有掃描這兩個鎖定檔。
+- 修正內容（詳見 git log）：
+  - supervisor 啟動後，controller 端的任何失敗都回報 outcome_unknown。
+  - worker 回傳格式錯誤時，supervisor 已記錄的外洩仍判 fail。
+  - supervisor 丟棄 worker 自行宣告的 supervisor 欄位。
+  - runtime profile 不能選用 process_test。
+  - broker 請求設有整體期限。
+  - lease 期限涵蓋 supervisor 啟動、容器建立與 teardown，worker 本身的時限由 supervisor 強制。
+  - 送出封存的 body 位元組。
+  - 拒絕 NAT64／6to4 形式的 metadata 位址。
+  - Docker API 版本改為協商。
+  - OSV 只採用已驗證的生態系，exit 128 記為缺口。
+  - positive control 合約與執行器一致。
+  - 模型 payload 依上限裁切。
+  - 預算拒絕以原因呈現。
+  - 合約檢查併入有界重試。
+  - 複測只帶入相關案例，結果寫回上層發現。
+  - 待核准的案例可以退回。
+  - 恢復時重用已付費的模型答案。
+  - 控制台的錯誤顯示、輪詢退避與無障礙。
+
 ## 驗收結果
 
 測試組互有重疊，**不可將各列相加當作不重複測試數**。JUnit 的 successful records 包含另外輸出的 subtests；下表使用 pytest 顯示的測試數。
 
 | 驗收 | 實際結果 | 證據 |
 |---|---|---|
+| Linux 全套回歸（2026-10-10，本輪修正後） | 1254 passed、22 skipped、4 subtests passed；PostgreSQL 18.6 與 Node 24 實際執行 | linux-regression-2026-10-10.xml |
+| 真 Docker 隔離測試（2026-10-10，本輪修正後） | 88 passed、1 skipped、4 subtests passed；Docker 29.1.3 | docker-isolation-2026-10-10.xml |
 | Linux 全套回歸（2026-10-05，現行程式碼） | 363 passed、21 skipped、4 subtests passed；PostgreSQL 18.6 整合（原子回復、checkpoint 與 resume、lease 並行 claim）與 Node 24 Web fixture 皆實際執行；skips 為 20 項需要 Docker 映像的整合及 1 項 Windows 專屬 | linux-regression.xml |
 | Linux 全套回歸含 Docker 整合（2026-10-05，現行程式碼） | 383 passed、1 skipped、4 subtests passed；隔離 worker、三種離線掃描器、五種動態工具、以 Docker 後端執行的 fixture protocol 與完整 pipeline 皆實際執行，另含 PostgreSQL 18.6 整合與 Node 24 Web fixture；唯一的 skip 為 Windows 專屬。盲審 matching 工具的 10 項測試也在此收據範圍內 | linux-docker-integration.xml |
 | Linux 全套回歸含 Docker 整合（2026-10-06，現行程式碼） | 508 passed、15 skipped、4 subtests passed；Python 3.12.3、Docker 29.6.2、PostgreSQL 16.14、Node 24.21.0。隔離 worker、白箱容器不掛 broker、黑箱 http_case 固定序列、三種離線掃描器、以 Docker 後端執行的 fixture protocol（含 supervisor 紀錄判定）與完整 pipeline 皆實際執行。14 項 skip 是這台主機沒有建置 tools 與 ZAP 映像，所以五種動態工具這次沒有重驗，以 10-05 收據為準；另 1 項為 Windows 專屬 | linux-docker-integration-2026-10-06.xml |
@@ -108,12 +144,48 @@ Validation date: 2026-09-24; after follow-up fixes from review, the full Windows
 
 This round actually used the Windows console, WSL2/Linux, Docker 29.1.3, PostgreSQL 18.6 and eight security tools at pinned versions. The original 2026-09-24 verification host's Windows receipts ran Python 3.12.14; the 2026-10-05 Windows receipts ran Python 3.13.15 (a hash-pinned install was also verified on Windows Python 3.12.10), the Linux test venv used Python 3.14.4, and Node was 24.19.0. The complete Python/npm dependency and tool image lockfiles are delivered with the source code. The images and the offline OSV data themselves are not packed into the ZIP.
 
+## 2026-10-10 In-Depth Review Fixes
+
+This round fixed the issues a full review found (PR #39, branch fix/deep-review-2026-10-10, with main merged up to c2a027f).
+
+- Re-run this round:
+  - Full Linux regression: 1254 passed, 22 skipped, 4 subtests passed (linux-regression-2026-10-10.xml). The environment was Python 3.12.15, PostgreSQL 18.6 (the digest CI pins) and Node 24.21.0.
+  - Isolation tests on real Docker: 88 passed, 1 skipped, 4 subtests passed (docker-isolation-2026-10-10.xml). The environment was Docker 29.1.3; the worker image was built on the python digest CI uses.
+  - Frontend: type check, vitest, the i18n and message-table checks and the production build all passed.
+  - ruff: passed.
+  - Dependency audit: the pinned osv-scanner reports no known vulnerabilities in requirements.lock.txt or frontend/package-lock.json.
+- Not re-run locally this round:
+  - The three offline scanners, the five dynamic tools and the full pipeline: this host had none of those images, so integration.yml runs them in CI instead.
+  - The Windows regression and the real Edge browser check.
+- Known and not yet handled: the tool image dependencies in deploy/worker/locks carry 14 known vulnerabilities across 11 packages (osv.dev, 2026-10-10). They come from dependencies of promptfoo 0.123.1 and PyRIT, such as simple-git, basic-ftp, sharp and werkzeug, and some have no upstream fix yet. Handling them means updating tool versions, rebuilding the tools image and re-validating it, so this round left them unchanged. dependency-drift.yml does not scan these two lockfiles yet.
+- Fixes (see git log for details):
+  - Once the supervisor has started, any controller-side failure is reported as outcome_unknown.
+  - When the worker returns a malformed result, a leak the supervisor recorded still fails.
+  - The supervisor drops supervisor fields that the worker sets itself.
+  - A runtime profile cannot select process_test.
+  - Broker requests have an overall deadline.
+  - The lease deadline covers supervisor startup, container creation and teardown, and the supervisor enforces the worker's own time limit.
+  - The sealed body bytes are what gets sent.
+  - NAT64 and 6to4 forms of the metadata address are refused.
+  - The Docker API version is negotiated.
+  - OSV uses only verified ecosystems, and exit code 128 is recorded as a gap.
+  - The positive-control contract matches what the executors accept.
+  - Model payloads are fitted to the limit.
+  - Budget refusals are reported with their reason.
+  - Contract checks run inside the bounded retry.
+  - Retests take only the relevant cases, and their results are written back to the parent findings.
+  - Model-designed cases waiting for approval can be declined.
+  - A resume reuses model answers that were already paid for.
+  - Console error display, polling backoff and accessibility.
+
 ## Acceptance Results
 
 The test groups overlap one another; **do not add the rows together and treat the sum as a count of unique tests**. JUnit's successful records include subtests that are reported separately; the table below uses the test counts as displayed by pytest.
 
 | Acceptance | Actual result | Evidence |
 |---|---|---|
+| Full Linux regression (2026-10-10, after this round) | 1254 passed, 22 skipped, 4 subtests passed; PostgreSQL 18.6 and Node 24 actually ran | linux-regression-2026-10-10.xml |
+| Isolation tests on real Docker (2026-10-10, after this round) | 88 passed, 1 skipped, 4 subtests passed; Docker 29.1.3 | docker-isolation-2026-10-10.xml |
 | Full Linux regression (2026-10-05, current code) | 363 passed, 21 skipped, 4 subtests passed; the PostgreSQL 18.6 integration (atomic rollback, checkpoint and resume, concurrent lease claim) and the Node 24 Web fixture were actually executed; the skips are 20 integrations requiring Docker images and 1 Windows-only case | linux-regression.xml |
 | Full Linux regression with Docker integration (2026-10-05, current code) | 383 passed, 1 skipped, 4 subtests passed; the isolated worker, the three offline scanners, the five dynamic tools, the fixture protocol executed with the Docker backend and the full pipeline were all actually executed, and this run also includes the PostgreSQL 18.6 integration and the Node 24 Web fixture; the only skip is Windows-specific. The 10 tests of the blind-review matching tool are also within this receipt's scope | linux-docker-integration.xml |
 | Full Linux regression with Docker integration (2026-10-06, current code) | 508 passed, 15 skipped, 4 subtests passed; Python 3.12.3, Docker 29.6.2, PostgreSQL 16.14, Node 24.21.0. The isolated worker, white-box containers without a broker, the fixed black-box http_case sequence, the three offline scanners, the fixture protocol on the Docker backend (including supervisor-record verdicts) and the full pipeline were all actually executed. 14 skips are because this host did not build the tools and ZAP images, so the five dynamic tools were not re-verified this time; the 10-05 receipt stands for them. The remaining skip is Windows-specific | linux-docker-integration-2026-10-06.xml |

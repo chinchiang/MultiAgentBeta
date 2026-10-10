@@ -73,6 +73,8 @@ class _Console:
         self.engine=engine
         self.sessions={}
         self.token_failures=deque()
+        # Wrong guesses wait in turn, so parallel requests cannot share one delay.
+        self.token_gate=asyncio.Lock()
         self.fixed_token=settings.fixed_token
         self.allowed_origins=set(settings.console_origins)
         if testing:
@@ -186,8 +188,9 @@ def _session_routes(app,api,console):
             console.token_failures.popleft()
         if not secrets.compare_digest(startup.encode(),app.state.session_token.encode()):
             if startup:
-                console.token_failures.append(moment)
-                await pause(min(TOKEN_FAILURE_DELAY_MAX,TOKEN_FAILURE_DELAY*len(console.token_failures)))
+                async with console.token_gate:
+                    console.token_failures.append(moment)
+                    await pause(min(TOKEN_FAILURE_DELAY_MAX,TOKEN_FAILURE_DELAY*len(console.token_failures)))
             return problem("Startup token required: open the URL printed when the local service started",401)
         for sid in [sid for sid,entry in console.sessions.items() if entry["expires"]<moment or entry["last_seen"]+SESSION_IDLE_SECONDS<moment]:
             del console.sessions[sid]

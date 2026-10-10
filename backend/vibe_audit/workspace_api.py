@@ -89,9 +89,17 @@ def workspace_router(store, engine, source_roots, *, session):
         manifest.update(name=data.name, source_path=data.source_path, deployment_id=data.deployment_id,
                         parent_run_id=run_id, parent_finding_ids=data.finding_ids)
         # Original operator cases retain their assertions; new evidence receives new IDs/hashes.
-        if parent["cases"]:
+        cases = parent["cases"]
+        selected = [f for f in parent["findings"] if f["id"] in set(data.finding_ids)]
+        threats = {t for f in selected for t in f.get("threat_ids") or []}
+        if threats:
+            # A retest re-checks what was selected: only the cases that test those findings' threats.
+            cases = [c for c in cases if threats & set(c.get("threat_ids", []))]
+            if not cases:
+                raise PolicyError("No case of the original assessment tests the selected findings' threats")
+        if cases:
             manifest["cases"] = [{k: v for k, v in case.items() if k not in
-                                  {"hash", "source_digest", "threat_model_hash"}} for case in parent["cases"]]
+                                  {"hash", "source_digest", "threat_model_hash"}} for case in cases]
         # A retest keeps the parent's manifest, so a model-designed case whose headers that manifest never listed
         # would only be refused later by the case gate, after the white-box stage had spent its budget. Say so now.
         refused = sorted(str(case.get("id", "?")) for case in manifest.get("cases", []) if case.get("designed_by") == "model"
@@ -130,7 +138,7 @@ def workspace_router(store, engine, source_roots, *, session):
         if finding is None:
             raise HTTPException(404, "Finding not found")
         # A pass of another case, or a later pass of the same one, does not undo an observed violation.
-        if finding["state"] == "validated_dynamic":
+        if finding["state"] in {"validated_dynamic", "resolved_in_retest"}:
             raise PolicyError("An observed violation stands; verify the fix in a linked retest run")
         records = {a["id"]: a for a in run["artifacts"]}
         if not set(data.evidence_ids) <= records.keys():

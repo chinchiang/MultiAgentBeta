@@ -34,19 +34,48 @@ MAX_FRAME = 64*1024*1024
 # A broker request carries at most a 64 KiB body; nothing larger is buffered before the token check.
 BROKER_FRAME = 256*1024
 MAX_BODY = 256*1024
+# One relayed request, from broker lock to the last response byte, ends within this; the relay and the
+# bundled tool clients (10s each) wait a little longer, so no answer arrives after its client gave up.
+BROKER_DEADLINE = 9
+RELAY_TIMEOUT = 10
+# Must equal worker_runtime.CREATE_BUDGET, which sizes the lease around this step.
+CREATE_BUDGET = 45
+# Must equal worker_runtime.SUPERVISED_FIELDS; this file also runs standalone inside the container.
+SUPERVISED_FIELDS = ("broker_observations","cleanup_confirmed","deployment_changed","isolation","lifecycle","task_id","simulated","work_dir_removed","resumed_from_journal")
 
 
-def docker_api(method,path,timeout=5):
-    """Fixed local Docker Engine API; never follows remote contexts/proxies."""
+# The newest Engine API this code was written against, and the oldest: Docker 25 (API 1.44) is the first
+# with the recursive read-only bind mounts every worker gets.
+DOCKER_API_MAX = (1,52)
+DOCKER_API_MIN = (1,44)
+_docker_api_version = None
+
+
+def _docker_request(method,path,timeout):
     sock=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);sock.settimeout(timeout)
     conn=http.client.HTTPConnection("localhost",timeout=timeout)
     try:
         sock.connect("/var/run/docker.sock");conn.sock=sock
-        conn.request(method,"/v1.52"+path)
+        conn.request(method,path)
         response=conn.getresponse();body=response.read(1024*1024+1)
         if len(body)>1024*1024: raise ValueError("Docker response exceeded its bound")
         return response.status,json.loads(body) if body else None
     finally:conn.close();sock.close()
+
+
+def docker_api(method,path,timeout=5):
+    """Fixed local Docker Engine API; never follows remote contexts/proxies.
+
+    The version is negotiated once, as the docker CLI does: an older daemon refuses a newer version prefix outright."""
+    global _docker_api_version
+    if _docker_api_version is None:
+        status,info=_docker_request("GET","/version",timeout)
+        try: server=tuple(int(part) for part in str((info or {}).get("ApiVersion","")).split("."))
+        except ValueError: server=()
+        if status!=200 or len(server)!=2 or server<DOCKER_API_MIN:
+            raise ValueError("Docker Engine API 1.44 (Docker 25) or newer is required")
+        _docker_api_version="v%d.%d"%min(server,DOCKER_API_MAX)
+    return _docker_request(method,"/"+_docker_api_version+path,timeout)
 
 
 def packed(value):
@@ -331,9 +360,12 @@ class Supervisor:
                     out[key]=value
                 return out
             if raw:
+                if step.get("body") is None: raise ValueError("The sealed step has no request body")
                 received=json.loads(raw,object_pairs_hook=unique_object)
                 if json.dumps(received,sort_keys=True,allow_nan=False)!=json.dumps(step.get("body"),sort_keys=True,allow_nan=False):
                     raise ValueError("Request body differs from its sealed case")
+                # Equal meaning is not equal bytes: the target gets the sealed body, not the worker's spelling of it.
+                raw=json.dumps(step["body"]).encode()
             elif step.get("body") is not None:
                 raise ValueError("Sealed request body is missing")
         # The case and its positive controls are what the model wrote; fixture lifecycle steps come from the engine.
@@ -362,7 +394,7 @@ class Supervisor:
             secrets.append(transient)
         return case_id,step,method,path,headers,raw,secrets
 
-    def forward(self,method,path,headers,body):
+    def forward(self,method,path,headers,body,deadline=None):
         from adapters import _origin,_pinned_address
         from lease import LeaseError
         scheme,host,port=_origin(self.manifest)
@@ -377,6 +409,21 @@ class Supervisor:
             if self.revoked.is_set(): sock.close();raise NotSent("Egress revoked before the request was sent")
             self.sockets.add(sock)
         conn=None
+        expired=threading.Event()
+        def expire():
+            # Per-operation timeouts let a target trickle bytes forever; the deadline bounds the whole exchange.
+            expired.set()
+            with self.socket_lock:
+                try: sock.shutdown(socket.SHUT_RDWR)
+                except OSError: pass
+        remaining=(deadline or time.monotonic()+BROKER_DEADLINE)-time.monotonic()
+        if remaining<=0:
+            with self.socket_lock: self.sockets.discard(sock)
+            sock.close();raise NotSent("The request deadline passed before the request was sent")
+        # A connect cannot outlast the deadline either; a shutdown before it connects would not stop it.
+        sock.settimeout(min(5,remaining))
+        watchdog=threading.Timer(remaining,expire);watchdog.daemon=True
+        watchdog.start()
         try:
             try:
                 sock.connect((pinned,port))
@@ -387,9 +434,15 @@ class Supervisor:
                         if self.revoked.is_set(): sock.close();raise NotSent("Egress revoked before the request was sent")
                         self.sockets.add(sock)
                     secure.do_handshake()
+                sock.settimeout(5)
             except OSError:
                 raise NotSent("Target connection failed before the request was sent") from None
+            if expired.is_set():
+                # The deadline passed while connecting; nothing has been sent yet.
+                raise NotSent("The request deadline passed before the request was sent")
             conn=http.client.HTTPConnection(host,port,timeout=5)
+            # The TLS socket is set by hand, so the Host header must not name the default HTTPS port.
+            conn.default_port=443 if scheme=="https" else 80
             conn.sock=sock
             conn.request(method,path,body=body or None,headers=headers)
             response=conn.getresponse()
@@ -411,82 +464,91 @@ class Supervisor:
             return {"status_code":response.status,"body":text,"complete":True,"peer_ip":pinned,
                     "headers":{"Content-Type":response.getheader("Content-Type","application/json")}}
         finally:
+            watchdog.cancel()
             if conn: conn.close()
             with self.socket_lock: self.sockets.discard(sock)
             sock.close()
 
     def broker_request(self,request):
-        with self.dispatch_lock:
-            if self.revoked.is_set() or request.get("broker_token")!=self.task["broker_token"]:
-                raise ValueError("Broker authority unavailable")
-            self.lease.validate(self.cap,self.worker_id)
-            case_id,step,method,path,headers,body,secrets=self.allowed_request(request)
-            rid=uuid.uuid4().hex
-            pending=[threading.Event(),False]
-            with self.grant_lock: self.grants[rid]=pending
-            self.emit({"kind":"request","request_id":rid,"method":method,"path":path,"case_id":case_id,"identity":request.get("identity"),"purpose":step.get("purpose","test")})
-            approved=pending[0].wait(min(3,self.cap["ttl_seconds"])) and pending[1]
-            with self.grant_lock: self.grants.pop(rid,None)
-            if not approved or self.revoked.is_set(): raise ValueError("Controller denied request")
-            # The exact record reserved here is also what finish_dispatch must match,
-            # so a journaled result can never be attached to a different request.
-            sealed_dispatch={"method":method,"path":path,"case_id":case_id,"body_sha256":hashlib.sha256(body).hexdigest()}
-            self.lease.reserve_dispatch(self.cap,self.worker_id,rid,sealed_dispatch)
-            record={"case_id":case_id,"method":method,"path":path,"identity":request.get("identity"),"purpose":step.get("purpose","test")}
-            # Only a read-only step that reached the target has a known outcome when its answer cannot be
-            # relayed; any other failure after reservation may have changed the target.
-            unsafe=method not in {"GET","HEAD","OPTIONS"} or step.get("side_effects") is True
-            try:
-                result=self.forward(method,path,headers,body)
-            except Exception as exc:
-                known=isinstance(exc,NotSent) or not unsafe and isinstance(exc,(Unusable,OSError,http.client.HTTPException))
-                if not known:
-                    self.unknown_dispatch=True
-                    self.revoke_network(self.policy_blocked or "Dispatched request has an unknown or invalid result")
-                    raise
-                reason=str(exc) if isinstance(exc,(NotSent,Unusable)) else "Target response was incomplete"
-                self.lease.finish_dispatch(self.cap,self.worker_id,rid,sealed_dispatch,{"delivered":not isinstance(exc,NotSent),"reason":reason})
-                self.broker_observations.append({**record,"status_code":getattr(exc,"status_code",None),"body":"","peer_ip":None,"complete":False,"denied":reason})
-                if self.policy_blocked:
-                    # Nothing more of this task goes to a deployment other than the declared one.
-                    self.revoke_network(self.policy_blocked,revoke_lease=False)
-                if self.sealed_steps() is not None: self.sequence_stopped=True
-                raise
-            try:
-                capture=step.get("capture_session")
-                if capture:
-                    # A failed capture ends the sequence below; the response itself is known.
-                    try:
-                        value=json.loads(result["body"])
-                        for part in capture.get("json_field","").split("."): value=value[part]
-                    except (ValueError,KeyError,TypeError,IndexError): value=None
-                    if capture.get("slot") and isinstance(value,str) and value and len(value)<=8192 and all(33<=ord(c)<=126 for c in value):
-                        self.sessions[(case_id,capture["slot"])]=value
-                        secrets.append(value)
-                        result["capture_success"]=True
-                secrets.extend(self.sessions.values())
-                # A target may reflect another identity's credential; the sandboxed tool must not see that either.
-                from adapters import credential_env_allowed,secret_forms
-                for profile in self.manifest.get("auth_profiles",[]):
-                    key=profile.get("credential_env","")
-                    if credential_env_allowed(key) and os.environ.get(key):
-                        secrets.append(os.environ[key])
-                for secret in sorted({form for value in secrets for form in secret_forms(value)},key=len,reverse=True):
-                    result["body"]=result["body"].replace(secret,"[REDACTED_CREDENTIAL]")
-                self.lease.finish_dispatch(self.cap,self.worker_id,rid,sealed_dispatch,result)
-                self.broker_observations.append({**record,"status_code":result["status_code"],"body":result["body"],"peer_ip":result["peer_ip"],"complete":True,"capture_success":result.get("capture_success") is True,"body_sha256":hashlib.sha256(result["body"].encode()).hexdigest()})
-            except Exception:
+        deadline=time.monotonic()+BROKER_DEADLINE
+        # A request queued behind a slow one must not go out after its relay has given up.
+        if not self.dispatch_lock.acquire(timeout=BROKER_DEADLINE/2): raise ValueError("Broker is busy")
+        try:
+            return self._broker_request(request,deadline)
+        finally:
+            self.dispatch_lock.release()
+
+    def _broker_request(self,request,deadline):
+        if self.revoked.is_set() or request.get("broker_token")!=self.task["broker_token"]:
+            raise ValueError("Broker authority unavailable")
+        self.lease.validate(self.cap,self.worker_id)
+        case_id,step,method,path,headers,body,secrets=self.allowed_request(request)
+        rid=uuid.uuid4().hex
+        pending=[threading.Event(),False]
+        with self.grant_lock: self.grants[rid]=pending
+        self.emit({"kind":"request","request_id":rid,"method":method,"path":path,"case_id":case_id,"identity":request.get("identity"),"purpose":step.get("purpose","test")})
+        approved=pending[0].wait(max(0,min(10,self.cap["ttl_seconds"],deadline-time.monotonic()-1))) and pending[1]
+        with self.grant_lock: self.grants.pop(rid,None)
+        if not approved or self.revoked.is_set(): raise ValueError("Controller denied request")
+        # The exact record reserved here is also what finish_dispatch must match,
+        # so a journaled result can never be attached to a different request.
+        sealed_dispatch={"method":method,"path":path,"case_id":case_id,"body_sha256":hashlib.sha256(body).hexdigest()}
+        self.lease.reserve_dispatch(self.cap,self.worker_id,rid,sealed_dispatch)
+        record={"case_id":case_id,"method":method,"path":path,"identity":request.get("identity"),"purpose":step.get("purpose","test")}
+        # Only a read-only step that reached the target has a known outcome when its answer cannot be
+        # relayed; any other failure after reservation may have changed the target.
+        unsafe=method not in {"GET","HEAD","OPTIONS"} or step.get("side_effects") is True
+        try:
+            result=self.forward(method,path,headers,body,deadline)
+        except Exception as exc:
+            known=isinstance(exc,NotSent) or not unsafe and isinstance(exc,(Unusable,OSError,http.client.HTTPException))
+            if not known:
                 self.unknown_dispatch=True
-                self.revoke_network("Dispatched request has an unknown or invalid result")
+                self.revoke_network(self.policy_blocked or "Dispatched request has an unknown or invalid result")
                 raise
-            if self.sealed_steps() is not None:
-                unmet=((step.get("expected_status") is not None and result["status_code"]!=step["expected_status"])
-                       or any(text not in result["body"] for text in step.get("required_text",[]))
-                       or (step.get("capture_session") and not result.get("capture_success")))
-                # Later steps depend on this one, so an unmet prerequisite ends the sequence with a known answer.
-                if unmet: self.sequence_stopped=True
-                else: self.sequence+=1
-            return result
+            reason=str(exc) if isinstance(exc,(NotSent,Unusable)) else "Target response was incomplete"
+            self.lease.finish_dispatch(self.cap,self.worker_id,rid,sealed_dispatch,{"delivered":not isinstance(exc,NotSent),"reason":reason})
+            self.broker_observations.append({**record,"status_code":getattr(exc,"status_code",None),"body":"","peer_ip":None,"complete":False,"denied":reason})
+            if self.policy_blocked:
+                # Nothing more of this task goes to a deployment other than the declared one.
+                self.revoke_network(self.policy_blocked,revoke_lease=False)
+            if self.sealed_steps() is not None: self.sequence_stopped=True
+            raise
+        try:
+            capture=step.get("capture_session")
+            if capture:
+                # A failed capture ends the sequence below; the response itself is known.
+                try:
+                    value=json.loads(result["body"])
+                    for part in capture.get("json_field","").split("."): value=value[part]
+                except (ValueError,KeyError,TypeError,IndexError): value=None
+                if capture.get("slot") and isinstance(value,str) and value and len(value)<=8192 and all(33<=ord(c)<=126 for c in value):
+                    self.sessions[(case_id,capture["slot"])]=value
+                    secrets.append(value)
+                    result["capture_success"]=True
+            secrets.extend(self.sessions.values())
+            # A target may reflect another identity's credential; the sandboxed tool must not see that either.
+            from adapters import credential_env_allowed,secret_forms
+            for profile in self.manifest.get("auth_profiles",[]):
+                key=profile.get("credential_env","")
+                if credential_env_allowed(key) and os.environ.get(key):
+                    secrets.append(os.environ[key])
+            for secret in sorted({form for value in secrets for form in secret_forms(value)},key=len,reverse=True):
+                result["body"]=result["body"].replace(secret,"[REDACTED_CREDENTIAL]")
+            self.lease.finish_dispatch(self.cap,self.worker_id,rid,sealed_dispatch,result)
+            self.broker_observations.append({**record,"status_code":result["status_code"],"body":result["body"],"peer_ip":result["peer_ip"],"complete":True,"capture_success":result.get("capture_success") is True,"body_sha256":hashlib.sha256(result["body"].encode()).hexdigest()})
+        except Exception:
+            self.unknown_dispatch=True
+            self.revoke_network("Dispatched request has an unknown or invalid result")
+            raise
+        if self.sealed_steps() is not None:
+            unmet=((step.get("expected_status") is not None and result["status_code"]!=step["expected_status"])
+                   or any(text not in result["body"] for text in step.get("required_text",[]))
+                   or (step.get("capture_session") and not result.get("capture_success")))
+            # Later steps depend on this one, so an unmet prerequisite ends the sequence with a known answer.
+            if unmet: self.sequence_stopped=True
+            else: self.sequence+=1
+        return result
 
     def start_broker(self):
         owner=self
@@ -515,7 +577,7 @@ class Supervisor:
             name=self.task["container_name"]
             if args==( "kill",name):method,path="POST",f"/containers/{name}/kill?signal=SIGKILL"
             elif args==("wait",name):method,path="POST",f"/containers/{name}/wait?condition=not-running"
-            elif args==("rm","--force",name):method,path="DELETE",f"/containers/{name}?force=true&v=false"
+            elif args==("rm","--force",name):method,path="DELETE",f"/containers/{name}?force=true&v=true"
             else:return False
             status,_=docker_api(method,path,timeout=10)
             return status in {200,204,404}
@@ -553,7 +615,7 @@ class Supervisor:
                 create_argv=list(argv);create_argv[len(self.task["docker_prefix"]) ]="create"
                 created=spawn(create_argv,env=clean_env(),cwd=self.task["inputs_dir"])
                 try:
-                    _,create_error=created.communicate(timeout=min(45,self.spec["timeout_seconds"]))
+                    _,create_error=created.communicate(timeout=min(CREATE_BUDGET,self.spec["timeout_seconds"]))
                     if created.returncode:
                         self.startup_diagnostic=without_host_paths(create_error.decode("utf-8",errors="replace")[:1000])
                         raise ValueError("Container creation failed")
@@ -566,8 +628,11 @@ class Supervisor:
             self.emit({"kind":"started","worker_pid":self.child.pid,"container_name":self.task.get("container_name")})
             readers=[threading.Thread(target=collect,args=(stream,out),daemon=True) for stream,out in zip((self.child.stdout,self.child.stderr),outputs)]
             for reader in readers: reader.start()
+            # The lease also covers creation and teardown, so the worker's own time limit is enforced here.
+            limit=time.monotonic()+self.spec["timeout_seconds"]
             while self.child.poll() is None and not self.revoked.wait(.05):
                 if overflow.is_set(): self.revoke_network("Worker IPC output limit exceeded")
+                elif time.monotonic()>limit: self.revoke_network("Worker exceeded its time limit")
             completed=self.child.poll()==0 and not self.revoked.is_set() and not overflow.is_set()
             if not completed:
                 self.revoke_network(self.reason or "Worker exited without a valid result")
@@ -595,8 +660,9 @@ class Supervisor:
             else:
                 result=json.loads(bytes(outputs[0]))
                 if not isinstance(result,dict): raise ValueError("Invalid worker result")
-                result["broker_observations"]=self.broker_observations
-                result.update(cleanup_confirmed=True)
+                # Fields the supervisor or controller own are only the worker's claim here, so none survive.
+                result={k:v for k,v in result.items() if k not in SUPERVISED_FIELDS}
+                result.update(broker_observations=self.broker_observations,cleanup_confirmed=True,deployment_changed=self.deployment_changed)
             result.update(isolation="docker_network_none" if self.task["backend"]=="docker" else "process_unisolated_test_only",lifecycle=self.lifecycle,task_id=self.cap["task_id"],simulated=self.task["backend"]!="docker")
             if completed and cleanup:
                 # Enrich before journaling, so a result reused from this journal after
@@ -643,9 +709,9 @@ def _relay_server(task):
                          "case_id":self.headers.get("X-Vibe-Case"),"identity":self.headers.get("X-Vibe-Identity"),
                          "body_b64":base64.b64encode(self.rfile.read(length)).decode()}
                 if task["broker"].get("unix"):
-                    connection=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);connection.settimeout(10);connection.connect(task["broker"]["unix"])
+                    connection=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);connection.settimeout(RELAY_TIMEOUT);connection.connect(task["broker"]["unix"])
                 else:
-                    connection=socket.create_connection(tuple(task["broker"]["tcp"]),timeout=10)
+                    connection=socket.create_connection(tuple(task["broker"]["tcp"]),timeout=RELAY_TIMEOUT)
                 connection.sendall(packed(request))
                 with connection.makefile("rb") as incoming: result=read_frame(incoming)
                 if not result.get("ok"): raise ValueError
@@ -706,7 +772,7 @@ def _run_request_sequence(spec,relay_port):
     """The steps of a request sequence, in order, until one is refused by the supervisor (the relay answers 502)."""
     results=[];sequence_ok=True
     for step in spec.get("requests",[]):
-        conn=http.client.HTTPConnection("127.0.0.1",relay_port,timeout=12)
+        conn=http.client.HTTPConnection("127.0.0.1",relay_port,timeout=RELAY_TIMEOUT+2)
         headers={**step.get("headers",{}),"X-Vibe-Case":step.get("case_id") or spec["cases"][0]["id"]}
         if step.get("identity"): headers["X-Vibe-Identity"]=step["identity"]
         body=json.dumps(step["body"]).encode() if step.get("body") is not None else None
@@ -732,6 +798,9 @@ def _run_selftest(spec,task,out):
         time.sleep(120)
     elif action=="sleep": time.sleep(float(spec.get("sleep_seconds",120)))
     result={"status":"completed","exit_code":0,"stdout":json.dumps({"pid":os.getpid(),"source_visible":Path("/src").exists(),"broker_offered":task.get("broker") is not None,"uid":os.getuid() if hasattr(os,"getuid") else None,"interfaces":[name for _,name in socket.if_nameindex()]}),"stderr":"","artifacts":{}}
+    if action=="forge":
+        # A worker that claims fields only its supervisor may set; the supervisor must drop them.
+        result.update(deployment_changed=True,work_dir_removed=True,resumed_from_journal=True,simulated=False,isolation="forged",broker_observations=[{"case_id":"forged"}])
     return result
 
 
@@ -759,7 +828,8 @@ def _run_tool(spec,task,relay,writable,out):
     for name in spec.get("output_files",[]):
         path=out/name
         if path.is_symlink() or not path.is_file() or any(p.is_symlink() for p in path.parents): continue
-        raw=path.read_bytes() if path.stat().st_size<=limit else b""
+        if path.stat().st_size>limit: exceeded.set();break
+        raw=path.read_bytes()
         total+=len(raw)
         if total>limit: exceeded.set();break
         artifacts[name]=base64.b64encode(raw).decode()

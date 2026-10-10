@@ -101,7 +101,10 @@ describe('errors', () => {
     fetchMock.mockResolvedValueOnce(json({ detail: 'Only English' }, 400));
     await expect(api('/x')).rejects.toThrow('Only English');
     fetchMock.mockResolvedValueOnce(json({ detail: [{ loc: ['body'], msg: 'required' }] }, 422));
-    await expect(api('/x')).rejects.toThrow('[{"loc":["body"],"msg":"required"}]');
+    // A validation list reads as each field and its reason.
+    await expect(api('/x')).rejects.toThrow('required');
+    fetchMock.mockResolvedValueOnce(json({ detail: [{ loc: ['body', 'budget', 'max_seconds'], msg: 'too small' }, { loc: ['body', 'name'], msg: 'missing' }] }, 422));
+    await expect(api('/x')).rejects.toThrow('budget.max_seconds: too small; name: missing');
     fetchMock.mockResolvedValueOnce(new Response('<html>', { status: 502 }));
     await expect(api('/x')).rejects.toThrow('無法讀取服務回應（HTTP 502）。請確認本地 API 已啟動。');
     fetchMock.mockResolvedValueOnce(new Response('not json', { status: 200 }));

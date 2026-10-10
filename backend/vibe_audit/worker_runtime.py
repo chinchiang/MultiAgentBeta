@@ -40,8 +40,10 @@ def load_config(profile_id="default",config_path=None):
     data=json.loads(Path(path).read_text(encoding="utf-8"))
     profile=(data.get("profiles",data)).get(profile_id)
     if not isinstance(profile,dict): raise WorkerBlocked("Runtime profile is not provisioned")
-    allowed={"work_root","database_url","database_url_env","backend","image_pins","ttl_seconds","allow_process_test","docker_binary","offline_db_dir"}
+    allowed={"work_root","database_url","database_url_env","backend","image_pins","ttl_seconds","docker_binary","offline_db_dir"}
     if set(profile)-allowed: raise WorkerBlocked("Unsupported trusted runtime setting")
+    # The unisolated process backend exists for supervision tests constructed in code, never for a run.
+    if profile.get("backend","docker")!="docker": raise WorkerBlocked("Runtime profiles must use the Docker backend")
     result=copy.deepcopy(profile)
     if key:=result.pop("database_url_env",None):
         if not re.fullmatch(r"VIBEAUDIT_[A-Z0-9_]+",key): raise WorkerBlocked("Invalid lease database credential reference")
@@ -203,6 +205,39 @@ def _step_unmet(step,record):
             or (step.get("expected_status") is not None and record.get("status_code")!=step["expected_status"])
             or any(text not in body for text in step.get("required_text",[]))
             or bool(step.get("capture_session")) and record.get("capture_success") is not True)
+
+
+# Supervisor start and broker setup, container create (at most 45s), then a stop on a stalled daemon:
+# kill, wait and rm at 10s each plus reader joins.
+STARTUP_BUDGET=15
+CREATE_BUDGET=45
+TEARDOWN_BUDGET=40
+
+
+def task_budget(timeout):
+    """Seconds from lease issue until a supervisor that honors its own limits has journaled its result."""
+    return STARTUP_BUDGET+timeout+min(CREATE_BUDGET,timeout)+TEARDOWN_BUDGET
+
+
+def decode_artifacts(value):
+    """Tool artifacts arrive base64-encoded from the worker; anything else is malformed output."""
+    if not isinstance(value,dict) or not all(isinstance(k,str) and isinstance(v,str) for k,v in value.items()):
+        raise ValueError("Worker artifacts must map names to base64 text")
+    return {k:base64.b64decode(v,validate=True) for k,v in value.items()}
+
+
+def finish_result(spec,result):
+    try:
+        # Decode first: a credential inside a base64 tool artifact is invisible to text redaction.
+        if "artifacts" in result:
+            result["artifacts"]=decode_artifacts(result["artifacts"])
+        if spec.get("operation")=="request_sequence":
+            result=supervised_sequence(spec,result)
+        return result
+    except Exception:
+        # Malformed worker output must not erase what the supervisor recorded: its
+        # observations still decide a fail, and nothing the worker claimed survives.
+        return {**_supervised(result),"status":"execution_error","reason":"The worker returned a malformed result","observations":[]}
 
 
 def docker_command(*,prefix,image,name,phase,inputs,broker,runtime=HERE,source_dir=None,offline_db_dir=None):
@@ -367,6 +402,10 @@ class WorkerRuntime:
             result=await self._supervise(spec,cap,proc,send,initial,cancel_event=cancel_event,request_hook=request_hook,lease_hook=lease_hook)
             return await self._finish_tool_run(spec,manifest,cap,proc,private,result)
         except Exception as exc:
+            if proc is not None:
+                # The supervisor started, so requests may have gone out and its teardown is unconfirmed.
+                await self._revoke(cap,"Controller failed while supervising the worker")
+                return {"status":"outcome_unknown","reason":f"{type(exc).__name__}: the controller failed after the worker started; do not replay","cleanup_confirmed":False,"task_id":cap["task_id"]}
             # Refused before any supervisor started, so nothing else can still be using
             # the work directory; an issued capability nobody started would otherwise
             # poison this binding forever, so the controller revokes it here.
@@ -399,8 +438,10 @@ class WorkerRuntime:
     async def _issue_or_resume(self,spec,manifest,binding_args):
         """(capability, None) for a task to run now, or (None, result) when this exact binding already finished and was journaled."""
         try:
+            # The supervisor limits the worker itself to timeout_seconds from its start; the lease
+            # must also cover its startup, container creation, and teardown and journaling after it.
             cap=await asyncio.to_thread(self.leases.issue,max_requests=min(spec.get("max_requests",100),manifest.get("budget",{}).get("max_requests",100)),
-                                  ttl_seconds=self.ttl,max_seconds=spec["timeout_seconds"],**binding_args)
+                                  ttl_seconds=self.ttl,max_seconds=task_budget(spec["timeout_seconds"]),**binding_args)
         except LeaseError:
             # A controller crash after the worker finished must not turn paid,
             # journaled work into an unreplayable collision; unfinished tasks
@@ -409,11 +450,7 @@ class WorkerRuntime:
             if resumed is None:
                 raise
             resumed["resumed_from_journal"]=True
-            if isinstance(resumed.get("artifacts"),dict):
-                resumed["artifacts"]={k:base64.b64decode(v) for k,v in resumed["artifacts"].items()}
-            if spec.get("operation")=="request_sequence":
-                resumed=supervised_sequence(spec,resumed)
-            return None,redact_credentials(resumed,manifest)
+            return None,redact_credentials(finish_result(spec,resumed),manifest)
         return cap,None
 
     def _work_dir(self,files):
@@ -482,26 +519,30 @@ class WorkerRuntime:
                             transient=0
                             await send({"kind":"heartbeat"})
                     except Exception:
-                        await asyncio.to_thread(self.leases.revoke,cap["id"],"Controller revoked worker lease")
+                        # The revoke can fail for the same reason the renewals did; the
+                        # heartbeat must still end quietly so the teardown below runs.
+                        await self._revoke(cap,"Controller revoked worker lease")
                         try: await send({"kind":"cancel"})
                         except Exception: pass
                         return
-                    try: await asyncio.wait_for(stop.wait(),max(.05,self.ttl/3))
+                    # Four ticks per TTL: the lease outlives two failed renewals and the third ends the worker.
+                    try: await asyncio.wait_for(stop.wait(),max(.05,self.ttl/4))
                     except TimeoutError: pass
             async def drain_stderr():
                 total=0
                 while data:=await proc.stderr.read(8192):
                     total+=len(data)
                     if total>256*1024:
-                        await asyncio.to_thread(self.leases.revoke,cap["id"],"Supervisor stderr limit exceeded")
+                        await self._revoke(cap,"Supervisor stderr limit exceeded")
+                        # Keep draining, so a chatty supervisor cannot block on a full pipe until the deadline.
+                        while await proc.stderr.read(8192): pass
                         return
             beat=asyncio.create_task(heartbeat())
             errors=asyncio.create_task(drain_stderr())
-            # The supervisor may spend the same bounded create budget the worker's
-            # hard deadline allows, then up to 20s confirming teardown: a shorter
-            # controller deadline would abandon a healthy worker and invent an
-            # unknown outcome for a task it never let finish.
-            deadline=asyncio.get_running_loop().time()+spec["timeout_seconds"]+min(45,spec["timeout_seconds"])+25
+            # The supervisor may spend the same bounded startup and create budget the
+            # lease allows, then its teardown: a shorter controller deadline would abandon
+            # a healthy worker and invent an unknown outcome for a task it never let finish.
+            deadline=asyncio.get_running_loop().time()+task_budget(spec["timeout_seconds"])+5
             while True:
                 raw=await asyncio.wait_for(proc.stdout.readline(),max(.1,deadline-asyncio.get_running_loop().time()))
                 if not raw: break
@@ -517,14 +558,14 @@ class WorkerRuntime:
                 elif message.get("kind")=="result": result=message["result"];break
         except (Exception,asyncio.CancelledError) as exc:
             note_failure(f"worker {cap['task_id']} supervision",exc)
-            await asyncio.to_thread(self.leases.revoke,cap["id"],"Controller stopped awaiting worker")
+            await self._revoke(cap,"Controller stopped awaiting worker")
             try: await send({"kind":"cancel"})
             except Exception: pass
         finally:
             stop.set()
-            if beat: await beat
+            if beat: await asyncio.gather(beat,return_exceptions=True)
             if proc.stdin and not proc.stdin.is_closing(): proc.stdin.close()
-            try: await asyncio.wait_for(asyncio.shield(proc.wait()),25)
+            try: await asyncio.wait_for(asyncio.shield(proc.wait()),TEARDOWN_BUDGET)
             except TimeoutError: pass  # Independent guardian remains responsible for teardown.
             if errors: errors.cancel();await asyncio.gather(errors,return_exceptions=True)
             self.active.pop(cap["task_id"],None)
@@ -532,12 +573,13 @@ class WorkerRuntime:
 
     async def _finish_tool_run(self,spec,manifest,cap,proc,private,result):
         """The result as the run sees it: unknown when none arrived, the supervisor reaped, the work tree removed once cleanup is confirmed, artifacts decoded, credentials redacted."""
-        if result is None:
-            await asyncio.to_thread(self.leases.revoke,cap["id"],"No verified supervisor result")
+        # Without a result the supervisor is still the guardian tearing its container down, so it is not killed.
+        delivered=isinstance(result,dict)
+        if not delivered:
+            await self._revoke(cap,"No verified supervisor result")
             result={"status":"outcome_unknown","reason":"No complete worker result; do not replay","cleanup_confirmed":False,"task_id":cap["task_id"]}
-        if proc.returncode is None:
-            # The supervisor delivered its result but outlived the grace period
-            # (its own teardown may wait up to ~30s on a stalled daemon):
+        if delivered and proc.returncode is None:
+            # The supervisor delivered its result but outlived the grace period:
             # nothing of value remains and a lingering broker socket or task
             # file must not stay on disk. When cleanup was never confirmed the
             # outcome is already unknown and demands reconciliation, so an
@@ -548,12 +590,13 @@ class WorkerRuntime:
         if result.get("cleanup_confirmed") is True and proc.returncode is not None:
             # The worker is gone; its inputs, outputs and unredacted supervisor record must not stay on disk.
             result["work_dir_removed"]=remove_private_tree(private)
-        # Decode first: a credential inside a base64 tool artifact is invisible to text redaction.
-        if isinstance(result.get("artifacts"),dict):
-            result["artifacts"]={k:base64.b64decode(v) for k,v in result["artifacts"].items()}
-        if spec.get("operation")=="request_sequence":
-            result=supervised_sequence(spec,result)
-        return redact_credentials(result,manifest)
+        return redact_credentials(finish_result(spec,result),manifest)
+
+    async def _revoke(self,cap,reason):
+        """Best-effort revoke during teardown: the lease expires on its own if the database is down."""
+        try: await asyncio.to_thread(self.leases.revoke,cap["id"],reason)
+        except Exception as exc: note_failure("lease revoke during teardown",exc)
+
     async def run_case(self,manifest,case,*,cancel_event,request_hook,lease_hook=None,repetition=0):
         return supervised_verdict(case,await self.execute_tool({"operation":"http_case","tool_id":"http_case","cases":[case],"phase":"blackbox", "timeout_seconds":min(120,manifest.get("budget",{}).get("max_seconds",120))},manifest=manifest,cancel_event=cancel_event,request_hook=request_hook,lease_hook=lease_hook,repetition=repetition))
 

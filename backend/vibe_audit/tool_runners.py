@@ -85,7 +85,7 @@ const fs=require('fs'); const {request}=require('playwright');
  const c=JSON.parse(fs.readFileSync('/inputs/case.json','utf8'));
  const ctx=await request.newContext({baseURL:process.env.VIBEAUDIT_RELAY_ORIGIN,extraHTTPHeaders:c.headers,timeout:10000,ignoreHTTPSErrors:false});
  try {
-  const r=await ctx.fetch(c.path,{method:c.method,data:c.body===null?undefined:c.body,maxRedirects:0,maxRetries:0,failOnStatusCode:false});
+  const r=await ctx.fetch(c.path,{method:c.method,data:c.body===null?undefined:JSON.stringify(c.body),maxRedirects:0,maxRetries:0,failOnStatusCode:false});
   const b=await r.body(); if(b.length>262144) throw Error('response limit');
   fs.writeFileSync('/out/playwright.json',JSON.stringify({schema:1,tool:'playwright',api_only:true,case_id:c.id,status_code:r.status(),body:b.toString('utf8'),complete:true}));
  } finally {await ctx.dispose();}
@@ -292,7 +292,9 @@ async def run_tool(runtime, tool_id, manifest, case, *, cancel_event, request_ho
     from .fixture_protocol import _ordinary_steps, _sequence, _completed, _observations
     # Reject an uncompilable case before any positive control reaches the target.
     try:
-        spec = compile_tool(tool_id, case, image_pin=image_pin)
+        # The run's time budget bounds a tool task too, as it does a native http_case.
+        spec = compile_tool(tool_id, case, image_pin=image_pin,
+                            timeout_seconds=min(120, manifest.get("budget", {}).get("max_seconds", 120)))
     except (ToolInputError, ValueError, KeyError, TypeError) as exc:
         reason = str(exc) if isinstance(exc, ToolInputError) else "Case cannot be compiled for this tool"
         return {"tool": tool_id, "status": "blocked", "security_status": "blocked", "reason": reason,

@@ -638,3 +638,17 @@ def test_snapshot_refuses_symlinked_ancestors_and_skips_linked_directories(tmp_p
     assert result["files"][0]["redacted"] is False and result["bytes_read"] == len("print('ok')")
     with pytest.raises(ValueError, match="existing source directory"):
         snapshot_source("")
+
+
+@pytest.mark.asyncio
+async def test_contract_rules_beyond_the_schema_get_the_same_bounded_retry(profile, policy, fake_provider):
+    calls, answers = fake_provider
+    answers[:] = [response('{"ok":true}'), response('{"ok":true}')]
+    seen = []
+    def check(data):
+        seen.append(data)
+        if len(seen) == 1:
+            raise ValueError("A challenge needs counterevidence or missing evidence")
+    policy["contract_check"] = check
+    result = await providers.generate_json(profile, "Review", {}, policy)
+    assert len(calls) == len(seen) == 2 and result["data"] == {"ok": True}

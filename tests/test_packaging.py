@@ -175,3 +175,30 @@ def test_provisioning_writes_nothing_for_a_worker_without_a_digest_pinned_base(t
     provision.main()
     import json
     assert json.loads(out.with_suffix(".images.json").read_text())["worker"]["base_image_label"] == DIGEST
+
+
+def test_published_run_input_schema_is_what_the_code_validates():
+    import json
+    from vibe_audit.domain import RunInput
+    published = json.loads((ROOT / "docs" / "run-input.schema.json").read_text(encoding="utf-8"))
+    # Regenerate with: python -c "import json;from vibe_audit.domain import RunInput;print(json.dumps(RunInput.model_json_schema(),indent=2))"
+    assert published == RunInput.model_json_schema()
+
+
+def test_every_release_string_names_the_same_version():
+    import json
+    from vibe_audit import __version__
+    version = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
+    lock = json.loads((ROOT / "frontend" / "package-lock.json").read_text(encoding="utf-8"))
+    found = {
+        "backend/vibe_audit/__init__.py": __version__,
+        "frontend/package.json": json.loads((ROOT / "frontend" / "package.json").read_text(encoding="utf-8"))["version"],
+        "frontend/package-lock.json": lock["version"],
+        "frontend/package-lock.json packages['']": lock["packages"][""]["version"],
+    }
+    for name in ("README.md", "NOTICE", "docs/DELIVERY.md", "docs/VALIDATION.md"):
+        first = (ROOT / name).read_text(encoding="utf-8").splitlines()[0]
+        found[name] = (re.findall(r"\b\d+\.\d+\.\d+\b", first) or [None])[0]
+    sarif = re.search(r'"name":"Vibe Audit","version":"([^"]+)"', (PACKAGE / "service.py").read_text(encoding="utf-8"))
+    found["SARIF driver"] = sarif and sarif.group(1)
+    assert {name: value for name, value in found.items() if value != version} == {}

@@ -21,7 +21,9 @@ VERDICTS = ("matches_positive", "matches_negative", "new_positive", "not_a_vulne
 
 
 def _canonical_name(name):
-    """NFKC + trim + casefold so ' alice'/'ALICE'/homoglyphs cannot pose as a second reviewer."""
+    """NFKC + trim + casefold so ' alice', 'ALICE' or full-width 'ａｌｉｃｅ' cannot pose as a second reviewer.
+
+    NFKC does not fold cross-script look-alikes (Cyrillic 'а' for Latin 'a'); distinct names stay a declaration."""
     return unicodedata.normalize("NFKC", name).strip().casefold()
 
 
@@ -103,7 +105,7 @@ def apply_adjudications(dataset, records, reviewer_paths, arbiter_paths=(), mode
     worksheet = build_worksheet(dataset, records)
     worksheet_hash = _digest(worksheet)
     expected_ids = {(entry["sample_id"], finding["finding_id"]) for entry in worksheet["samples"] for finding in entry["unknown_findings"]}
-    if not reviewer_paths:
+    if len(reviewer_paths) < 2:
         raise BenchmarkError("Two independent named reviewer adjudication files are required")
     reviewers = [_load_adjudication(path, worksheet_hash, expected_ids) for path in reviewer_paths]
     names = [r["reviewer"] for r in reviewers]
@@ -166,7 +168,9 @@ def apply_adjudications(dataset, records, reviewer_paths, arbiter_paths=(), mode
         gold["positive_ids"] = sorted(matched[entry["sample_id"]]["positive"])
         gold["negative_ids"] = sorted(matched[entry["sample_id"]]["negative"])
         gold["human_reviewed"] = True
-        gold["reviewers"] = sorted(set(gold["reviewers"]) | set(names) | set(arbiter_names))
+        # Only an arbiter who decided something here reviewed it; an empty arbiter file adds no second name.
+        used = {d["arbiter"] for d in decisions.values() if d["resolution"] == "arbitrated"}
+        gold["reviewers"] = sorted(set(gold["reviewers"]) | set(names) | used)
     validate(dataset, BENCHMARK_DATASET_SCHEMA)
     updated_records = [_recompute(record, samples[record["sample_id"]]["gold"], mode) for record in records]
     counts = {"decisions": len(applied), "agreed": sum(a["resolution"] == "agreed" for a in applied),

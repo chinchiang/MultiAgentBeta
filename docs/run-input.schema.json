@@ -131,11 +131,18 @@
           "type": "string"
         },
         "temperature": {
+          "anyOf": [
+            {
+              "maximum": 2,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
           "default": 0,
-          "maximum": 2,
-          "minimum": 0,
-          "title": "Temperature",
-          "type": "number"
+          "title": "Temperature"
         },
         "max_output_tokens": {
           "default": 3000,

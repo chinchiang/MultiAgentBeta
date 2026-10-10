@@ -535,3 +535,36 @@ def test_store_sql_table_holds_only_bound_placeholders_and_differs_by_dialect_al
     sqlite_store = Store(tmp_path / "data")
     assert sqlite_store.sql == store_module.SQL and not sqlite_store.postgres
     sqlite_store.close()
+
+
+@pytest.mark.skipif(os.name != "posix" or (hasattr(os, "geteuid") and os.geteuid() == 0), reason="Needs POSIX permissions that apply to this user")
+def test_unreadable_entries_are_recorded_as_omitted_not_silently_dropped(tmp_path):
+    source = tmp_path / "repo"
+    (source / "locked").mkdir(parents=True)
+    (source / "locked" / "secret.py").write_text("x = 1\n")
+    (source / "ok.py").write_text("y = 2\n")
+    (source / "nope.py").write_text("z = 3\n")
+    os.chmod(source / "locked", 0)
+    os.chmod(source / "nope.py", 0)
+    try:
+        staged = stage_source(str(source), tmp_path / "private")
+        assert "locked/" in staged["omitted"] and "nope.py" in staged["omitted"]
+        assert [f["path"] for f in staged["files"]] == ["ok.py"]
+        discard_staging(staged, tmp_path / "private")
+    finally:
+        os.chmod(source / "locked", 0o755)
+        os.chmod(source / "nope.py", 0o644)
+
+
+def test_a_retest_takes_only_the_cases_testing_the_selected_findings(tmp_path):
+    app = create_app(tmp_path, testing=True)
+    with TestClient(app) as client:
+        client.headers["X-CSRF-Token"] = client.get("/api/session", headers={"X-VibeAudit-Token": app.state.session_token}).json()["csrf_token"]
+        _, run = client.portal.call(demo, app.state.store)
+        observed = next(f for f in run["findings"] if f["state"] == "validated_dynamic")
+        body = {"name": "Fix check", "source_path": "", "deployment_id": "fixed-v2", "finding_ids": [observed["id"]]}
+        child = client.post(f"/api/runs/{run['id']}/retest", json=body)
+        assert child.status_code == 201, child.text
+        cases = child.json()["manifest"]["cases"]
+        assert cases and all(set(c["threat_ids"]) & set(observed["threat_ids"]) for c in cases)
+        assert len(cases) < len(run["cases"])

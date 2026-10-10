@@ -1,6 +1,6 @@
 # 0.2.1 交付範圍與原計畫對照
 
-本版接續 0.1.0，補上隔離 worker、PostgreSQL 整合、動態工具 adapter、fixture 重置、副作用收集、標準目錄及控制台工作台。使用者已指定先完成工程與本地整合，真實三模型端點尚未準備。
+0.2.0 接續 0.1.0，補上隔離 worker、PostgreSQL 整合、動態工具 adapter、fixture 重置、副作用收集、標準目錄及控制台工作台；0.2.1 再加入盲審 matching 工具、逐端點 header 清單與多輪審查修正（最近一輪見 [VALIDATION.md](VALIDATION.md) 的「2026-10-10 深入審查修正」）。使用者已指定先完成工程與本地整合，真實三模型端點尚未準備。
 
 「已實作」與「已驗證」分開記錄。實際測試結果以 [VALIDATION.md](VALIDATION.md) 和附帶的 JUnit XML 為準；程式存在本身不等於模型或工具的效果已被證明。
 
@@ -31,7 +31,7 @@
 
 # 0.2.1 Delivery Scope Compared with the Original Plan
 
-This version continues from 0.1.0, adding the isolated worker, PostgreSQL integration, dynamic tool adapters, fixture reset, side-effect collection, the standards catalog and the console workbench. The user has specified completing the engineering and local integration first; the real three-model endpoints are not yet prepared.
+0.2.0 continues from 0.1.0, adding the isolated worker, PostgreSQL integration, dynamic tool adapters, fixture reset, side-effect collection, the standards catalog and the console workbench; 0.2.1 adds the blind-review matching tool, per-endpoint header lists and several rounds of review fixes (the latest is "2026-10-10 in-depth review fixes" in [VALIDATION.md](VALIDATION.md)). The user has specified completing the engineering and local integration first; the real three-model endpoints are not yet prepared.
 
 "Implemented" and "verified" are recorded separately. Actual test results are governed by [VALIDATION.md](VALIDATION.md) and the accompanying JUnit XML; the mere existence of code does not mean the effects of models or tools have been proven.
 

@@ -341,8 +341,21 @@ def _origin(manifest):
 _METADATA_IPS = frozenset(ipaddress.ip_address(item) for item in ("169.254.169.254", "fd00:ec2::254", "100.100.100.200"))
 
 
+# RFC 6052 /96 prefixes, which embed the IPv4 address in the last 32 bits; other prefix lengths are not decoded.
+_NAT64 = (ipaddress.ip_network("64:ff9b::/96"), ipaddress.ip_network("64:ff9b:1::/96"))
+
+
 def _unmapped(address):
-    return address.ipv4_mapped if address.version == 6 and address.ipv4_mapped else address
+    """The IPv4 address an IPv6 form reaches: mapped, 6to4 or a NAT64 translation of it."""
+    if address.version != 6:
+        return address
+    if address.ipv4_mapped:
+        return address.ipv4_mapped
+    if address.sixtofour:
+        return address.sixtofour
+    if any(address in network for network in _NAT64):
+        return ipaddress.IPv4Address(int(address) & 0xFFFFFFFF)
+    return address
 
 
 def target_ip_refused(address):
