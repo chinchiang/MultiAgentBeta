@@ -560,6 +560,7 @@ async def probe_model(profile: dict, policy: dict) -> dict:
     probe_policy = dict(policy)
     probe_policy["response_schema"] = {"type": "object", "properties": {"probe": {"const": "vibeaudit"}, "ok": {"const": True}}, "required": ["probe", "ok"], "additionalProperties": False}
     probe_profile = dict(profile)
-    probe_profile["max_output_tokens"] = min(profile.get("max_output_tokens", 3000), 128)
+    # Reasoning models spend output tokens thinking first; 128 truncated a probe at random. 1024 still bounds its cost.
+    probe_profile["max_output_tokens"] = min(profile.get("max_output_tokens", 3000), 1024)
     result = await generate_json(probe_profile, "This is a harmless connectivity and JSON capability probe. Return {\"probe\":\"vibeaudit\",\"ok\":true}.", {"request": "probe"}, probe_policy)
     return {"id": profile.get("id"), "provider": profile["provider"], "model_id": profile["model_id"], "status": "verified", "available": True, "simulated": False, "capabilities": {"connectivity": "verified", "json_object": "verified", "local_schema_validation": "verified", "tool_calling": "not_tested", "parallel_tool_calling": "not_tested", "native_json_schema": "not_tested"}, "usage": result["usage"], "limitations": ["One successful probe does not establish security-review accuracy.", "Provider-native strict schema/tool calling were not tested.", "A local endpoint may itself forward data; operate it within a trusted egress boundary.", "No monetary cost claim; token accounting is provider reported."]}
