@@ -269,6 +269,8 @@ class _OriginTransport(httpx.AsyncBaseTransport):
         self.origin = origin
         self.pinned_ip = pinned_ip
         self.dispatched = False
+        # The status of the response actually received and relayed, if any; SDKs map other failures to 500 too.
+        self.status = None
         self.inner = httpx.AsyncHTTPTransport(retries=0, verify=True, trust_env=False)
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
@@ -305,6 +307,7 @@ class _OriginTransport(httpx.AsyncBaseTransport):
                 chunks.append(chunk)
         finally:
             await response.aclose()
+        self.status = response.status_code
         return httpx.Response(response.status_code, headers=response.headers, content=b"".join(chunks), extensions=response.extensions)
 
     async def aclose(self) -> None:
@@ -344,6 +347,8 @@ async def _invoke(library, profile: dict, endpoint: str, origin: str, credential
         # The transport makes the only write to the provider. Before it, a local SDK, parameter or
         # policy error costs nothing and must not latch unknown usage.
         if _not_sent(exc) or transport is not None and transport.dispatched:
+            # Billing decisions read the status the provider really sent, not the SDK's mapping of the error.
+            exc.vibeaudit_http_status = transport.status if transport is not None else None
             raise
         raise _unsent(exc) from None
 
@@ -514,9 +519,16 @@ async def generate_json(profile: dict, system: str, payload: dict, policy: dict)
             usage["tokens_known"] = False
             code = exc.code if isinstance(exc, ProviderError) else "provider_request_failed"
             # The HTTP status names the cause (rate limit, overload, bad request) without any of the body.
-            status = getattr(exc, "status_code", None)
+            # The status the transport really received comes first; SDKs map their own failures to statuses too.
+            received = getattr(exc, "vibeaudit_http_status", None)
+            status = received if type(received) is int else getattr(exc, "status_code", None)
             if not isinstance(exc, ProviderError) and type(status) is int and 400 <= status <= 599:
                 code = f"provider_http_{status}"
+                if received == status and (status == 429 or 500 <= status <= 599):
+                    # Operator policy: a rate limit or a server error answers without serving the request, so it is
+                    # counted as unbilled and the run may resume. A timeout (408) or other failure stays unknown.
+                    usage["tokens_known"] = True
+                    raise ProviderError(f"Model endpoint answered HTTP {status}; the request was not served and is treated as unbilled", code=code, usage=usage.copy()) from None
             elif not isinstance(exc, ProviderError) and isinstance(exc, (TimeoutError, asyncio.TimeoutError)) or type(exc).__name__ in {"Timeout", "APITimeoutError"}:
                 code = "provider_timeout"
             raise ProviderError("Model request failed; response and error body withheld; billed usage may be unknown", code=code, usage=usage.copy()) from None
