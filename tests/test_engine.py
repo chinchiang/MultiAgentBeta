@@ -1832,10 +1832,14 @@ async def test_the_operators_fallback_answers_a_refusal_or_truncation_and_says_s
 async def test_other_failures_and_a_failing_fallback_still_stop_the_call(engine,monkeypatch,failure):
     from vibe_audit.providers import ProviderError
     run,primary,calls=await model_with_fallback(engine,monkeypatch,failure)
+    before=run["usage"]["tokens"]
     with pytest.raises(ProviderError) as err:
         await engine.model(run,primary,"x",{"q":1})
     assert err.value.code==failure["code"]
     assert calls==(["reviewer-a","local"] if failure.get("fallback") else ["reviewer-a"])
+    # The error says whose failure it was; each call's usage is counted once.
+    assert str(err.value)==("Its fallback local failed too: Model refused the request" if failure.get("fallback") else "Model refused the request")
+    assert run["usage"]["tokens"]-before==7*len(calls)
     # A fallback that fails too answered nothing, so nothing says it did.
     assert not any("answered for" in item for item in run["limitations"])
     # An Agent nobody stands in for keeps its refusal.

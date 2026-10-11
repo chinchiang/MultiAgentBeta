@@ -449,6 +449,7 @@ PATTERNS = [
     (r"Challenger: dropped (\d+) challenge\(s\) naming a finding that does not exist", "反證審查員：捨棄 {0} 項指向不存在發現的反證"),
     (r"Model request failed \(([A-Za-z0-9_ <-]+)\); response and error body withheld; billed usage may be unknown", "模型請求失敗（{0}）；回應與錯誤內容不予顯示；計費用量可能不明"),
     (r"Model endpoint answered HTTP (\d+); the request was not served and is treated as unbilled", "模型端點回應 HTTP {0}；請求沒有被處理，視為未計費"),
+    (r"Its fallback (.+) failed too: (.+)", "它的備援 {0} 也失敗：{1}"),
     (r"(.+) refused; asking its fallback (.+) \((.+)\)", "{0} 拒答；改問它的備援 {1}（{2}）"),
     (r"(.+) was truncated; asking its fallback (.+) \((.+)\)", "{0} 的輸出被截斷；改問它的備援 {1}（{2}）"),
     (r"Fallback (.+) \((.+)\) answered for (.+) at stage (\w+) after it refused", "{2} 在{3}階段拒答，改由備援 {0}（{1}）回答"),

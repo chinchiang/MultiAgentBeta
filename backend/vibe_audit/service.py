@@ -405,7 +405,11 @@ class Engine:
             refused=exc.code=="refusal"
             self.event(run,f"{profile['id']} refused; asking its fallback {fallback['id']} ({fallback['model_id']})" if refused
                        else f"{profile['id']} was truncated; asking its fallback {fallback['id']} ({fallback['model_id']})","warning",profile["id"])
-            data=await self.call_model(run,fallback,instruction,payload,response_contract)
+            try:
+                data=await self.call_model(run,fallback,instruction,payload,response_contract)
+            except ProviderError as second:
+                # Its usage is already counted; the new error only says whose failure it is.
+                raise ProviderError(f"Its fallback {fallback['id']} failed too: {second}",code=second.code,usage=second.usage) from second
             # Recorded only once the fallback has answered: a fallback that fails too leaves its own error instead.
             note=(f"Fallback {fallback['id']} ({fallback['model_id']}) answered for {profile['id']} at stage {run['stage']} after it refused" if refused
                   else f"Fallback {fallback['id']} ({fallback['model_id']}) answered for {profile['id']} at stage {run['stage']} after it was truncated")
