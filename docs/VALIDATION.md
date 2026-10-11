@@ -6,7 +6,7 @@
 
 ## 2026-10-11 備援模型與不遮蔽測試字面值的驗收
 
-PR #44 加入兩項功能：操作者設定的備援模型（`fallback`），以及不遮蔽的合成測試憑證（`unredacted_literals`）。接著以真模型跑了 #18～#21。模型、環境與限制都和上一節相同；每次 run 的資料也已補進 real-model-acceptance-2026-10-11.json。這 4 次共約 52 萬 tokens，21 次合計約 263 萬 tokens。
+PR #44 加入兩項功能：操作者設定的備援模型（`fallback`），以及不遮蔽的合成測試憑證（`unredacted_literals`）。接著以真模型跑了 #18～#22。模型、環境與限制都和上一節相同；每次 run 的資料也已補進 real-model-acceptance-2026-10-11.json。這 5 次共約 88 萬 tokens，22 次合計約 299 萬 tokens。
 
 | run | 靶場與設定 | 結果 |
 |---|---|---|
@@ -14,11 +14,13 @@ PR #44 加入兩項功能：操作者設定的備援模型（`fallback`），以
 | #19 | 同 #18，Qwen 輸出上限改為 32,768 | 跑完全程；原生、promptfoo、PyRIT 三個案例都 fail（可信 ledger 記錄到未授權的匯出）。Gemini 這次有回答，備援沒用上；Nemotron 被截斷，恢復一次 |
 | #20 | Web API vulnerable；操作者案例 BOLA、登出；宣告 `fixture-web-a`、`fixture-web-b` | 封存的快照裡，這兩個 session 值原樣保留，沒宣告的密碼仍遮蔽，第一項缺口記下「2 of 2」。Gemini 拒答，沒有備援，run 停在白箱 |
 | #21 | 同 #20，加上本地 Qwen 備援 | 跑完全程；BOLA 與登出都 fail。審查員不再回報 session token 被遮蔽：#14 時 Claude 因此無法確認登出刪除的是哪個 token。威脅模型違反參照規則一次，恢復後通過 |
+| #22 | 同 #21 | Gemini 拒答，本地 Qwen 完整代答。審查結果記下 `answered_by` 與 qwen 家族，白箱的家族多樣性閘門通過。之後跑完全程，BOLA 與登出都 fail |
 
 - **#18 找到的問題（PR #44 已修正）**：
   - 原本備援還沒回答就先記成「已代答」，所以 #18 的能力限制那一行是錯的。現在改成先記「改問備援」，等備援真的回答後才記為代答。
   - 備援也失敗時，錯誤現在寫明是哪個備援失敗。
-- **還沒驗證**：拒答時有時有、有時沒有，所以這 4 次還沒有一次是由備援完整代答成功。單元與整合測試涵蓋了代答、記錄與家族閘門，真模型上的完整代答仍待觀察。
+- **備援代答已驗證（#22）**：Gemini 拒答，本地 Qwen 回答整份審查，能力限制記下這次代答，家族閘門檢查的是 Qwen。兩個本地模型同時回答、共用硬體時，每個約每秒 10 tokens，白箱用了約 25 分鐘。
+- **威脅模型的資料流規則**：#17、#21、#22 都在同一條規則上失敗：資料流指向沒有宣告的資產，因為契約沒有說呼叫者和攻擊者也要列成資產。現在 schema 說明、威脅建模指示與重試提示都寫明這一點，#22 在這份程式碼上恢復後通過。中間有一次是威脅建模員（Sonnet）拒答；#22 只為 Gemini 審查員設了備援，所以那次靠恢復處理。
 
 ## 2026-10-10～11 真模型驗收
 
@@ -92,7 +94,7 @@ PR #44 加入兩項功能：操作者設定的備援模型（`fallback`），以
 
 | 驗收 | 實際結果 | 證據 |
 |---|---|---|
-| 備援模型與不遮蔽測試字面值（2026-10-11） | 4 次 run；#19、#21 跑完全程，vulnerable 靶場都 fail；宣告的測試 session 在快照中未遮蔽；備援有被呼叫，但尚未完整代答成功 | real-model-acceptance-2026-10-11.json |
+| 備援模型與不遮蔽測試字面值（2026-10-11） | 5 次 run；#19、#21、#22 跑完全程，vulnerable 靶場都 fail；宣告的測試 session 在快照中未遮蔽；#22 由備援完整代答，家族閘門通過 | real-model-acceptance-2026-10-11.json |
 | 真模型完整流程（2026-10-10～11） | 17 次 run；5 次跑完全程，vulnerable 靶場都 fail（BOLA、登出、AI agent 未授權匯出），fixed 靶場 pass | real-model-acceptance-2026-10-11.json |
 | Linux 全套回歸（2026-10-10，本輪修正後） | 1254 passed、22 skipped、4 subtests passed；PostgreSQL 18.6 與 Node 24 實際執行 | linux-regression-2026-10-10.xml |
 | 真 Docker 隔離測試（2026-10-10，本輪修正後） | 88 passed、1 skipped、4 subtests passed；Docker 29.1.3 | docker-isolation-2026-10-10.xml |
@@ -196,7 +198,7 @@ This round actually used the Windows console, WSL2/Linux, Docker 29.1.3, Postgre
 
 ## 2026-10-11 Fallback Model and Unredacted Test Literal Acceptance
 
-PR #44 added two features: an operator-configured fallback model (`fallback`) and unredacted synthetic test credentials (`unredacted_literals`). Runs #18–#21 then used real models. Models, environment and limits are as in the next section; each run's data is also in real-model-acceptance-2026-10-11.json. These four runs took about 0.52 million tokens, and the 21 runs about 2.63 million in all.
+PR #44 added two features: an operator-configured fallback model (`fallback`) and unredacted synthetic test credentials (`unredacted_literals`). Runs #18–#22 then used real models. Models, environment and limits are as in the next section; each run's data is also in real-model-acceptance-2026-10-11.json. These five runs took about 0.88 million tokens, and the 22 runs about 2.99 million in all.
 
 | Run | Fixture and settings | Result |
 |---|---|---|
@@ -204,11 +206,13 @@ PR #44 added two features: an operator-configured fallback model (`fallback`) an
 | #19 | As #18, with Qwen's output limit raised to 32,768 | Ran end to end; the native, promptfoo and PyRIT cases all failed (the trusted ledger recorded an unauthorized export). Gemini answered this time, so the fallback was not used; Nemotron was truncated and the run resumed once |
 | #20 | Web API, vulnerable; operator cases BOLA and logout; `fixture-web-a` and `fixture-web-b` declared | In the sealed snapshot both session values stayed as written while undeclared passwords stayed redacted, and the first gap recorded "2 of 2". Gemini refused, with no fallback configured; the run stopped at whitebox |
 | #21 | As #20, with the local Qwen fallback | Ran end to end; BOLA and logout both failed. No reviewer reported redacted session tokens any more: in #14 they had kept Claude from telling which token logout deletes. The threat model broke a reference rule once and passed on resume |
+| #22 | As #21 | Gemini refused and the local Qwen answered in full. The review records `answered_by` and the qwen family, and the whitebox family diversity gate passed. The run then went end to end; BOLA and logout both failed |
 
 - **Problems #18 found (fixed in PR #44)**:
   - The fallback was recorded as having answered before it did, so #18's capability limit line is wrong. It now records "asking its fallback" first, and records the answer only once the fallback has given it.
   - When the fallback fails too, the error now names which fallback failed.
-- **Not yet verified**: refusals come and go, so none of these four runs had the fallback answer in full. Unit and integration tests cover the answer, the record and the family gate; a full fallback answer from a real model is still to be seen.
+- **Fallback answer verified (#22)**: Gemini refused, the local Qwen answered the whole review, the capability limits record the answer, and the family gate checked Qwen. With both local models answering at once on shared hardware, each ran at about 10 tokens per second and whitebox took about 25 minutes.
+- **The threat model's dataflow rule**: #17, #21 and #22 all failed on one rule, a dataflow naming an undeclared asset, because the contract never said that callers and attackers are assets too. The schema descriptions, the threat-modeling instruction and the retry hint now say so, and #22 passed on resume on that code. Once in between the threat modeler (Sonnet) refused; #22 had a fallback only for the Gemini reviewer, so a resume handled it.
 
 ## 2026-10-10–11 Real-Model Acceptance
 
@@ -282,7 +286,7 @@ The test groups overlap one another; **do not add the rows together and treat th
 
 | Acceptance | Actual result | Evidence |
 |---|---|---|
-| Fallback model and unredacted test literals (2026-10-11) | 4 runs; #19 and #21 end to end, the vulnerable fixtures failing; the declared test sessions stayed unredacted in the snapshot; the fallback was called but has not yet answered in full | real-model-acceptance-2026-10-11.json |
+| Fallback model and unredacted test literals (2026-10-11) | 5 runs; #19, #21 and #22 end to end, the vulnerable fixtures failing; the declared test sessions stayed unredacted in the snapshot; in #22 the fallback answered in full and the family gate passed | real-model-acceptance-2026-10-11.json |
 | Full workflow with real models (2026-10-10–11) | 17 runs; 5 end to end, the vulnerable fixtures failing (BOLA, logout, AI agent unauthorized export) and the fixed one passing | real-model-acceptance-2026-10-11.json |
 | Full Linux regression (2026-10-10, after this round) | 1254 passed, 22 skipped, 4 subtests passed; PostgreSQL 18.6 and Node 24 actually ran | linux-regression-2026-10-10.xml |
 | Isolation tests on real Docker (2026-10-10, after this round) | 88 passed, 1 skipped, 4 subtests passed; Docker 29.1.3 | docker-isolation-2026-10-10.xml |
