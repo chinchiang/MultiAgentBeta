@@ -807,7 +807,8 @@ async def test_docker_runtime_rejects_a_work_root_too_long_for_the_broker_socket
 async def test_lease_outage_that_also_fails_the_revoke_is_unknown_not_blocked(tmp_path,monkeypatch):
     """Requests may already be out when the lease database goes away; the controller
     cannot then report 'nothing dispatched, cleanup confirmed'."""
-    rt=WorkerRuntime(tmp_path,backend="process_test",allow_process_test=True,ttl_seconds=0.2)
+    # A one-second TTL leaves a slow process start (Windows runners) time to claim before the outage begins.
+    rt=WorkerRuntime(tmp_path,backend="process_test",allow_process_test=True,ttl_seconds=1.0)
     try:
         real=rt.leases.renew
         def fail_once_claimed(capability,*args,**kwargs):
