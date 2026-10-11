@@ -713,7 +713,9 @@ class Engine:
         unique={}
         for review in run["reviews"]:
             # A resumed adjudication would re-extend the same review gaps; keep each gap once.
-            run["gaps"].extend(gap for gap in review["gaps"] if gap not in run["gaps"])
+            # Each reviewer's own limits carry its ID: three reviewers often word the same limit three ways.
+            attributed=[gap if str(gap).startswith(review["agent_id"]+":") else f"{review['agent_id']}: {gap}" for gap in review["gaps"]]
+            run["gaps"].extend(gap for gap in attributed if gap not in run["gaps"])
             # A resumed adjudication reuses the sealed review's recorded evidence
             # instead of writing a second artifact for the same content.
             if not review.get("evidence"):

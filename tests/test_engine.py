@@ -1747,3 +1747,16 @@ async def test_challenger_works_on_short_labels_and_drops_a_challenge_of_no_find
     first=list(reversed(run["findings"]))[0]
     assert run["challenges"]==[{"finding_id":first["id"],"counterevidence":"guarded upstream","missing_evidence":""}]
     assert any("dropped 1 challenge" in gap for gap in run["gaps"])
+
+
+async def test_each_reviewer_gap_names_the_reviewer_that_reported_it(engine):
+    run=await finished_demo(engine)
+    arm_attempt(engine,run)
+    run["gaps"]=[]
+    for review in run["reviews"]:
+        review.pop("evidence",None)
+    run["reviews"][0]["gaps"]=["Source was redacted"]
+    run["reviews"][1]["gaps"]=[run["reviews"][1]["agent_id"]+": already attributed"]
+    await engine._adjudication(run)
+    assert run["reviews"][0]["agent_id"]+": Source was redacted" in run["gaps"]
+    assert run["reviews"][1]["agent_id"]+": already attributed" in run["gaps"]

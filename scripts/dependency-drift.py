@@ -4,7 +4,8 @@
   python scripts/dependency-drift.py --all      every pin, lagging or not
   python scripts/dependency-drift.py --json     the same data as JSON
 
-Reads requirements.lock.txt, requirements.mutation.lock.txt and frontend/package-lock.json; asks PyPI and the npm
+Reads requirements.lock.txt, requirements.mutation.lock.txt, frontend/package-lock.json and the worker tool image's
+deploy/worker/locks (python-requirements.txt and package-lock.json); asks PyPI and the npm
 registry for the latest release of each pin and OSV (api.osv.dev) for advisories against the pinned version.
 Nothing is upgraded: the pins change only through scripts/hash-lock.py and npm, after a review. Exits non-zero when
 any pinned version has an advisory, so the weekly workflow turns red for that and only that.
@@ -14,6 +15,7 @@ from datetime import datetime, timezone
 import json
 import re
 import sys
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -21,9 +23,16 @@ from packaging.version import InvalidVersion, Version
 
 ROOT = Path(__file__).resolve().parents[1]
 PIN = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)==([A-Za-z0-9._+!-]+)")
-LOCKS = ["requirements.lock.txt", "requirements.mutation.lock.txt"]
-PACKAGE_LOCK = ROOT / "frontend" / "package-lock.json"
+LOCKS = ["requirements.lock.txt", "requirements.mutation.lock.txt", "deploy/worker/locks/python-requirements.txt"]
+PACKAGE_LOCKS = [ROOT / "frontend" / "package-lock.json", ROOT / "deploy" / "worker" / "locks" / "package-lock.json"]
 TIMEOUT = 30
+# Advisories reviewed and accepted, listed in the report but not failing the job: (advisory, package) -> reason.
+# Each needs a reason a reader can check and should be removed as soon as a fixed release exists.
+ACCEPTED = {
+    ("GHSA-86w9-cpqp-85rv", "node-forge"): "No fixed release (2026-10-11). Reached only through jks-js (Java KeyStore parsing) inside "
+                                           "promptfoo; the fixed promptfoo runner never loads a keystore, and the tool container runs "
+                                           "with --network none behind the supervisor.",
+}
 
 
 def fetch(url, data=None):
@@ -39,12 +48,14 @@ def pins():
         for line in (ROOT / lock).read_text(encoding="ascii").splitlines():
             if match := PIN.match(line):
                 found.append(("PyPI", match[1].lower(), match[2], lock))
-    packages = json.loads(PACKAGE_LOCK.read_text(encoding="utf-8"))["packages"]
-    direct = set(packages[""].get("dependencies", {})) | set(packages[""].get("devDependencies", {}))
-    for path, info in packages.items():
-        if path.startswith("node_modules/") and "version" in info:
-            name = path.split("node_modules/")[-1]
-            found.append(("npm", name, info["version"], "frontend/package-lock.json" + (" (direct)" if name in direct else "")))
+    for package_lock in PACKAGE_LOCKS:
+        where = package_lock.relative_to(ROOT).as_posix()
+        packages = json.loads(package_lock.read_text(encoding="utf-8"))["packages"]
+        direct = set(packages[""].get("dependencies", {})) | set(packages[""].get("devDependencies", {}))
+        for path, info in packages.items():
+            if path.startswith("node_modules/") and "version" in info:
+                name = path.split("node_modules/")[-1]
+                found.append(("npm", name, info["version"], where + (" (direct)" if name in direct else "")))
     return found
 
 
@@ -56,7 +67,17 @@ def parse(version):
 
 
 def latest(ecosystem, name):
-    """(latest stable version, its release date) from the package's registry."""
+    """(latest stable version, its release date) from the package's registry; ("unknown", "") when it lists none."""
+    try:
+        return _latest(ecosystem, name)
+    except urllib.error.HTTPError as error:
+        # A bundled or unpublished package (some tools ship their own) has no registry entry to compare with.
+        if error.code == 404:
+            return "unknown", ""
+        raise
+
+
+def _latest(ecosystem, name):
     if ecosystem == "PyPI":
         data = fetch(f"https://pypi.org/pypi/{name}/json")
         version = data["info"]["version"]
@@ -113,7 +134,9 @@ def markdown(rows, show_all):
                  f"{sum(bool(row['advisories']) for row in rows)} with an advisory.")
     lines += ["", "| Ecosystem | Package | Pinned | Latest | Released | Advisories | Where |", "|---|---|---|---|---|---|---|"]
     for row in shown:
-        advisories_text = "<br>".join(f"{a['id']}{' (' + a['severity'] + ')' if a['severity'] else ''}: {a['summary']}" for a in row["advisories"]) or "-"
+        advisories_text = "<br>".join(f"{a['id']}{' (' + a['severity'] + ')' if a['severity'] else ''}: {a['summary']}"
+                                      + (f" — accepted: {ACCEPTED[(a['id'], row['name'])]}" if (a['id'], row['name']) in ACCEPTED else "")
+                                      for a in row["advisories"]) or "-"
         lines.append(f"| {row['ecosystem']} | {row['name']} | {row['pinned']} | {row['latest'] if row['behind'] else '='} | "
                      f"{row['latest_released'] if row['behind'] else ''} | {advisories_text} | {row['where']} |")
     return "\n".join(lines) + "\n"
@@ -125,7 +148,7 @@ def main(argv):
         print(json.dumps(rows, indent=2))
     else:
         print(markdown(rows, "--all" in argv), end="")
-    return 1 if any(row["advisories"] for row in rows) else 0
+    return 1 if any((a["id"], row["name"]) not in ACCEPTED for row in rows for a in row["advisories"]) else 0
 
 
 if __name__ == "__main__":

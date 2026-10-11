@@ -12,6 +12,9 @@
   "type": "commonjs",
   "dependencies": {
     "playwright": "1.63.0",
-    "promptfoo": "0.123.1"
+    "promptfoo": "0.124.1"
+  },
+  "overrides": {
+    "basic-ftp": "6.2.1"
   }
 }
