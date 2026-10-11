@@ -271,6 +271,8 @@ class _OriginTransport(httpx.AsyncBaseTransport):
         self.dispatched = False
         # The status of the response actually received and relayed, if any; SDKs map other failures to 500 too.
         self.status = None
+        # The bounded body of that response, kept in memory only so a reply the SDK cannot convert is still metered.
+        self.body = b""
         self.inner = httpx.AsyncHTTPTransport(retries=0, verify=True, trust_env=False)
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
@@ -308,6 +310,7 @@ class _OriginTransport(httpx.AsyncBaseTransport):
         finally:
             await response.aclose()
         self.status = response.status_code
+        self.body = b"".join(chunks)
         return httpx.Response(response.status_code, headers=response.headers, content=b"".join(chunks), extensions=response.extensions)
 
     async def aclose(self) -> None:
@@ -349,6 +352,7 @@ async def _invoke(library, profile: dict, endpoint: str, origin: str, credential
         if _not_sent(exc) or transport is not None and transport.dispatched:
             # Billing decisions read the status the provider really sent, not the SDK's mapping of the error.
             exc.vibeaudit_http_status = transport.status if transport is not None else None
+            exc.vibeaudit_http_body = transport.body if transport is not None else b""
             raise
         raise _unsent(exc) from None
 
@@ -417,6 +421,23 @@ def _usage(response: Any) -> dict:
     if any(type(x) is not int or x < 0 for x in (prompt, completion, total)) or total < prompt + completion:
         raise ProviderError("Provider did not return verifiable token usage", code="usage_unavailable")
     return {"prompt_tokens": prompt, "completion_tokens": completion, "tokens": total}
+
+
+def _filtered_reply(exc: BaseException) -> dict | None:
+    """The usage of an HTTP 200 chat completion the provider ended with a content filter, or None.
+
+    Gemini can answer finish_reason "content_filter: OTHER" with no message, which LiteLLM fails to convert; the
+    reply is complete and carries its usage, so it is a refusal with known cost rather than an unknown failure."""
+    if getattr(exc, "vibeaudit_http_status", None) != 200:
+        return None
+    try:
+        reply = json.loads(getattr(exc, "vibeaudit_http_body", b"") or b"")
+        finish = reply["choices"][0].get("finish_reason")
+        if not isinstance(finish, str) or not (finish.startswith("content_filter") or finish == "refusal"):
+            return None
+        return _usage(reply)
+    except (ValueError, KeyError, IndexError, TypeError, AttributeError, ProviderError):
+        return None
 
 
 def _validation_site(exc: BaseException) -> str:
@@ -515,6 +536,12 @@ async def generate_json(profile: dict, system: str, payload: dict, policy: dict)
                 # Nothing reached the provider, so this attempt is known to cost nothing.
                 message = "Model endpoint could not be reached" if unsent.code == "endpoint_unavailable" else str(unsent)
                 raise ProviderError(message + "; no request was sent", code=unsent.code, usage=usage.copy()) from None
+            filtered = _filtered_reply(exc)
+            if filtered is not None:
+                # A complete reply the SDK could not convert because the provider filtered it: metered from its own usage.
+                for field in ("tokens", "prompt_tokens", "completion_tokens"):
+                    usage[field] += filtered[field]
+                raise ProviderError("Model refused the request", code="refusal", usage=usage.copy()) from None
             # Unknown metering must never be represented as zero cost or retried.
             usage["tokens_known"] = False
             code = exc.code if isinstance(exc, ProviderError) else "provider_request_failed"
@@ -531,7 +558,13 @@ async def generate_json(profile: dict, system: str, payload: dict, policy: dict)
                     raise ProviderError(f"Model endpoint answered HTTP {status}; the request was not served and is treated as unbilled", code=code, usage=usage.copy()) from None
             elif not isinstance(exc, ProviderError) and isinstance(exc, (TimeoutError, asyncio.TimeoutError)) or type(exc).__name__ in {"Timeout", "APITimeoutError"}:
                 code = "provider_timeout"
-            raise ProviderError("Model request failed; response and error body withheld; billed usage may be unknown", code=code, usage=usage.copy()) from None
+            # Exception class names only (for example APIConnectionError <- RemoteProtocolError): enough to tell a
+            # dropped connection from a parse failure, and they carry nothing the provider or the model wrote.
+            chain, seen, item = [], set(), exc
+            while item is not None and id(item) not in seen and len(chain) < 3:
+                seen.add(id(item)); chain.append(type(item).__name__); item = item.__cause__ or item.__context__
+            kinds = " <- ".join(re.sub(r"[^A-Za-z0-9_]", "", name)[:40] for name in chain)
+            raise ProviderError(f"Model request failed ({kinds}); response and error body withheld; billed usage may be unknown", code=code, usage=usage.copy()) from None
         try:
             metering = _usage(response)
         except ProviderError:
@@ -547,7 +580,7 @@ async def generate_json(profile: dict, system: str, payload: dict, policy: dict)
         choice = choices[0]
         message = _get(choice, "message", {})
         finish = _get(choice, "finish_reason")
-        if _get(message, "refusal") or finish in {"content_filter", "refusal"}:
+        if _get(message, "refusal") or finish == "refusal" or isinstance(finish, str) and finish.startswith("content_filter"):
             raise ProviderError("Model refused the request", code="refusal", usage=usage.copy())
         if finish in {"length", "max_tokens"}:
             raise ProviderError("Model output was truncated", code="truncated", usage=usage.copy())

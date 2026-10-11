@@ -738,13 +738,18 @@ class Engine:
                 run["findings"].append(dict(id=str(uuid.uuid4()),title=item.get("title","Static scanner finding"),description="Reproducible static rule result; exploitability remains a separate question.",severity=item.get("severity","medium"),state="corroborated_static",file=path,line=item.get("line"),cwe=item.get("cwe"),rule_id=item.get("rule_id"),agent_ids=[item.get("scanner_id",result.get("scanner_id","scanner"))],evidence_ids=[result["evidence_id"]],threat_ids=[]))
         if run["mode"]=="live":
             commander=self.profile(run,"challenger")
-            anonymized=[{k:v for k,v in f.items() if k not in {"agent_ids","evidence_ids"}} for f in reversed(run["findings"])]
-            challenge=await self.model(run,commander,'One evidence challenge round. Return {"challenges":[{"finding_id":string,"counterevidence":string,"missing_evidence":string}]}. Every challenge cites existing findings only. No majority voting, no dynamic verification claims.',{"candidates":anonymized,"source":self.fitted_source(run,{"candidates":anonymized},"Challenger")},ChallengeProposal,cache="challenger")
-            run["challenges"]=challenge.get("challenges",[])
-            if any(item.get("finding_id") not in {f["id"] for f in run["findings"]} for item in run["challenges"]):
-                # A rejected answer must not be what a resume replays.
-                run["model_outputs"].pop("challenger",None)
-                raise PolicyError("Challenger references an unknown finding")
+            # Short labels instead of UUIDs: a model copies "F-3" reliably, and the label says nothing about who found it.
+            ordered=list(reversed(run["findings"]))
+            labels={f"F-{index}":f["id"] for index,f in enumerate(ordered,1)}
+            anonymized=[{**{k:v for k,v in f.items() if k not in {"agent_ids","evidence_ids","id"}},"id":label} for label,f in zip(labels,ordered)]
+            challenge=await self.model(run,commander,'One evidence challenge round. Return {"challenges":[{"finding_id":string,"counterevidence":string,"missing_evidence":string}]}. finding_id is a candidate id such as F-1. Every challenge cites existing findings only. No majority voting, no dynamic verification claims.',{"candidates":anonymized,"source":self.fitted_source(run,{"candidates":anonymized},"Challenger")},ChallengeProposal,cache="challenger")
+            challenges=challenge.get("challenges",[])
+            # A challenge naming no candidate is dropped and recorded, as an unverifiable citation is: it annotates
+            # findings and decides nothing, so it need not stop the run.
+            run["challenges"]=[{**item,"finding_id":labels[item.get("finding_id")]} for item in challenges if item.get("finding_id") in labels]
+            if len(run["challenges"])<len(challenges):
+                gap=f"Challenger: dropped {len(challenges)-len(run['challenges'])} challenge(s) naming a finding that does not exist"
+                if gap not in run["gaps"]: run["gaps"].append(gap)
             run["reserved_tokens"]=0
             mapper=self.profile(run,"architecture_mapper")
             mapper_context={"operator_requirements":run["manifest"].get("requirements",[]),"notes":run["manifest"]["notes"]}

@@ -1724,3 +1724,26 @@ def test_markdown_shows_apostrophes_as_written_and_still_escapes_html():
          "findings":[{"id":"f","severity":"high","state":"hypothesis","title":"Bob's \"order\"","evidence_ids":[]}]}
     text=report_markdown(run)
     assert "Bob's" in text and "it's" in text and "&#x27;" not in text and "<b>" not in text
+
+
+async def test_challenger_works_on_short_labels_and_drops_a_challenge_of_no_finding(engine,monkeypatch):
+    run=await finished_demo(engine)
+    arm_attempt(engine,run)
+    run["mode"]="live"
+    for review in run["reviews"]:
+        review.pop("evidence",None)
+    seen={}
+    async def model(run,profile,instruction,payload,contract=None,cache=None):
+        if "candidates" in payload:
+            seen["ids"]=[c["id"] for c in payload["candidates"]]
+            return {"challenges":[{"finding_id":"F-1","counterevidence":"guarded upstream","missing_evidence":""},
+                                  {"finding_id":"F-99","counterevidence":"invented","missing_evidence":""}]}
+        return {"assets":[],"dataflows":[],"roles":[],"gaps":[]}
+    monkeypatch.setattr(engine,"model",model)
+    monkeypatch.setattr(engine,"fitted_source",lambda run,payload,label:{"files":[]})
+    await engine._adjudication(run)
+    # The model sees labels, never the finding UUIDs; its answer is mapped back.
+    assert seen["ids"]==[f"F-{n}" for n in range(1,len(run["findings"])+1)]
+    first=list(reversed(run["findings"]))[0]
+    assert run["challenges"]==[{"finding_id":first["id"],"counterevidence":"guarded upstream","missing_evidence":""}]
+    assert any("dropped 1 challenge" in gap for gap in run["gaps"])

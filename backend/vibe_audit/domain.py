@@ -53,7 +53,7 @@ class ModelProfile(StrictModel):
     json_mode: Literal["json_object", "json_schema"] = "json_object"
     # None leaves the model's own default, which some reasoning models require.
     temperature: float | None = Field(default=0, ge=0, le=2)
-    max_output_tokens: int = Field(default=3000, ge=256, le=16000)
+    max_output_tokens: int = Field(default=3000, ge=256, le=32768)
     timeout_seconds: int = Field(default=60, ge=5, le=1800)
     prompt_version: str = Field(default="v2", min_length=1, max_length=80)
 
