@@ -1,8 +1,8 @@
 export type Provider = 'demo' | 'openai' | 'anthropic' | 'nvidia_nim' | 'openai_compatible' | 'bedrock';
 export interface ModelProfile {
-  id: string; role: 'commander' | 'reviewer' | 'architecture_mapper' | 'challenger' | 'threat_modeler' | 'test_designer' | 'reporter'; provider: Provider; model_id: string;
+  id: string; role: 'commander' | 'reviewer' | 'architecture_mapper' | 'challenger' | 'threat_modeler' | 'test_designer' | 'reporter' | 'fallback'; provider: Provider; model_id: string;
   family: string; endpoint: string; credential_env: string; aws_profile?: string; json_mode?: 'json_object' | 'json_schema'; temperature: number | null; max_output_tokens: number;
-  timeout_seconds?: number; prompt_version?: string;
+  timeout_seconds?: number; prompt_version?: string; fallback_for?: string[];
 }
 export type HttpMethod = 'GET'|'POST'|'PUT'|'PATCH'|'DELETE'|'HEAD'|'OPTIONS';
 export interface SecurityRequirement {id:string;statement:string;threat_ids:string[];source_kind:'operator'|'specification'|'derived';source:string;standard_ids:string[]}
@@ -18,7 +18,7 @@ export interface RunInput {
   allowed_requests: {method: HttpMethod; path:string; model_body?:boolean; model_headers?:Record<string,string[]>}[];
   budget: Budget; models: ModelProfile[]; auth_profiles: AuthProfile[]; notes: string; parent_run_id: string | null; cases: TestCase[];
   schema_version?:2; requirements?:SecurityRequirement[]; runtime_profile?:string; fixture_profile?:string|null;
-  static_tools?:('semgrep'|'osv'|'gitleaks')[]; deployment_header?:string|null; parent_finding_ids?:string[];
+  static_tools?:('semgrep'|'osv'|'gitleaks')[]; deployment_header?:string|null; parent_finding_ids?:string[]; unredacted_literals?:string[];
 }
 export interface AuditEvent { seq: number; at: string; stage: string; message: string; level: 'info' | 'warning' | 'error'; agent_id: string | null }
 export interface Finding {
@@ -27,7 +27,7 @@ export interface Finding {
   decisions?: {decision: string; rationale: string; evidence_ids: string[]; threat_ids: string[]; at: string; actor: string; previous_state: string}[];
   counterevidence?: string[];
 }
-export interface Review { agent_id: string; provider: string; model_id: string; family: string; status: string; findings: Finding[]; gaps: unknown[]; input_hash: string; simulated: boolean }
+export interface Review { agent_id: string; provider: string; model_id: string; family: string; status: string; findings: Finding[]; gaps: unknown[]; input_hash: string; simulated: boolean; answered_by?: string }
 export interface Threat {
   id: string; title: string; asset_ids: string[]; category: string; preconditions: string[]; invariant: string;
   impact: string; control_evidence: unknown[]; assumptions: string[]; requirement_id: string; testability: string; blocked_reason: string | null;

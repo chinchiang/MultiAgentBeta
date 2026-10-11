@@ -79,6 +79,29 @@ describe('CreateForm', () => {
     expect(onCreate).not.toHaveBeenCalled();
   });
 
+  it('adds a fallback that must name the agents it stands in for, and bounds the unredacted literals', async () => {
+    const onCreate = vi.fn<(input: RunInput) => Promise<void>>();
+    render(<CreateForm onCreate={onCreate} busy={false} connected={true} />);
+    fireEvent.click(screen.getByRole('button', { name: /實際評估/ }));
+    fireEvent.change(screen.getByLabelText('選配專責 Agent'), { target: { value: 'fallback' } });
+    fireEvent.click(screen.getByRole('button', { name: '新增專責 Agent' }));
+    const group = screen.getByRole('group', { name: '代替的 Agent' });
+    // Every configured agent except the fallback itself can be chosen.
+    expect(Array.from(group.querySelectorAll('code')).map(c => c.textContent)).toEqual(['commander', 'reviewer-a', 'reviewer-b', 'reviewer-c']);
+    fireEvent.change(screen.getByLabelText('不遮蔽的測試字面值'), { target: { value: 'short\nfixture-web-a' } });
+    fireEvent.click(screen.getByRole('button', { name: '建立並開始' }));
+    let alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('備援模型要勾選它代替哪些 Agent。');
+    expect(alert.textContent).toContain('不遮蔽的測試字面值每行一個，長度 6 到 200 個字元。');
+    fireEvent.click(group.querySelectorAll('input[type=checkbox]')[0]);
+    fireEvent.change(screen.getByLabelText('不遮蔽的測試字面值'), { target: { value: 'fixture-web-a' } });
+    fireEvent.click(screen.getByRole('button', { name: '建立並開始' }));
+    alert = await screen.findByRole('alert');
+    expect(alert.textContent).not.toContain('備援模型要勾選');
+    expect(alert.textContent).not.toContain('不遮蔽的測試字面值每行一個');
+    expect(onCreate).not.toHaveBeenCalled();
+  });
+
   it('switches to English with the interface', () => {
     setLang('en');
     render(<CreateForm onCreate={vi.fn()} busy={false} connected={true} />);

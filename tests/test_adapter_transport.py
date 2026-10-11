@@ -361,6 +361,22 @@ def test_credential_helpers_read_the_environment_they_are_given():
     manifest = {"models": ["x", {"credential_env": 5}, {"credential_env": "VIBEAUDIT_M"}], "auth_profiles": [{"credential_env": "VIBEAUDIT_T"}]}
     assert adapters.shared_credentials(manifest, {"VIBEAUDIT_M": "", "VIBEAUDIT_T": ""}) == []
     assert adapters.shared_credentials(manifest, {"VIBEAUDIT_M": "k", "VIBEAUDIT_T": "k"}) == ["VIBEAUDIT_T"]
+    # A declared test literal may not be a model key: the run's own, or one the environment binds to a model origin.
+    literals = {"models": manifest["models"], "unredacted_literals": ["fixture-a", "k"]}
+    assert adapters.literal_model_credentials(literals, {"VIBEAUDIT_M": "k"}) is True
+    assert adapters.literal_model_credentials(literals, {"VIBEAUDIT_M": "other", "VIBEAUDIT_OPENAI_API_KEY": "k"}) is True
+    assert adapters.literal_model_credentials(literals, {"VIBEAUDIT_M": "other", "VIBEAUDIT_T": "k"}) is False
+    assert adapters.literal_model_credentials({**literals, "unredacted_literals": []}, {"VIBEAUDIT_M": "k"}) is False
+    assert adapters.literal_model_credentials({"models": None}, {"VIBEAUDIT_M": ""}) is False
+    # An empty value is never a key, even against an empty literal.
+    assert adapters.literal_model_credentials({**literals, "unredacted_literals": [""]}, {"VIBEAUDIT_M": ""}) is False
+    # The bindings are read from the environment it is given, and the process environment by default.
+    bound = {adapters.CREDENTIAL_ORIGINS_ENV: "VIBEAUDIT_BOUND=https://m", "VIBEAUDIT_BOUND": "k"}
+    with patch.dict(os.environ, {}, clear=False):
+        os.environ.pop(adapters.CREDENTIAL_ORIGINS_ENV, None)
+        assert adapters.literal_model_credentials({"unredacted_literals": ["k"]}, bound) is True
+    with patch.dict(os.environ, bound):
+        assert adapters.literal_model_credentials({"unredacted_literals": ["k"]}) is True
 
 
 def test_case_headers_are_bounded_in_count_length_and_character_set():

@@ -49,17 +49,24 @@ _BEARER = re.compile(r"(?i)\b(Bearer\s+)[A-Za-z0-9._~+/=-]{8,}")
 _URL_AUTH = re.compile(r"(?i)\b([a-z][a-z0-9+.-]{0,63}://)[^/\s:@]*:[^/\s@]+@")
 
 
-def redact_text(text: str) -> str:
-    """Conservative literal redaction; does not promise to find every secret."""
+def redact_text(text: str, keep: frozenset[str] = frozenset()) -> str:
+    """Conservative literal redaction; does not promise to find every secret.
+
+    keep holds values the operator declared synthetic test credentials: a match whose whole value is one of them
+    stays readable. A value that only contains one is still redacted. A blank value has nothing to hide: the
+    connection-string form otherwise matches just the space before a kept, quoted value."""
+    def kept(value: str, replacement: str, original: str) -> str:
+        return original if not value.strip() or value.strip().strip("'\";,") in keep else replacement
+
     text = _PRIVATE_KEY.sub("[REDACTED_PRIVATE_KEY]", text)
-    text = _SECRET_ASSIGNMENT.sub(lambda m: m[1] + m[2] + "[REDACTED]" + m[4], text)
-    text = _UNQUOTED_SECRET.sub(lambda m: m[1] + "[REDACTED]", text)
-    text = _ENV_DECLARATION.sub(lambda m: m[1] + "[REDACTED]", text)
-    text = _DEFINE_SECRET.sub(lambda m: m[1] + m[3] + "[REDACTED]" + m[5], text)
-    text = _CONNECTION_PASSWORD.sub(lambda m: m[1] + "[REDACTED]", text)
-    text = _AUTH_FIELD.sub(lambda m: m[1] + m[2] + "[REDACTED]" + m[4], text)
-    text = _KNOWN_SECRET.sub("[REDACTED_TOKEN]", text)
-    text = _BEARER.sub(lambda m: m[1] + "[REDACTED]", text)
+    text = _SECRET_ASSIGNMENT.sub(lambda m: kept(m[3], m[1] + m[2] + "[REDACTED]" + m[4], m[0]), text)
+    text = _UNQUOTED_SECRET.sub(lambda m: kept(m[2], m[1] + "[REDACTED]", m[0]), text)
+    text = _ENV_DECLARATION.sub(lambda m: kept(m[2], m[1] + "[REDACTED]", m[0]), text)
+    text = _DEFINE_SECRET.sub(lambda m: kept(m[4], m[1] + m[3] + "[REDACTED]" + m[5], m[0]), text)
+    text = _CONNECTION_PASSWORD.sub(lambda m: kept(m[2], m[1] + "[REDACTED]", m[0]), text)
+    text = _AUTH_FIELD.sub(lambda m: kept(m[3], m[1] + m[2] + "[REDACTED]" + m[4], m[0]), text)
+    text = _KNOWN_SECRET.sub(lambda m: kept(m[0], "[REDACTED_TOKEN]", m[0]), text)
+    text = _BEARER.sub(lambda m: kept(m[0][len(m[1]):], m[1] + "[REDACTED]", m[0]), text)
     return _URL_AUTH.sub(lambda m: m[1] + "[REDACTED]@", text)
 
 
@@ -99,7 +106,7 @@ def _routes(path: str, content: str) -> list[dict]:
     return found[:200]
 
 
-def snapshot_source(path: str) -> dict:
+def snapshot_source(path: str, keep: frozenset[str] = frozenset()) -> dict:
     if not path or not isinstance(path, str):
         raise ValueError("source_path must identify an existing source directory")
     root = Path(os.path.abspath(path))
@@ -192,7 +199,7 @@ def snapshot_source(path: str) -> dict:
                 except UnicodeDecodeError:
                     gap(f"Non-UTF-8 file omitted: {relative}")
                     continue
-                content = redact_text(original)
+                content = redact_text(original, keep)
                 if content != original:
                     gap(f"Secret-like literals redacted: {relative}")
                 files.append({"path": relative, "content": content, "sha256": hashlib.sha256(raw).hexdigest(), "redacted": content != original, "content_sha256": hashlib.sha256(content.encode()).hexdigest()})
@@ -205,5 +212,9 @@ def snapshot_source(path: str) -> dict:
     digest = hashlib.sha256(json.dumps(material, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     if not files:
         gap("No eligible source files were included.")
+    if keep:
+        found = sum(any(item in f["content"] for f in files) for item in keep)
+        # First and outside the gap limit: the readers of the report must see that redaction was relaxed.
+        gaps.insert(0, f"Operator-declared test literals left unredacted: {found} of {len(keep)} appear in the snapshot")
     return {"digest": digest, "files": files, "gaps": gaps, "routes": routes[:500], "bytes_read": total_bytes,
             "limitations": ["Snapshot is bounded; route extraction and secret redaction are heuristic, not exhaustive. Repository code was not executed."]}

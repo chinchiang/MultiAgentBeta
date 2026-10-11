@@ -5,7 +5,7 @@ import { labels, t } from './i18n';
 import { say } from './messages';
 import type { CatalogData, ModelProfile, ProjectSetting, Run, RunExtensions, RunInput } from './types';
 
-export const ROLE_LABELS:Record<ModelProfile['role'],string>=labels<ModelProfile['role']>({commander:['指揮官','Commander'],reviewer:['獨立審查員','Independent reviewer'],architecture_mapper:['架構分析員','Architecture mapper'],challenger:['反證審查員','Challenger'],threat_modeler:['威脅建模員','Threat modeler'],test_designer:['測試設計員','Test designer'],reporter:['報告整理員','Reporter']});
+export const ROLE_LABELS:Record<ModelProfile['role'],string>=labels<ModelProfile['role']>({commander:['指揮官','Commander'],reviewer:['獨立審查員','Independent reviewer'],architecture_mapper:['架構分析員','Architecture mapper'],challenger:['反證審查員','Challenger'],threat_modeler:['威脅建模員','Threat modeler'],test_designer:['測試設計員','Test designer'],reporter:['報告整理員','Reporter'],fallback:['備援模型','Fallback model']});
 export const defaultExtensions=():RunExtensions=>({requirements:[],runtime_profile:'default',fixture_profile:null,static_tools:['semgrep','osv','gitleaks'],deployment_header:null});
 const safe=(value:unknown)=>JSON.stringify(value,null,2);
 const errorText=(error:unknown)=>error instanceof Error?error.message:String(error);

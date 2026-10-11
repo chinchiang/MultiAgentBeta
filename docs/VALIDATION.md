@@ -34,7 +34,7 @@
   - Gemma 不接受 maxItems。
   - 4xx 拒絕被當成用量不明。
   - 操作者自己的案例設定錯誤：被 gate 正確擋下。
-- **還沒解決**：雲端模型在撰寫攻擊情境或審查提示注入程式碼時會不定期拒答：Gemini 在 #10、#12，Claude Opus 在 #5。拒答會留下明確紀錄、run 可恢復，但同一個模型通常還是拒答。目前只能換一個模型開新的 run；要不要讓角色另外指定備援模型，留待操作者決定。
+- **還沒解決**：雲端模型在撰寫攻擊情境或審查提示注入程式碼時會不定期拒答：Gemini 在 #10、#12，Claude Opus 在 #5。拒答會留下明確紀錄、run 可恢復，但同一個模型通常還是拒答。之後加入了操作者設定的備援模型（`fallback` 角色）：指定的 Agent 拒答或被截斷時由它代答，並記在報告裡。
 
 ## 2026-10-10 深入審查修正
 
@@ -207,7 +207,7 @@ The first runs of the whole workflow with real models. The only targets were the
   - Gemma refuses maxItems.
   - 4xx rejections were treated as unknown usage.
   - An operator case of my own was wrong: the gate correctly refused it.
-- **Not yet solved**: cloud models occasionally refuse to write attack scenarios or to review prompt-injection code: Gemini in #10 and #12, Claude Opus in #5. A refusal leaves a clear record and the run can resume, but the same model usually refuses again. For now the only remedy is a new run with a different model; whether a role may name a fallback model is left to the operator.
+- **Not yet solved**: cloud models occasionally refuse to write attack scenarios or to review prompt-injection code: Gemini in #10 and #12, Claude Opus in #5. A refusal leaves a clear record and the run can resume, but the same model usually refuses again. An operator-configured fallback model (the `fallback` role) was added afterwards: it answers when a named Agent refuses or is truncated, and the report records it.
 
 ## 2026-10-10 In-Depth Review Fixes
 

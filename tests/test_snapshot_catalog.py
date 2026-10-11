@@ -316,6 +316,34 @@ def test_redaction_marker_is_exact():
     assert redact_text("token: 'abc'\nname = 'kept'") == "token: '[REDACTED]'\nname = 'kept'"
 
 
+
+def test_declared_test_literals_stay_readable_and_nothing_else_does():
+    keep = frozenset({"fixture-web-a", "sk-test-ABCDEFGHIJKLMNOP"})
+    text = ("token: 'fixture-web-a'\npassword = 'hunter2'\nDB_SECRET=fixture-web-a;\nexport API_TOKEN=fixture-web-a\n"
+            "define('AUTH_TOKEN', 'fixture-web-a')\nServer=x;Password=fixture-web-a;\n{\"auth\": \"fixture-web-a\"}\n"
+            "key = sk-test-ABCDEFGHIJKLMNOP\nAuthorization: Bearer fixture-web-a\nsession_token: 'fixture-web-a-and-more'\n")
+    assert redact_text(text, keep) == (
+        "token: 'fixture-web-a'\npassword = [REDACTED]\nDB_SECRET=fixture-web-a;\nexport API_TOKEN=fixture-web-a\n"
+        "define('AUTH_TOKEN', 'fixture-web-a')\nServer=x;Password=fixture-web-a;\n{\"auth\": \"fixture-web-a\"}\n"
+        "key = sk-test-ABCDEFGHIJKLMNOP\nAuthorization: Bearer fixture-web-a\nsession_token: '[REDACTED]'\n")
+    # Without the declaration every one of them is redacted, as before.
+    assert "fixture-web-a" not in redact_text(text).replace("fixture-web-a-and-more", "")
+    assert redact_text("Bearer fixture-web-b", keep) == "Bearer [REDACTED]"
+    # Only quotes and separators around the value are ignored, not its own characters.
+    assert redact_text("password = 'XFIXTUREX'", frozenset({"XFIXTUREX"})) == "password = 'XFIXTUREX'"
+
+
+def test_snapshot_states_how_many_declared_literals_it_left_unredacted(tmp_path):
+    (tmp_path / "app.py").write_text("token = 'fixture-web-a'\n", newline="\n")
+    (tmp_path / "other.py").write_text("x = 1\n", newline="\n")
+    (tmp_path / ".env").write_text("SECRET=x\n", newline="\n")
+    result = snapshot_source(str(tmp_path), frozenset({"fixture-web-a", "never-in-source"}))
+    assert result["files"][0]["content"] == "token = 'fixture-web-a'\n" and result["files"][0]["redacted"] is False
+    # Counted over the whole snapshot, and listed before every other gap.
+    assert result["gaps"][0] == "Operator-declared test literals left unredacted: 1 of 2 appear in the snapshot"
+    assert len(result["gaps"]) > 1
+    assert not any("unredacted" in gap for gap in snapshot_source(str(tmp_path))["gaps"])
+
 # --- catalog ---------------------------------------------------------------------------------------------------------
 
 

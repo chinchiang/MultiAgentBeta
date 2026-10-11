@@ -41,7 +41,7 @@ class Budget(StrictModel):
 
 class ModelProfile(StrictModel):
     id: str = Field(min_length=1, max_length=80, pattern=r"^[a-zA-Z0-9_-]+$")
-    role: Literal["commander", "reviewer", "architecture_mapper", "challenger", "threat_modeler", "test_designer", "reporter"]
+    role: Literal["commander", "reviewer", "architecture_mapper", "challenger", "threat_modeler", "test_designer", "reporter", "fallback"]
     provider: Literal["demo", "openai", "anthropic", "nvidia_nim", "openai_compatible", "bedrock"]
     model_id: str = Field(min_length=1, max_length=200)
     family: str = Field(min_length=1, max_length=100)
@@ -56,6 +56,8 @@ class ModelProfile(StrictModel):
     max_output_tokens: int = Field(default=3000, ge=256, le=32768)
     timeout_seconds: int = Field(default=60, ge=5, le=1800)
     prompt_version: str = Field(default="v2", min_length=1, max_length=80)
+    # A fallback Agent answers for the Agents named here when one of them refuses or is truncated, and for no other failure.
+    fallback_for: list[str] = Field(default_factory=list, max_length=20)
 
     @field_validator("credential_env")
     @classmethod
@@ -72,6 +74,8 @@ class ModelProfile(StrictModel):
             raise ValueError("A Bedrock model names an AWS profile and no credential variable")
         if self.provider != "bedrock" and self.aws_profile:
             raise ValueError("Only a Bedrock model uses an AWS profile")
+        if (self.role == "fallback") != bool(self.fallback_for):
+            raise ValueError("A fallback Agent names the Agents it stands in for, and only a fallback Agent does")
         return self
 
 
@@ -118,6 +122,15 @@ class RunInput(StrictModel):
     fixture_profile: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9_-]{1,80}$")
     deployment_header: str | None = Field(default=None, pattern=r"^[A-Za-z0-9-]{1,100}$")
     cases: list[dict] = Field(default_factory=list, max_length=100)
+    # Exact strings the operator declares synthetic test credentials, so the source snapshot leaves them readable.
+    unredacted_literals: list[str] = Field(default_factory=list, max_length=50)
+
+    @field_validator("unredacted_literals")
+    @classmethod
+    def test_literals(cls, value):
+        if any(len(item) < 6 or len(item) > 200 or not item.isprintable() or item != item.strip() for item in value):
+            raise ValueError("Unredacted test literals are exact single-line strings of 6 to 200 characters without surrounding spaces")
+        return list(dict.fromkeys(value))
 
     @field_validator("allowed_target_ips")
     @classmethod
@@ -159,6 +172,20 @@ class RunInput(StrictModel):
         # Values are compared at preflight, when the environment is read; names can be refused now.
         if {p.credential_env for p in self.models if p.credential_env} & {p.credential_env for p in self.auth_profiles}:
             raise ValueError("A credential cannot serve both a model and a test identity")
+        primaries = {p.id: p for p in self.models if p.role != "fallback"}
+        covered = [agent_id for p in self.models for agent_id in p.fallback_for]
+        if any(agent_id not in primaries for agent_id in covered):
+            raise ValueError("A fallback stands in only for configured Agents that are not fallbacks themselves")
+        if len(covered) != len(set(covered)):
+            raise ValueError("Each Agent can have only one fallback")
+        for fallback in (p for p in self.models if p.role == "fallback"):
+            for agent_id in fallback.fallback_for:
+                primary = primaries[agent_id]
+                if (fallback.provider, fallback.model_id, fallback.endpoint) == (primary.provider, primary.model_id, primary.endpoint):
+                    raise ValueError("A fallback must be a different model configuration from the Agent it stands in for")
+                # The whitebox gate needs three families; a fallback that repeats another reviewer's could never pass it.
+                if primary.role == "reviewer" and fallback.family.casefold() in {p.family.casefold() for p in primaries.values() if p.role == "reviewer" and p.id != agent_id}:
+                    raise ValueError("A reviewer's fallback must be a model family none of the other reviewers use")
         for request in self.allowed_requests:
             if set(request)-{"method","path","model_body","model_headers"} or not isinstance(request.get("model_body",False),bool) or not isinstance(request.get("path"),str) or not request["path"].startswith("/") or request["path"].startswith("//") or any(c in request["path"] for c in "\r\n\\"):
                 raise ValueError("Scope requires an exact relative HTTP path")
@@ -183,7 +210,7 @@ class RunInput(StrictModel):
                 raise ValueError("Synthetic providers cannot be used in live runs")
             if any(not p.endpoint for p in self.models):
                 raise ValueError("Every live model requires an explicit endpoint")
-            dedicated=[p.role for p in self.models if p.role not in {"reviewer","commander"}]
+            dedicated=[p.role for p in self.models if p.role not in {"reviewer","commander","fallback"}]
             if len(dedicated)!=len(set(dedicated)):
                 raise ValueError("Each dedicated logical role can have only one configured Agent")
         return self
