@@ -402,12 +402,16 @@ class Engine:
             fallback=next((p for p in run["manifest"]["models"] if profile["id"] in p.get("fallback_for",[])),None)
             if exc.code not in FALLBACK_CODES or not fallback:
                 raise
-            what="refused" if exc.code=="refusal" else "was truncated"
-            note=f"Fallback {fallback['id']} ({fallback['model_id']}) answered for {profile['id']} at stage {run['stage']} after it {what}"
+            refused=exc.code=="refusal"
+            self.event(run,f"{profile['id']} refused; asking its fallback {fallback['id']} ({fallback['model_id']})" if refused
+                       else f"{profile['id']} was truncated; asking its fallback {fallback['id']} ({fallback['model_id']})","warning",profile["id"])
+            data=await self.call_model(run,fallback,instruction,payload,response_contract)
+            # Recorded only once the fallback has answered: a fallback that fails too leaves its own error instead.
+            note=(f"Fallback {fallback['id']} ({fallback['model_id']}) answered for {profile['id']} at stage {run['stage']} after it refused" if refused
+                  else f"Fallback {fallback['id']} ({fallback['model_id']}) answered for {profile['id']} at stage {run['stage']} after it was truncated")
             self.event(run,note,"warning",fallback["id"])
             limitations=run.setdefault("limitations",[])
             if note not in limitations: limitations.append(note)
-            data=await self.call_model(run,fallback,instruction,payload,response_contract)
             answered.append(fallback["id"])
             return data
 

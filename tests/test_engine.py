@@ -1821,7 +1821,7 @@ async def test_the_operators_fallback_answers_a_refusal_or_truncation_and_says_s
     assert run["usage"]["model_calls"]==before["model_calls"]+2 and run["usage"]["tokens"]==before["tokens"]+10
     note=f"Fallback local (local-model) answered for reviewer-a at stage {run['stage']} after it {what}"
     assert run["limitations"].count(note)==1
-    assert (run["events"][-1]["message"],run["events"][-1]["level"],run["events"][-1]["agent_id"])==(note,"warning","local")
+    assert [(e["message"],e["agent_id"]) for e in run["events"][-2:]]==[(f"reviewer-a {what}; asking its fallback local (local-model)","reviewer-a"),(note,"local")]
     # A resumed stage reuses the paid answer and still knows who gave it.
     again=[]
     assert await engine.model(run,primary,"x",{"q":1},cache="step",answered=again)=={"by":"local"}
@@ -1836,6 +1836,8 @@ async def test_other_failures_and_a_failing_fallback_still_stop_the_call(engine,
         await engine.model(run,primary,"x",{"q":1})
     assert err.value.code==failure["code"]
     assert calls==(["reviewer-a","local"] if failure.get("fallback") else ["reviewer-a"])
+    # A fallback that fails too answered nothing, so nothing says it did.
+    assert not any("answered for" in item for item in run["limitations"])
     # An Agent nobody stands in for keeps its refusal.
     other=next(p for p in run["manifest"]["models"] if p["id"]=="reviewer-b")
     with pytest.raises(ProviderError):
