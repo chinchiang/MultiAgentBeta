@@ -1,6 +1,7 @@
 """Boundaries added after the 2026-10-06 VibeSec G4 architecture and identity review."""
 import base64
 import json
+import os
 import sys
 
 import pytest
@@ -285,6 +286,7 @@ def test_staged_line_count_reads_only_the_listed_unchanged_file(tmp_path):
     assert staged_line_count(record, "app.py") is None
 
 
+@pytest.mark.skipif(os.name != "posix", reason="Resolving '..' after a symlink is POSIX path semantics")
 def test_live_run_keeps_the_source_path_it_checked(tmp_path, monkeypatch):
     import os
     from fastapi.testclient import TestClient

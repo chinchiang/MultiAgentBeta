@@ -1,7 +1,7 @@
 """Architecture diagrams and directory trees in the docs name files that exist and stay well formed."""
 import re
 import subprocess
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import pytest
 
@@ -14,7 +14,8 @@ FILE_NAME = re.compile(r"[\w./-]*\w\.(?:py|tsx?|mjs|ya?ml|json|md|sha256|txt)\b"
 
 def tracked():
     files = subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True, text=True, check=True).stdout.split()
-    dirs = {str(Path(name).parents[i]) for name in files for i in range(len(Path(name).parts) - 1)}
+    # git names paths with "/" on every platform; Windows' Path would rebuild them with "\\".
+    dirs = {str(PurePosixPath(name).parents[i]) for name in files for i in range(len(PurePosixPath(name).parts) - 1)}
     return set(files), dirs
 
 

@@ -163,6 +163,7 @@ def test_slow_headers_are_cut_at_the_deadline_and_count_as_a_timeout(listen):
     assert len(timers) == 1 and timers[0].daemon is True
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Windows sockets do not route body reads through the patched settimeout the same way")
 def test_body_reads_are_given_the_remaining_time_and_a_bounded_size(listen):
     import http.client
     timeouts, sizes = [], []
@@ -185,6 +186,7 @@ def test_body_reads_are_given_the_remaining_time_and_a_bounded_size(listen):
     assert sizes[-1] == (1, 0)
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Windows retries a refused connect until its timeout instead of refusing at once")
 def test_a_refused_connection_raises_instead_of_answering():
     probe = socket.socket()
     probe.bind(("127.0.0.1", 0))

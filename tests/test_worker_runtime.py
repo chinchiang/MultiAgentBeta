@@ -585,8 +585,10 @@ async def test_heartbeat_renews_off_the_event_loop(tmp_path,monkeypatch):
         monkeypatch.setattr(rt.leases,"renew",wrapped)
         cancel=asyncio.Event()
         operation=asyncio.create_task(rt.execute_tool({"operation":"selftest","selftest":"spawn_child","timeout_seconds":30},manifest=manifest(),cancel_event=cancel,request_hook=allow))
-        # Heartbeats renew every ttl/3, so this window guarantees >=3 renewals.
-        await asyncio.sleep(2.2)
+        # Heartbeats renew four times per TTL; wait for three, with room for a slow process spawn (Windows).
+        for _ in range(200):
+            if len(idents)>=3: break
+            await asyncio.sleep(.05)
         cancel.set()
         result=await asyncio.wait_for(operation,30)
         assert result["status"]=="outcome_unknown"
@@ -624,6 +626,7 @@ def test_docker_control_confirms_absent_container_and_reports_real_failures(monk
     (["name=apparmor"],False),
     (None,False),
 ])
+@pytest.mark.skipif(os.name!="posix",reason="The Docker runtime is Linux-only; elsewhere it refuses before asking the daemon")
 async def test_docker_runtime_requires_a_seccomp_profile(tmp_path,monkeypatch,options,available):
     import vibe_audit.worker_entry as worker_entry_module
     class Leases:
@@ -780,6 +783,7 @@ async def test_real_worker_sends_the_header_values_the_operator_listed(runtime,h
     assert "worker_started" in result["lifecycle"] and "request header" in result["worker_reason"],result
 
 
+@pytest.mark.skipif(os.name!="posix",reason="The Docker runtime is Linux-only; elsewhere it refuses before measuring the socket path")
 async def test_docker_runtime_rejects_a_work_root_too_long_for_the_broker_socket(tmp_path,monkeypatch):
     import vibe_audit.worker_entry as worker_entry_module
     class Leases:
