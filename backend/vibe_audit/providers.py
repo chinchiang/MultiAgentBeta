@@ -33,6 +33,8 @@ _PROVIDERS = {"openai", "anthropic", "nvidia_nim", "openai_compatible", "bedrock
 # The only Bedrock endpoints a profile may name, so AWS-signed requests can reach nothing but Bedrock itself.
 _BEDROCK_ENDPOINT = re.compile(r"https://bedrock-runtime(?:-fips)?\.((?:[a-z]{2}(?:-gov)?-[a-z]+-\d))\.amazonaws\.com/?")
 BEDROCK_PROFILES_ENV = "VIBEAUDIT_BEDROCK_PROFILES"
+# HTTP statuses that answer without serving the request: rejected before it ran, rate limited, or a server error.
+UNSERVED_STATUSES = frozenset({400, 401, 403, 404, 413, 422, 429, *range(500, 600)})
 _TOKENIZERS = {
     "https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken": "223921b76ee99bde995b7ff738513eef100fb51d18c93597a113bcffe865b2a7",
     "https://openaipublic.blob.core.windows.net/encodings/o200k_base.tiktoken": "446a9538cb6c348e3516120d7c08b09f57c36495e2acfffe59a5bf8b0cfb1a2d",
@@ -362,8 +364,19 @@ def _response_format(profile: dict, schema: dict | None) -> dict:
 
     Either way the answer is still validated locally against the same schema."""
     if profile.get("json_mode") == "json_schema":
-        return {"type": "json_schema", "json_schema": {"name": "response", "schema": schema or {"type": "object"}}}
+        return {"type": "json_schema", "json_schema": {"name": "response", "schema": _schema_for_endpoint(schema or {"type": "object"})}}
     return {"type": "json_object"}
+
+
+def _schema_for_endpoint(schema):
+    """The schema sent to the endpoint: without maxItems, which Gemini's API refuses (HTTP 400) at the sizes used here.
+
+    Only a request hint changes; the answer is still validated locally against the full schema, caps included."""
+    if isinstance(schema, dict):
+        return {key: _schema_for_endpoint(value) for key, value in schema.items() if key != "maxItems"}
+    if isinstance(schema, list):
+        return [_schema_for_endpoint(value) for value in schema]
+    return schema
 
 
 async def _complete(library, profile, provider, endpoint, credential, messages, output_limit, timeout, transport, schema=None):
@@ -551,9 +564,10 @@ async def generate_json(profile: dict, system: str, payload: dict, policy: dict)
             status = received if type(received) is int else getattr(exc, "status_code", None)
             if not isinstance(exc, ProviderError) and type(status) is int and 400 <= status <= 599:
                 code = f"provider_http_{status}"
-                if received == status and (status == 429 or 500 <= status <= 599):
-                    # Operator policy: a rate limit or a server error answers without serving the request, so it is
-                    # counted as unbilled and the run may resume. A timeout (408) or other failure stays unknown.
+                if received == status and status in UNSERVED_STATUSES:
+                    # Operator policy: a rejected request (bad request, auth, not found, too large, unprocessable),
+                    # a rate limit or a server error answers without serving it, so it is counted as unbilled and
+                    # the run may resume. A timeout (408), a conflict or any other failure stays unknown.
                     usage["tokens_known"] = True
                     raise ProviderError(f"Model endpoint answered HTTP {status}; the request was not served and is treated as unbilled", code=code, usage=usage.copy()) from None
             elif not isinstance(exc, ProviderError) and isinstance(exc, (TimeoutError, asyncio.TimeoutError)) or type(exc).__name__ in {"Timeout", "APITimeoutError"}:

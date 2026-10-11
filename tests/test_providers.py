@@ -772,7 +772,7 @@ async def test_json_mode_asks_for_the_schema_where_a_server_accepts_only_that(pr
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure,code,known", [(503, "provider_http_503", True), (500, "provider_http_500", True), (429, "provider_http_429", True),
-                                                (408, "provider_http_408", False), (400, "provider_http_400", False), ("timeout", "provider_timeout", False)])
+                                                (408, "provider_http_408", False), (400, "provider_http_400", True), (409, "provider_http_409", False), ("timeout", "provider_timeout", False)])
 async def test_a_failed_model_call_names_its_status_but_never_its_body(profile, policy, fake_provider, failure, code, known):
     calls, answers = fake_provider
     class StatusError(Exception):
@@ -829,3 +829,11 @@ async def test_a_content_filtered_reply_is_a_metered_refusal_not_an_unknown_fail
     with pytest.raises(providers.ProviderError) as error:
         await providers.generate_json(profile, "Return JSON.", {}, policy)
     assert error.value.code == "refusal" and error.value.usage["tokens_known"] is True and error.value.usage["tokens"] == 12
+
+
+def test_the_schema_sent_to_an_endpoint_drops_only_maxitems():
+    from vibe_audit.contracts import ReviewProposal
+    schema = ReviewProposal.model_json_schema()
+    sent = providers._schema_for_endpoint(schema)
+    assert "maxItems" not in json.dumps(sent) and "maxItems" in json.dumps(schema)
+    assert json.dumps(sent).count("maxLength") == json.dumps(schema).count("maxLength")
