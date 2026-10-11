@@ -219,9 +219,10 @@ class OperatorOracle(CaseOracle):
 class OperatorCase(CaseProposal):
     """Operator and retest cases may use any adapter or method and keep the sealed fields they were copied with."""
     model_config = ConfigDict(extra="allow")
-    adapter: Literal["http", "ai_http", "demo", "fixture", "zap", "schemathesis", "playwright", "promptfoo", "pyrit"]
-    method: Literal["GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"] = "GET"
-    preconditions: list[str | OperatorControl] = Field(default_factory=list, max_length=10)
+    # Wider than the model contract on purpose; pydantic validates each class by its own annotations.
+    adapter: Literal["http", "ai_http", "demo", "fixture", "zap", "schemathesis", "playwright", "promptfoo", "pyrit"]  # type: ignore[assignment]
+    method: Literal["GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"] = "GET"  # type: ignore[assignment]
+    preconditions: list[str | OperatorControl] = Field(default_factory=list, max_length=10)  # type: ignore[assignment]
     oracle: OperatorOracle
 
 

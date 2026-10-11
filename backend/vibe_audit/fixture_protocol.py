@@ -20,8 +20,8 @@ from .settings import fixture_config
 CONTROL = {"X-Fixture-Control": "local-synthetic-control"}
 PROFILES = {"synthetic-ai-v1", "synthetic-web-v1"}
 DYNAMIC_TOOLS = {"zap", "schemathesis", "playwright", "promptfoo", "pyrit"}
-_REGISTERED = {}
-_EFFECT_BINDINGS = {}
+_REGISTERED: dict[str, dict] = {}
+_EFFECT_BINDINGS: dict[str, dict] = {}
 
 
 class TargetAdapter(Protocol):

@@ -62,6 +62,8 @@ export function CreateForm({onCreate,busy,connected}: {onCreate:(input:RunInput)
       if(new Set(authProfiles.map(p=>p.id)).size!==authProfiles.length)errors.push(t('測試身分的識別不能重複。','Test identity IDs cannot repeat.'));
       if(caseText.trim()){try{if(!Array.isArray(JSON.parse(caseText)))throw new Error();}catch{errors.push(t('自訂案例必須是 JSON 陣列。','Custom cases must be a JSON array.'));}}
     }return errors;
+    // t() reads the current language, so the messages are recomputed when it changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   },[name,budget,mode,source,target,deployment,ips,requests,models,dataPolicy,origins,caseText,authProfiles,lang]);
   function changeMode(next:'demo'|'live'){setMode(next);setProbe({});setModels(next==='demo'?demoModels():demoModels().map(m=>({...m,provider:'openai_compatible',model_id:'',family:'',endpoint:'http://127.0.0.1:11434/v1'})));}
   function updateModel(i:number,patch:Partial<ModelProfile>){setModels(prev=>prev.map((m,index)=>index===i?{...m,...patch}:m));setProbe(prev=>({...prev,[models[i].id]:{pending:false,message:''}}));}

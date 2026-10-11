@@ -103,7 +103,7 @@ def _is_loopback(host: str) -> bool:
         return False  # literal IPs only: no localhost DNS ambiguity
 
 
-def _validate_profile(profile: dict, policy: dict) -> tuple[str, str, str]:
+def _validate_profile(profile: dict, policy: dict) -> tuple[str, str, Any]:
     provider = profile.get("provider")
     if provider not in _PROVIDERS:
         raise ProviderError("A real supported provider is required; demo is handled separately", code="invalid_provider")
@@ -270,7 +270,7 @@ class _OriginTransport(httpx.AsyncBaseTransport):
         self.pinned_ip = pinned_ip
         self.dispatched = False
         # The status of the response actually received and relayed, if any; SDKs map other failures to 500 too.
-        self.status = None
+        self.status: int | None = None
         # The bounded body of that response, kept in memory only so a reply the SDK cannot convert is still metered.
         self.body = b""
         self.inner = httpx.AsyncHTTPTransport(retries=0, verify=True, trust_env=False)
@@ -351,8 +351,8 @@ async def _invoke(library, profile: dict, endpoint: str, origin: str, credential
         # policy error costs nothing and must not latch unknown usage.
         if _not_sent(exc) or transport is not None and transport.dispatched:
             # Billing decisions read the status the provider really sent, not the SDK's mapping of the error.
-            exc.vibeaudit_http_status = transport.status if transport is not None else None
-            exc.vibeaudit_http_body = transport.body if transport is not None else b""
+            exc.vibeaudit_http_status = transport.status if transport is not None else None  # type: ignore[attr-defined]
+            exc.vibeaudit_http_body = transport.body if transport is not None else b""  # type: ignore[attr-defined]
             raise
         raise _unsent(exc) from None
 
@@ -450,7 +450,7 @@ def _validation_site(exc: BaseException) -> str:
     if isinstance(exc, SchemaViolation):
         return f"{path(exc.absolute_path)}: {exc.validator}"
     if isinstance(exc, ContractViolation):
-        first = exc.errors()[0] if exc.errors() else {}
+        first: dict = dict(exc.errors()[0]) if exc.errors() else {}
         kind = re.sub(r'[^a-z_]', '', str(first.get('type', 'invalid')))[:40]
         # A contract rule's own message is fixed text from contracts.py; anything else might quote the answer.
         from .messages import ZH
@@ -497,7 +497,7 @@ async def generate_json(profile: dict, system: str, payload: dict, policy: dict)
     reject_remote_refs(schema)
     def deny_schema_retrieval(_uri):
         raise ValueError("External schema retrieval is disabled")
-    validator = Draft202012Validator(schema, registry=Registry(retrieve=deny_schema_retrieval))
+    validator = Draft202012Validator(schema, registry=Registry(retrieve=deny_schema_retrieval))  # type: ignore[call-arg]
     budget = policy.get("max_tokens", policy.get("budget", {}).get("max_tokens", 50000))
     max_calls = policy.get("max_model_calls", policy.get("budget", {}).get("max_model_calls", 2))
     if type(budget) is not int or budget <= 0 or type(max_calls) is not int or max_calls <= 0:
@@ -560,7 +560,9 @@ async def generate_json(profile: dict, system: str, payload: dict, policy: dict)
                 code = "provider_timeout"
             # Exception class names only (for example APIConnectionError <- RemoteProtocolError): enough to tell a
             # dropped connection from a parse failure, and they carry nothing the provider or the model wrote.
-            chain, seen, item = [], set(), exc
+            chain: list[str] = []
+            seen: set[int] = set()
+            item: BaseException | None = exc
             while item is not None and id(item) not in seen and len(chain) < 3:
                 seen.add(id(item)); chain.append(type(item).__name__); item = item.__cause__ or item.__context__
             kinds = " <- ".join(re.sub(r"[^A-Za-z0-9_]", "", name)[:40] for name in chain)

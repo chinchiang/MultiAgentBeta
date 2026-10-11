@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import builtins
 import json
 import os
 import re
@@ -231,7 +232,7 @@ class Store:
         """Every run, whole; the engine's startup recovery saves them back, so their events come along."""
         with self.lock:
             rows = self._execute(self.sql["runs"]).fetchall()
-            events = {}
+            events: dict[str, list] = {}
             for run_id, payload in self._execute(self.sql["all_events"]).fetchall():
                 events.setdefault(run_id, []).append(json.loads(payload))
         runs = [json.loads(r[0]) for r in rows]
@@ -246,7 +247,7 @@ class Store:
         run = json.loads(row[0])
         return {key: run.get(key) for key in SUMMARY_FIELDS}
 
-    def summaries(self) -> list[dict]:
+    def summaries(self) -> "builtins.list[dict]":
         """The inventory of runs: what a list shows, without events, findings, cases or evidence records."""
         with self.lock:
             rows = self._execute(self.sql["runs"]).fetchall()

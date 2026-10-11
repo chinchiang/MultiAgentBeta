@@ -58,7 +58,8 @@ def stage_source(source_path: str, private_root: str | Path, *, expected_snapsho
 
 
 def _copy_source(source: Path, target: Path, expected_snapshot: dict | None, max_files: int, max_bytes: int) -> dict:
-    entries, total = [], 0
+    entries: list[dict] = []
+    total = 0
     omitted = []
     def unreadable(error):
         # os.walk skips a directory it cannot list; the record must still name it.
@@ -109,7 +110,7 @@ def _copy_source(source: Path, target: Path, expected_snapshot: dict | None, max
             entries.append({"path": relative, "sha256": hashlib.sha256(content).hexdigest(), "bytes": len(content)})
     if not entries:
         raise ValueError("Empty scanner staging snapshot")
-    entries.sort(key=lambda value: value["path"])
+    entries.sort(key=lambda value: str(value["path"]))
     by_path = {entry["path"]: entry["sha256"] for entry in entries}
     if expected_snapshot:
         for item in expected_snapshot["files"]:
@@ -163,7 +164,7 @@ def verify_staging(record: dict) -> bool:
     if not _safe_ancestors(root):
         return False
     expected={item["path"] for item in record["files"]}
-    actual=set()
+    actual: set[str]=set()
     for base, dirs, files in os.walk(root,followlinks=False):
         if any(_linklike(Path(base)/d) for d in dirs):
             return False

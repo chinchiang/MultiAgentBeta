@@ -91,6 +91,10 @@ class AuthProfile(StrictModel):
         return ModelProfile.credential(value)
 
 
+StaticTool = Literal["semgrep", "osv", "gitleaks"]
+STATIC_TOOLS: tuple[StaticTool, ...] = ("semgrep", "osv", "gitleaks")
+
+
 class RunInput(StrictModel):
     schema_version: Literal[2] = 2
     name: str = Field(default="Security review", min_length=1, max_length=160)
@@ -109,7 +113,7 @@ class RunInput(StrictModel):
     parent_run_id: str | None = None
     parent_finding_ids: list[str] = Field(default_factory=list, max_length=100)
     requirements: list[SecurityRequirement] = Field(default_factory=list, max_length=500)
-    static_tools: list[Literal["semgrep", "osv", "gitleaks"]] = Field(default_factory=lambda:["semgrep", "osv", "gitleaks"])
+    static_tools: list[StaticTool] = Field(default_factory=lambda: list(STATIC_TOOLS))
     runtime_profile: str = Field(default="default", pattern=r"^[a-zA-Z0-9_-]{1,80}$")
     fixture_profile: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9_-]{1,80}$")
     deployment_header: str | None = Field(default=None, pattern=r"^[A-Za-z0-9-]{1,100}$")

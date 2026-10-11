@@ -179,7 +179,7 @@ WORKER_STEP_FIELDS=("case_id","method","path","headers","identity","body")
 
 class Supervisor:
     def __init__(self,task):
-        from lease import LeaseStore,canonical_hash
+        from lease import LeaseStore,canonical_hash  # type: ignore[import-not-found]  # flat import inside the container
         self.task=task
         self.cap=task["capability"]
         self.worker_id=task["worker_id"]
@@ -317,7 +317,7 @@ class Supervisor:
                 "hard_deadline_unix":time.time()+self.spec["timeout_seconds"]}
 
     def allowed_request(self,request):
-        from adapters import _prepare_request
+        from adapters import _prepare_request  # type: ignore[import-not-found]  # flat import inside the container
         method=request.get("method")
         path=request.get("path")
         if (method,path) not in {(r.get("method","GET").upper(),r.get("path")) for r in self.manifest.get("allowed_requests",[])}:
