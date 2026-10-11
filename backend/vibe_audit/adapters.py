@@ -132,6 +132,14 @@ def shared_credentials(manifest, environ=None):
     model_values = {environ.get(name) for name in model_names} - {None, ""}
     return sorted(name for name in names("auth_profiles")
                   if name in model_names or environ.get(name) in model_values)
+
+
+def literal_model_credentials(manifest, environ=None):
+    """Whether a declared unredacted test literal is a model key: the snapshot would send it to the models as written."""
+    environ = os.environ if environ is None else environ
+    names = {p.get("credential_env") for p in manifest.get("models") or [] if isinstance(p, dict) and p.get("credential_env")}
+    values = {environ.get(name) for name in names | bound_model_credentials(environ)} - {None, ""}
+    return bool(set(manifest.get("unredacted_literals") or []) & values)
 _HEADER_NAME = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
 _FORBIDDEN_HEADERS = {
     "host", "authorization", "cookie", "proxy-authorization", "connection",

@@ -420,6 +420,13 @@ ZH.update({
     "A Bedrock model needs an AWS profile name": "Bedrock 模型需要 AWS profile 名稱",
     "A Bedrock model names an AWS profile and no credential variable": "Bedrock 模型要指定 AWS profile，且不能指定憑證變數",
     "Only a Bedrock model uses an AWS profile": "只有 Bedrock 模型會使用 AWS profile",
+    "A fallback Agent names the Agents it stands in for, and only a fallback Agent does": "備援 Agent 要列出它代替哪些 Agent；其他 Agent 不能列",
+    "A fallback stands in only for configured Agents that are not fallbacks themselves": "備援只能代替已設定、且本身不是備援的 Agent",
+    "Each Agent can have only one fallback": "每個 Agent 只能有一個備援",
+    "A fallback must be a different model configuration from the Agent it stands in for": "備援必須是與被代替 Agent 不同的模型設定",
+    "A reviewer's fallback must be a model family none of the other reviewers use": "審查員的備援必須是其他審查員都沒有使用的模型家族",
+    "Unredacted test literals are exact single-line strings of 6 to 200 characters without surrounding spaces": "不遮蔽的測試字面值必須是 6 到 200 個字元的單行字串，前後不能有空白",
+    "An unredacted test literal equals a model credential; list only synthetic test values": "不遮蔽的測試字面值與模型金鑰相同；只能列出合成的測試值",
 })
 
 
@@ -442,6 +449,9 @@ PATTERNS = [
     (r"Challenger: dropped (\d+) challenge\(s\) naming a finding that does not exist", "反證審查員：捨棄 {0} 項指向不存在發現的反證"),
     (r"Model request failed \(([A-Za-z0-9_ <-]+)\); response and error body withheld; billed usage may be unknown", "模型請求失敗（{0}）；回應與錯誤內容不予顯示；計費用量可能不明"),
     (r"Model endpoint answered HTTP (\d+); the request was not served and is treated as unbilled", "模型端點回應 HTTP {0}；請求沒有被處理，視為未計費"),
+    (r"Fallback (.+) \((.+)\) answered for (.+) at stage (\w+) after it refused", "{2} 在{3}階段拒答，改由備援 {0}（{1}）回答"),
+    (r"Fallback (.+) \((.+)\) answered for (.+) at stage (\w+) after it was truncated", "{2} 在{3}階段的輸出被截斷，改由備援 {0}（{1}）回答"),
+    (r"Operator-declared test literals left unredacted: (\d+) of (\d+) appear in the snapshot", "操作者宣告的測試字面值未遮蔽：{1} 個中有 {0} 個出現在快照裡"),
     (r"Model output failed local JSON/schema validation \((.+)\)", "模型輸出未通過本機 JSON／格式驗證（{0}）"),
     (r"AWS profile (.+) is not allowed; list it in (\w+)", "AWS profile {0} 未獲允許；請把它列在 {1}"),
     (r"AWS credentials for profile (.+) are unavailable; sign in with: aws sso login --profile (.+)", "AWS profile {0} 沒有可用的憑證；請先登入：aws sso login --profile {1}"),

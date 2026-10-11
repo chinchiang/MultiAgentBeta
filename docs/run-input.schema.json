@@ -92,7 +92,8 @@
             "challenger",
             "threat_modeler",
             "test_designer",
-            "reporter"
+            "reporter",
+            "fallback"
           ],
           "title": "Role",
           "type": "string"
@@ -181,6 +182,14 @@
           "minLength": 1,
           "title": "Prompt Version",
           "type": "string"
+        },
+        "fallback_for": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 20,
+          "title": "Fallback For",
+          "type": "array"
         }
       },
       "required": [
@@ -423,6 +432,14 @@
       },
       "maxItems": 100,
       "title": "Cases",
+      "type": "array"
+    },
+    "unredacted_literals": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 50,
+      "title": "Unredacted Literals",
       "type": "array"
     }
   },

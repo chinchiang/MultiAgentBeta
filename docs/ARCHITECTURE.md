@@ -56,7 +56,7 @@ flowchart TB
 | React 控制台 | `frontend/src`（建置到 `frontend/dist`，由 FastAPI 提供） |
 | FastAPI：session／CSRF／scope | `api.py`、`workspace_api.py` |
 | 指揮與 LangGraph 階段 | `service.py`（`STAGES`，每個階段一個圖節點） |
-| 模型閘道・每個代理的 profile | `providers.py`（LiteLLM，無 fallback） |
+| 模型閘道・每個代理的 profile | `providers.py`（LiteLLM，無隱性 fallback；操作者設定的備援在 `service.py`） |
 | 確定性閘門 | `policy.py`（manifest、whitebox、threat、case 閘門與 `authorize`）、`contracts.py`、`domain.py` |
 | 獨立 supervisor ＋ 持久 lease | `worker_runtime.py`、`lease.py`；IP 釘選傳輸與 oracle 在 `adapters.py` |
 | 獨立 effect collector | `effect_collector.py`，經 `fixture_protocol.py` 使用 |
@@ -160,7 +160,7 @@ Each node above maps to code in `backend/vibe_audit/` (or the named directory). 
 | React console | `frontend/src` (built into `frontend/dist`, served by FastAPI) |
 | FastAPI: session / CSRF / scope | `api.py`, `workspace_api.py` |
 | Commander and LangGraph stages | `service.py` (`STAGES`, one graph node per stage) |
-| Model gateway · per-agent profiles | `providers.py` (LiteLLM, no fallback) |
+| Model gateway · per-agent profiles | `providers.py` (LiteLLM, no implicit fallback; the operator's fallback is in `service.py`) |
 | Deterministic gates | `policy.py` (manifest, whitebox, threat and case gates and `authorize`), `contracts.py`, `domain.py` |
 | Independent supervisor + persistent lease | `worker_runtime.py`, `lease.py`; IP-pinned transport and oracles in `adapters.py` |
 | Independent effect collector | `effect_collector.py`, used through `fixture_protocol.py` |

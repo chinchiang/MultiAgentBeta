@@ -2,7 +2,7 @@
 
 Multi-Agent 資安測試工具包：**白箱獨立審查 → 威脅建模 → 案例與 Oracle → 隔離黑箱 → 證據裁決**。
 
-AI Commander 負責派工；程式 Harness 強制範圍、階段、權限、預算與證據。三個 reviewer 可分別指定 Claude、OpenAI、Nemotron 或本地端點；沒有靜默 fallback，也不用多數票決定漏洞。
+AI Commander 負責派工；程式 Harness 強制範圍、階段、權限、預算與證據。三個 reviewer 可分別指定 Claude、OpenAI、Nemotron 或本地端點；沒有靜默 fallback：只有操作者明確設定的備援模型，會在指定 Agent 拒答或輸出被截斷時代答，並記在報告裡；也不用多數票決定漏洞。
 
 本次依使用者要求先交付工程與本地整合。**沒有實際三模型端點或付費效果實驗；不宣稱減偏、檢出率或成本改善。** 本地測試使用明確標示的合成模型/靶場；真實工具與隔離基礎設施的驗收另列於 [驗證紀錄](docs/VALIDATION.md)。
 
@@ -67,7 +67,7 @@ flowchart TB
   Q -->|"是：停在「待核准案例」"| AP["操作者在工作台核對並核准<br/>POST /runs/{id}/approve-cases"]
   AP --> S6
 
-  LLM["模型端點<br/>providers.py（LiteLLM，無 fallback）"]
+  LLM["模型端點<br/>providers.py（LiteLLM，無隱性 fallback）"]
   S1 & S2 & S3 & S4 -.-> LLM
 
   SCAN["隔離掃描 worker<br/>sandbox.py・run_scanner<br/>Semgrep／Gitleaks／OSV"]
@@ -110,7 +110,7 @@ MultiAgentBeta/
 │   ├── api.py                     #   FastAPI：session／CSRF／Host-Origin、runs、approve-cases、SSE、證據、報告、靜態介面
 │   ├── workspace_api.py           #   專案、模型範本、標準目錄、追溯、複測、裁決、清理確認
 │   ├── service.py                 #   LangGraph 七個階段、閘門呼叫、Markdown／SARIF 報告
-│   ├── providers.py               #   LiteLLM 模型呼叫與探測、憑證 origin 綁定、無 fallback
+│   ├── providers.py               #   LiteLLM 模型呼叫與探測、憑證 origin 綁定、無隱性 fallback
 │   ├── messages.py                #   錯誤訊息的正體中文對照（API 的 detail_zh、run 的 error_zh）
 │   ├── diagnostics.py             #   本機診斷記錄：被固定文字取代的失敗只記例外類型與位置（vibe-audit.log）
 │   ├── settings.py                #   後端程序的 VIBEAUDIT_* 設定：一次讀取並檢查（權杖、資料目錄、資料庫、控制台 origins、來源根目錄、目錄與設定檔路徑）
@@ -169,7 +169,7 @@ MultiAgentBeta/
 - 所有目標請求經獨立 broker；精確 METHOD/path、IP、身分、案例 hash、lease、預算和可選部署 header 每次檢查。redirect 拒絕。
 - 憑證只能以 VIBEAUDIT_* 環境變數名稱引用，且不能是本工具自己的設定（資料庫 URL、啟動權杖等）或其別名；目標憑證由 supervisor 注入，不交給工具。local_only 僅接受明確 loopback 模型端點。模型金鑰只會送到操作者以 VIBEAUDIT_MODEL_CREDENTIAL_ORIGINS（`名稱=origin`，逗號分隔）綁定的 origin，請求本文無法改變；VIBEAUDIT_OPENAI_API_KEY 與 VIBEAUDIT_ANTHROPIC_API_KEY 預設綁定官方端點。同一個變數或值不能同時當模型金鑰與測試身分憑證；凡是 VIBEAUDIT_MODEL_CREDENTIAL_ORIGINS 綁定（含預設綁定）的模型金鑰，即使本次執行的模型沒用到，也不能當測試身分憑證。測試身分的憑證同樣只送往以 VIBEAUDIT_TARGET_CREDENTIAL_ORIGINS（`名稱=origin`，逗號分隔，同一名稱可列多個 origin）綁定的目標 origin，預設不綁定；live run 用到未綁定的測試身分時預檢即拒絕，supervisor 送出前也再核對一次。
 - 模型設計的案例只能使用操作者標記 model_selectable 的測試身分，header 值只能取固定詞彙中的單一值，不得列多項或帶 q 參數（例如 If-Match 只能是 `*`），而且只能用操作者在該端點允許請求行末 JSON 列出的值（API 為 `allowed_requests[].model_headers`，例如 `GET /api {"Accept":["application/json"]}`），沒列的端點不能帶 header；名稱只有一種拼法、依名稱排序送出，大小寫不同的重複名稱會被拒絕；supervisor 送出前再以同一套詞彙重驗。fixture 路徑上模型撰寫的本文只送到操作者在允許的請求行末標 `model-body`（API 為 `"model_body": true`）的端點。live run 有模型設計的案例時，會先停在「待核准案例」，操作者在工作台核對方法、路徑、標頭、本文與身分並核准這組封存案例後，才送出第一個請求。操作者自填的案例不受這些限制。目標 IP 不能是雲端 metadata、link-local、unspecified 或 multicast 位址，預檢也拒絕會連到本控制台或其資料庫的目標。
-- 白箱 raw staging 與模型用脫敏快照分開。staging 副本含有機密檔案，每次執行結束（含 blocked、failed、取消）與服務啟動時都會刪除；恢復時重新複製並必須與凍結時完全相同。來源讀取有上限，脫敏及路由抽取是啟發式；略過的目錄（build、dist、node_modules、.git、symlink）、未讀檔案和未知業務規則會保留缺口。
+- 白箱 raw staging 與模型用脫敏快照分開。staging 副本含有機密檔案，每次執行結束（含 blocked、failed、取消）與服務啟動時都會刪除；恢復時重新複製並必須與凍結時完全相同。來源讀取有上限，脫敏及路由抽取是啟發式；操作者可以列出確切的合成測試憑證（`unredacted_literals`），完全相同的值才不脫敏、會原樣送給模型，報告記下未脫敏的數量，與模型金鑰相同時預檢拒絕；略過的目錄（build、dist、node_modules、.git、symlink）、未讀檔案和未知業務規則會保留缺口。
 - 文字宣稱、HTTP 狀態碼、scanner exit 0、模型共識都不能單獨證明安全。控制或觀測失敗不能判為通過。
 - 送出後中斷標示 outcome_unknown，不自動重播。停止先撤銷網路；未確認清理仍顯示未完成。
 - loopback 單使用者 session：建立 session 需要啟動權杖（同機其他處理程序無法自行取得 session 再探測模型或讀取證據）。cookie 不分 port，所以每個 API 請求（含讀取）都另需只存在該分頁 sessionStorage 的 CSRF token；瀏覽器開過的其他本機服務拿到 cookie 也無法使用。另有 Host/Origin 防護，每個 /api 路由也各自檢查 session 與 CSRF，不只靠 middleware。同時最多 8 個 session，閒置 1 小時或滿 8 小時失效，可在工作台登出；API 可一次結束全部 session，此時自動產生的啟動權杖也會換新並重新印出。錯誤的啟動權杖會讓下一次錯誤回應逐次變慢（上限 5 秒），正確的權杖不受影響。自訂的 VIBEAUDIT_SESSION_TOKEN 必須夠隨機（例如 `python -c "import secrets; print(secrets.token_urlsafe(32))"`），重複字元或重複樣式會被拒絕。資料目錄（VIBEAUDIT_DATA_DIR）在 Linux 上只限擁有者存取（0700），無法設定時服務不啟動；API 與報告以固定文字描述的失敗，其例外類型與程式位置（不含訊息與值）寫在資料目錄的 vibe-audit.log（0600），只留在這台機器；Windows 只執行合成資料的 demo，目錄權限沿用上層目錄的 ACL。受測文字以不可信資料呈現。不要將控制台直接公開到網際網路。
@@ -204,7 +204,7 @@ npm.cmd run build
 
 Multi-Agent security testing toolkit: **white-box independent review → threat modeling → cases and Oracles → isolated black-box → evidence adjudication**.
 
-The AI Commander dispatches work; the programmatic Harness enforces scope, phases, permissions, budgets, and evidence. The three reviewers can each be pointed at Claude, OpenAI, Nemotron, or a local endpoint; there is no silent fallback, and vulnerabilities are not decided by majority vote.
+The AI Commander dispatches work; the programmatic Harness enforces scope, phases, permissions, budgets, and evidence. The three reviewers can each be pointed at Claude, OpenAI, Nemotron, or a local endpoint; there is no silent fallback: only a fallback model the operator configures answers, when a named agent refuses or is truncated, and the report records it; vulnerabilities are not decided by majority vote.
 
 At the user's request, this release delivers engineering and local integration first. **There are no real three-model endpoints or paid-effect experiments; no claims of bias reduction, detection-rate improvement, or cost improvement are made.** Local testing uses clearly labeled synthetic models/ranges; acceptance for real tools and isolated infrastructure is listed separately in the [validation log](docs/VALIDATION.md).
 
@@ -269,7 +269,7 @@ flowchart TB
   Q -->|"Yes: stops at awaiting approval"| AP["Operator reviews and approves in the workbench<br/>POST /runs/{id}/approve-cases"]
   AP --> S6
 
-  LLM["Model endpoints<br/>providers.py (LiteLLM, no fallback)"]
+  LLM["Model endpoints<br/>providers.py (LiteLLM, no implicit fallback)"]
   S1 & S2 & S3 & S4 -.-> LLM
 
   SCAN["Isolated scanner worker<br/>sandbox.py · run_scanner<br/>Semgrep / Gitleaks / OSV"]
@@ -312,7 +312,7 @@ MultiAgentBeta/
 │   ├── api.py                     #   FastAPI: session/CSRF/Host-Origin, runs, approve-cases, SSE, evidence, reports, static UI
 │   ├── workspace_api.py           #   projects, model templates, standards catalog, trace, retest, decisions, cleanup attestation
 │   ├── service.py                 #   the seven LangGraph stages, gate calls, Markdown/SARIF reports
-│   ├── providers.py               #   LiteLLM model calls and probes, credential origin binding, no fallback
+│   ├── providers.py               #   LiteLLM model calls and probes, credential origin binding, no implicit fallback
 │   ├── messages.py                #   Traditional Chinese wording of error messages (detail_zh, error_zh)
 │   ├── diagnostics.py             #   local diagnostics: failures reported in fixed words log their type and location (vibe-audit.log)
 │   ├── settings.py                #   the backend process's VIBEAUDIT_* settings, read and checked once (token, data dir, database, console origins, source roots, catalog and config paths)
@@ -371,7 +371,7 @@ MultiAgentBeta/
 - All target requests go through an independent broker; exact METHOD/path, IP, identity, case hash, lease, budget, and optional deployment headers are checked every time. Redirects are refused.
 - Credentials may only be referenced by VIBEAUDIT_* environment variable names, and cannot be this tool's own settings (database URL, launcher token, etc.) or aliases of them; target credentials are injected by the supervisor and are not handed to the tools. local_only accepts only explicitly loopback model endpoints. A model key is sent only to the origins the operator binds it to in VIBEAUDIT_MODEL_CREDENTIAL_ORIGINS (comma-separated `NAME=origin` entries); a request cannot change that. VIBEAUDIT_OPENAI_API_KEY and VIBEAUDIT_ANTHROPIC_API_KEY are bound to their vendors' endpoints by default. The same variable or value cannot be both a model key and a test identity credential; a key bound in VIBEAUDIT_MODEL_CREDENTIAL_ORIGINS (or bound by default) cannot be a test identity credential even when the run's models do not use it. A test identity's credential likewise goes only to the target origins it is bound to in VIBEAUDIT_TARGET_CREDENTIAL_ORIGINS (comma-separated `NAME=origin` entries; a name may be listed for several origins), and nothing is bound by default: preflight refuses a live run that uses an unbound test identity, and the supervisor checks the binding again before sending.
 - Model-designed cases may use only test identities the operator marks model_selectable, and their header values are single values from fixed vocabularies, with no lists or q parameters (If-Match, for example, can only be `*`), and only the values the operator lists for that endpoint in a JSON object at the end of its allowed-request line (`allowed_requests[].model_headers` in the API, for example `GET /api {"Accept":["application/json"]}`); an endpoint with no list takes no model header; each header name has one spelling and the names are sent in sorted order, a name repeated in another letter case is refused, and the supervisor checks the same vocabulary again before sending. On a fixture path a model-written body goes only to an endpoint the operator marks with `model-body` at the end of its allowed-request line (`"model_body": true` in the API). A live run with model-designed cases first stops at "awaiting approval"; the operator reviews the method, path, headers, body and identity in the workbench and approves that sealed set before the first request is sent. Operator-written cases are not restricted this way. Target IPs cannot be cloud metadata, link-local, unspecified or multicast addresses, and preflight refuses a target that would reach this console or its database.
-- White-box raw staging is kept separate from the redacted snapshot used by models. The staging copy contains sensitive files and is deleted at the end of every run (including blocked, failed, and cancelled) and at service startup; on resume it is re-copied and must be exactly identical to the frozen state. Source reads are capped, and redaction and route extraction are heuristic; skipped directories (build, dist, node_modules, .git, symlink), unread files, and unknown business rules remain as gaps.
+- White-box raw staging is kept separate from the redacted snapshot used by models. The staging copy contains sensitive files and is deleted at the end of every run (including blocked, failed, and cancelled) and at service startup; on resume it is re-copied and must be exactly identical to the frozen state. Source reads are capped, and redaction and route extraction are heuristic; the operator can list exact synthetic test credentials (`unredacted_literals`), and only an identical value stays unredacted and is sent to the models as written, the report records how many, and preflight refuses one equal to a model key; skipped directories (build, dist, node_modules, .git, symlink), unread files, and unknown business rules remain as gaps.
 - Textual claims, HTTP status codes, scanner exit 0, and model consensus cannot alone prove security. Control or observation failures cannot be judged as passes.
 - Interruptions after submission are marked outcome_unknown and are not replayed automatically. Stopping revokes network access first; unconfirmed cleanup still shows as incomplete.
 - loopback single-user session: establishing a session requires the launcher token (other processes on the same machine cannot obtain a session on their own and then probe models or read evidence). Cookies are not port-scoped, so every API request (including reads) additionally requires a CSRF token that exists only in that tab's sessionStorage; other local services the browser has opened cannot use it even if they obtain the cookie. Host/Origin protections are also in place, and every /api route checks the session and CSRF token itself rather than relying on the middleware alone. At most 8 sessions exist at once; a session ends after 1 hour idle or 8 hours, and the workbench can log out; the API can end every session at once, which also replaces a generated startup token and prints the new one. Each recent wrong startup token slows the next wrong answer (up to 5 seconds); the right token is never held back. A custom VIBEAUDIT_SESSION_TOKEN must be random (for example `python -c "import secrets; print(secrets.token_urlsafe(32))"`); repeated characters or patterns are refused. On Linux the data directory (VIBEAUDIT_DATA_DIR) is owner-only (0700), and the service does not start if it cannot be made so; a failure the API or a report describes in fixed words is explained by its exception type and code location (never its message or values) in vibe-audit.log inside the data directory (0600), which stays on this machine; Windows runs only the synthetic demo, and the directory keeps the ACL it inherits. Tested text is presented as untrusted data. Do not expose the console directly to the internet.
