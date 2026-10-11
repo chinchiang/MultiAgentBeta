@@ -1,0 +1,1489 @@
+{
+ "generated": "2026-10-11",
+ "note": "Real-model acceptance runs against the repository synthetic fixtures. Synthetic targets only; no efficacy, detection-rate or cost claim.",
+ "runs": [
+  {
+   "name": "真模型驗收：Web API 合成靶場（BOLA）",
+   "run_id": "402e7e10-e2d1-4dc6-9064-dbc2ce0b66cd",
+   "created_at": "2026-10-10T13:18:51.581290+00:00",
+   "status": "blocked",
+   "stage": "whitebox",
+   "error": "Incomplete review or source mismatch",
+   "target": "http://127.0.0.1:8911",
+   "source": "fixtures/web-api",
+   "static_tools": [],
+   "models": [
+    {
+     "id": "commander",
+     "role": "commander",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-opus-5-5",
+     "family": "claude"
+    },
+    {
+     "id": "reviewer-gemini",
+     "role": "reviewer",
+     "provider": "openai_compatible",
+     "model_id": "gemini-3.8-flash",
+     "family": "gemini"
+    },
+    {
+     "id": "reviewer-claude",
+     "role": "reviewer",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-sonnet-5-5",
+     "family": "claude-sonnet"
+    },
+    {
+     "id": "reviewer-nemotron",
+     "role": "reviewer",
+     "provider": "openai_compatible",
+     "model_id": "nvidia/nemotron-3-super",
+     "family": "nemotron",
+     "json_mode": "json_schema"
+    }
+   ],
+   "usage": {
+    "tokens": 25586,
+    "model_calls": 8,
+    "requests": 0,
+    "tokens_known": false
+   },
+   "reviews": [
+    {
+     "agent_id": "reviewer-gemini",
+     "status": "incomplete",
+     "findings": 0
+    },
+    {
+     "agent_id": "reviewer-claude",
+     "status": "completed",
+     "findings": 7
+    },
+    {
+     "agent_id": "reviewer-nemotron",
+     "status": "incomplete",
+     "findings": 0
+    }
+   ],
+   "scanners": [],
+   "executions": [],
+   "findings_by_state": {}
+  },
+  {
+   "name": "真模型驗收 #2：Web API 合成靶場（BOLA）",
+   "run_id": "27d969d2-eadc-4a57-9acd-63fd4138eaaa",
+   "created_at": "2026-10-10T13:45:40.553562+00:00",
+   "status": "blocked",
+   "stage": "whitebox",
+   "error": "Incomplete review or source mismatch",
+   "target": "http://127.0.0.1:8911",
+   "source": "fixtures/web-api",
+   "static_tools": [],
+   "models": [
+    {
+     "id": "commander",
+     "role": "commander",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-opus-5-5",
+     "family": "claude"
+    },
+    {
+     "id": "reviewer-gemini",
+     "role": "reviewer",
+     "provider": "openai_compatible",
+     "model_id": "gemini-3.8-flash",
+     "family": "gemini"
+    },
+    {
+     "id": "reviewer-claude",
+     "role": "reviewer",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-sonnet-5-5",
+     "family": "claude-sonnet"
+    },
+    {
+     "id": "reviewer-nemotron",
+     "role": "reviewer",
+     "provider": "openai_compatible",
+     "model_id": "nvidia/nemotron-3-super",
+     "family": "nemotron",
+     "json_mode": "json_schema"
+    }
+   ],
+   "usage": {
+    "tokens": 40487,
+    "model_calls": 9,
+    "requests": 0,
+    "tokens_known": false
+   },
+   "reviews": [
+    {
+     "agent_id": "reviewer-gemini",
+     "status": "completed",
+     "findings": 4
+    },
+    {
+     "agent_id": "reviewer-claude",
+     "status": "completed",
+     "findings": 6
+    },
+    {
+     "agent_id": "reviewer-nemotron",
+     "status": "incomplete",
+     "findings": 0
+    }
+   ],
+   "scanners": [],
+   "executions": [],
+   "findings_by_state": {}
+  },
+  {
+   "name": "真模型驗收 #3：Web API 合成靶場（BOLA）",
+   "run_id": "3068d63f-a107-413a-8396-788ff311ec0e",
+   "created_at": "2026-10-10T13:58:18.965434+00:00",
+   "status": "failed",
+   "stage": "adjudication",
+   "error": "Model call failed (truncated): Model output was truncated",
+   "target": "http://127.0.0.1:8911",
+   "source": "fixtures/web-api",
+   "static_tools": [],
+   "models": [
+    {
+     "id": "commander",
+     "role": "commander",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-opus-5-5",
+     "family": "claude"
+    },
+    {
+     "id": "reviewer-gemini",
+     "role": "reviewer",
+     "provider": "openai_compatible",
+     "model_id": "gemini-3.8-flash",
+     "family": "gemini"
+    },
+    {
+     "id": "reviewer-claude",
+     "role": "reviewer",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-sonnet-5-5",
+     "family": "claude-sonnet"
+    },
+    {
+     "id": "reviewer-nemotron",
+     "role": "reviewer",
+     "provider": "openai_compatible",
+     "model_id": "nvidia/nemotron-3-super",
+     "family": "nemotron",
+     "json_mode": "json_schema"
+    }
+   ],
+   "usage": {
+    "tokens": 73319,
+    "model_calls": 11,
+    "requests": 0,
+    "tokens_known": null
+   },
+   "reviews": [
+    {
+     "agent_id": "reviewer-gemini",
+     "status": "completed",
+     "findings": 4
+    },
+    {
+     "agent_id": "reviewer-claude",
+     "status": "completed",
+     "findings": 7
+    },
+    {
+     "agent_id": "reviewer-nemotron",
+     "status": "completed",
+     "findings": 3
+    }
+   ],
+   "scanners": [],
+   "executions": [],
+   "findings_by_state": {
+    "hypothesis": 14
+   }
+  },
+  {
+   "name": "真模型驗收 #4：Web API 合成靶場（BOLA）",
+   "run_id": "7e6bc0ed-66e1-48b7-be67-69e054efdecd",
+   "created_at": "2026-10-10T14:15:09.154972+00:00",
+   "status": "blocked",
+   "stage": "whitebox",
+   "error": "Incomplete review or source mismatch",
+   "target": "http://127.0.0.1:8911",
+   "source": "fixtures/web-api",
+   "static_tools": [],
+   "models": [
+    {
+     "id": "commander",
+     "role": "commander",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-opus-5-5",
+     "family": "claude"
+    },
+    {
+     "id": "reviewer-gemini",
+     "role": "reviewer",
+     "provider": "openai_compatible",
+     "model_id": "gemini-3.8-flash",
+     "family": "gemini"
+    },
+    {
+     "id": "reviewer-claude",
+     "role": "reviewer",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-sonnet-5-5",
+     "family": "claude-sonnet"
+    },
+    {
+     "id": "reviewer-nemotron",
+     "role": "reviewer",
+     "provider": "openai_compatible",
+     "model_id": "nvidia/nemotron-3-super",
+     "family": "nemotron",
+     "json_mode": "json_schema"
+    }
+   ],
+   "usage": {
+    "tokens": 33996,
+    "model_calls": 8,
+    "requests": 0,
+    "tokens_known": false
+   },
+   "reviews": [
+    {
+     "agent_id": "reviewer-gemini",
+     "status": "incomplete",
+     "findings": 0
+    },
+    {
+     "agent_id": "reviewer-claude",
+     "status": "completed",
+     "findings": 6
+    },
+    {
+     "agent_id": "reviewer-nemotron",
+     "status": "incomplete",
+     "findings": 0
+    }
+   ],
+   "scanners": [],
+   "executions": [],
+   "findings_by_state": {}
+  },
+  {
+   "name": "真模型驗收 #5：Web API 合成靶場（BOLA）",
+   "run_id": "6e42fb6c-0690-44ff-a611-d32a3c96ec19",
+   "created_at": "2026-10-10T14:27:08.596971+00:00",
+   "status": "failed",
+   "stage": "threat_model",
+   "error": "Model call failed (refusal): Model refused the request",
+   "target": "http://127.0.0.1:8911",
+   "source": "fixtures/web-api",
+   "static_tools": [],
+   "models": [
+    {
+     "id": "commander",
+     "role": "commander",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-opus-5-5",
+     "family": "claude"
+    },
+    {
+     "id": "reviewer-gemini",
+     "role": "reviewer",
+     "provider": "openai_compatible",
+     "model_id": "gemini-3.8-flash",
+     "family": "gemini"
+    },
+    {
+     "id": "reviewer-claude",
+     "role": "reviewer",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-sonnet-5-5",
+     "family": "claude-sonnet"
+    },
+    {
+     "id": "reviewer-nemotron",
+     "role": "reviewer",
+     "provider": "openai_compatible",
+     "model_id": "nvidia/nemotron-3-super",
+     "family": "nemotron",
+     "json_mode": "json_schema"
+    }
+   ],
+   "usage": {
+    "tokens": 185091,
+    "model_calls": 14,
+    "requests": 0,
+    "tokens_known": null
+   },
+   "reviews": [
+    {
+     "agent_id": "reviewer-gemini",
+     "status": "completed",
+     "findings": 3
+    },
+    {
+     "agent_id": "reviewer-claude",
+     "status": "completed",
+     "findings": 9
+    },
+    {
+     "agent_id": "reviewer-nemotron",
+     "status": "completed",
+     "findings": 4
+    }
+   ],
+   "scanners": [],
+   "executions": [],
+   "findings_by_state": {
+    "hypothesis": 16
+   }
+  },
+  {
+   "name": "真模型驗收 #6：Web API 合成靶場（BOLA）",
+   "run_id": "2a87f9f8-ccd3-4f3a-b7a3-394a341b83f1",
+   "created_at": "2026-10-10T14:55:36.747348+00:00",
+   "status": "incomplete",
+   "stage": "complete",
+   "error": null,
+   "target": "http://127.0.0.1:8911",
+   "source": "fixtures/web-api",
+   "static_tools": [],
+   "models": [
+    {
+     "id": "commander",
+     "role": "commander",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-opus-5-5",
+     "family": "claude"
+    },
+    {
+     "id": "reviewer-gemini",
+     "role": "reviewer",
+     "provider": "openai_compatible",
+     "model_id": "gemini-3.8-flash",
+     "family": "gemini"
+    },
+    {
+     "id": "reviewer-claude",
+     "role": "reviewer",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-sonnet-5-5",
+     "family": "claude-sonnet"
+    },
+    {
+     "id": "reviewer-nemotron",
+     "role": "reviewer",
+     "provider": "openai_compatible",
+     "model_id": "nvidia/nemotron-3-super",
+     "family": "nemotron",
+     "json_mode": "json_schema"
+    },
+    {
+     "id": "threat-modeler",
+     "role": "threat_modeler",
+     "provider": "openai_compatible",
+     "model_id": "gemini-3.8-flash",
+     "family": "gemini"
+    },
+    {
+     "id": "test-designer",
+     "role": "test_designer",
+     "provider": "openai_compatible",
+     "model_id": "gemini-3.8-flash",
+     "family": "gemini"
+    }
+   ],
+   "usage": {
+    "tokens": 219805,
+    "model_calls": 26,
+    "requests": 2,
+    "tokens_known": null
+   },
+   "reviews": [
+    {
+     "agent_id": "reviewer-gemini",
+     "status": "completed",
+     "findings": 4
+    },
+    {
+     "agent_id": "reviewer-claude",
+     "status": "completed",
+     "findings": 7
+    },
+    {
+     "agent_id": "reviewer-nemotron",
+     "status": "completed",
+     "findings": 2
+    }
+   ],
+   "scanners": [],
+   "executions": [
+    {
+     "case_id": "TC-BOLA-TENANT-A-READ-B",
+     "status": "fail",
+     "reason": "A forbidden test canary was observed in the response."
+    }
+   ],
+   "findings_by_state": {
+    "hypothesis": 13,
+    "validated_dynamic": 1
+   }
+  },
+  {
+   "name": "真模型驗收 #7：Web API 合成靶場（BOLA，main 04ac13b）",
+   "run_id": "b757d7c3-1cda-4e73-8378-3209328d7228",
+   "created_at": "2026-10-10T23:07:00.594182+00:00",
+   "status": "blocked",
+   "stage": "whitebox",
+   "error": "Provider usage is unknown; further model calls stopped",
+   "target": "http://127.0.0.1:8911",
+   "source": "fixtures/web-api",
+   "static_tools": [],
+   "models": [
+    {
+     "id": "commander",
+     "role": "commander",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-opus-5-5",
+     "family": "claude"
+    },
+    {
+     "id": "reviewer-gemini",
+     "role": "reviewer",
+     "provider": "openai_compatible",
+     "model_id": "gemini-3.8-flash",
+     "family": "gemini"
+    },
+    {
+     "id": "reviewer-claude",
+     "role": "reviewer",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-sonnet-5-5",
+     "family": "claude-sonnet"
+    },
+    {
+     "id": "reviewer-nemotron",
+     "role": "reviewer",
+     "provider": "openai_compatible",
+     "model_id": "nvidia/nemotron-3-super",
+     "family": "nemotron",
+     "json_mode": "json_schema"
+    },
+    {
+     "id": "threat-modeler",
+     "role": "threat_modeler",
+     "provider": "openai_compatible",
+     "model_id": "gemini-3.8-flash",
+     "family": "gemini"
+    },
+    {
+     "id": "test-designer",
+     "role": "test_designer",
+     "provider": "openai_compatible",
+     "model_id": "gemini-3.8-flash",
+     "family": "gemini"
+    }
+   ],
+   "usage": {
+    "tokens": 29782,
+    "model_calls": 10,
+    "requests": 0,
+    "tokens_known": false
+   },
+   "reviews": [
+    {
+     "agent_id": "reviewer-gemini",
+     "status": "incomplete",
+     "findings": 0
+    },
+    {
+     "agent_id": "reviewer-claude",
+     "status": "incomplete",
+     "findings": 0
+    },
+    {
+     "agent_id": "reviewer-nemotron",
+     "status": "completed",
+     "findings": 2
+    }
+   ],
+   "scanners": [],
+   "executions": [],
+   "findings_by_state": {}
+  },
+  {
+   "name": "真模型驗收 #8：Web API 合成靶場（BOLA，PR #42）",
+   "run_id": "67cc3ce4-c431-4e45-aba4-386ad118d403",
+   "created_at": "2026-10-10T23:34:51.672716+00:00",
+   "status": "incomplete",
+   "stage": "complete",
+   "error": null,
+   "target": "http://127.0.0.1:8911",
+   "source": "fixtures/web-api",
+   "static_tools": [],
+   "models": [
+    {
+     "id": "commander",
+     "role": "commander",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-opus-5-5",
+     "family": "claude"
+    },
+    {
+     "id": "reviewer-gemini",
+     "role": "reviewer",
+     "provider": "openai_compatible",
+     "model_id": "gemini-3.8-flash",
+     "family": "gemini"
+    },
+    {
+     "id": "reviewer-claude",
+     "role": "reviewer",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-sonnet-5-5",
+     "family": "claude-sonnet"
+    },
+    {
+     "id": "reviewer-nemotron",
+     "role": "reviewer",
+     "provider": "openai_compatible",
+     "model_id": "nvidia/nemotron-3-super",
+     "family": "nemotron",
+     "json_mode": "json_schema"
+    },
+    {
+     "id": "threat-modeler",
+     "role": "threat_modeler",
+     "provider": "openai_compatible",
+     "model_id": "gemini-3.8-flash",
+     "family": "gemini"
+    },
+    {
+     "id": "test-designer",
+     "role": "test_designer",
+     "provider": "openai_compatible",
+     "model_id": "gemini-3.8-flash",
+     "family": "gemini"
+    }
+   ],
+   "usage": {
+    "tokens": 226491,
+    "model_calls": 20,
+    "requests": 2,
+    "tokens_known": null
+   },
+   "reviews": [
+    {
+     "agent_id": "reviewer-gemini",
+     "status": "completed",
+     "findings": 4
+    },
+    {
+     "agent_id": "reviewer-claude",
+     "status": "completed",
+     "findings": 7
+    },
+    {
+     "agent_id": "reviewer-nemotron",
+     "status": "completed",
+     "findings": 2
+    }
+   ],
+   "scanners": [],
+   "executions": [
+    {
+     "case_id": "TC-BOLA-TENANT-A-READS-ORDER-B",
+     "status": "fail",
+     "reason": "A forbidden test canary was observed in the response."
+    }
+   ],
+   "findings_by_state": {
+    "hypothesis": 13,
+    "validated_dynamic": 1
+   }
+  },
+  {
+   "name": "真模型驗收 #9：Web API 合成靶場 fixed 模式（預期 pass）",
+   "run_id": "468958f9-9ea4-4bf1-96cf-1cf58c4c3566",
+   "created_at": "2026-10-11T00:44:38.320691+00:00",
+   "status": "blocked",
+   "stage": "case_design",
+   "error": "Automated threats without cases: T-LOGOUT-REPLAY",
+   "target": "http://127.0.0.1:8911",
+   "source": "fixtures/web-api",
+   "static_tools": [],
+   "models": [
+    {
+     "id": "commander",
+     "role": "commander",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-opus-5-5",
+     "family": "claude"
+    },
+    {
+     "id": "reviewer-gemini",
+     "role": "reviewer",
+     "provider": "openai_compatible",
+     "model_id": "gemini-3.8-flash",
+     "family": "gemini"
+    },
+    {
+     "id": "reviewer-claude",
+     "role": "reviewer",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-sonnet-5-5",
+     "family": "claude-sonnet"
+    },
+    {
+     "id": "reviewer-nemotron",
+     "role": "reviewer",
+     "provider": "openai_compatible",
+     "model_id": "nvidia/nemotron-3-super",
+     "family": "nemotron",
+     "json_mode": "json_schema"
+    },
+    {
+     "id": "threat-modeler",
+     "role": "threat_modeler",
+     "provider": "openai_compatible",
+     "model_id": "gemini-3.8-flash",
+     "family": "gemini"
+    },
+    {
+     "id": "test-designer",
+     "role": "test_designer",
+     "provider": "openai_compatible",
+     "model_id": "gemini-3.8-flash",
+     "family": "gemini"
+    }
+   ],
+   "usage": {
+    "tokens": 149975,
+    "model_calls": 17,
+    "requests": 0,
+    "tokens_known": null
+   },
+   "reviews": [
+    {
+     "agent_id": "reviewer-gemini",
+     "status": "completed",
+     "findings": 4
+    },
+    {
+     "agent_id": "reviewer-claude",
+     "status": "completed",
+     "findings": 8
+    },
+    {
+     "agent_id": "reviewer-nemotron",
+     "status": "completed",
+     "findings": 5
+    }
+   ],
+   "scanners": [],
+   "executions": [],
+   "findings_by_state": {
+    "hypothesis": 17
+   }
+  },
+  {
+   "name": "真模型驗收 #10：Web API 合成靶場 fixed 模式（預期 pass）",
+   "run_id": "c1ae9c38-c52c-42eb-af1d-7c7a3a13d688",
+   "created_at": "2026-10-11T01:19:28.664364+00:00",
+   "status": "failed",
+   "stage": "threat_model",
+   "error": "Model call failed (refusal): Model refused the request",
+   "target": "http://127.0.0.1:8911",
+   "source": "fixtures/web-api",
+   "static_tools": [],
+   "models": [
+    {
+     "id": "commander",
+     "role": "commander",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-opus-5-5",
+     "family": "claude"
+    },
+    {
+     "id": "reviewer-gemini",
+     "role": "reviewer",
+     "provider": "openai_compatible",
+     "model_id": "gemini-3.8-flash",
+     "family": "gemini"
+    },
+    {
+     "id": "reviewer-claude",
+     "role": "reviewer",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-sonnet-5-5",
+     "family": "claude-sonnet"
+    },
+    {
+     "id": "reviewer-nemotron",
+     "role": "reviewer",
+     "provider": "openai_compatible",
+     "model_id": "nvidia/nemotron-3-super",
+     "family": "nemotron",
+     "json_mode": "json_schema"
+    },
+    {
+     "id": "threat-modeler",
+     "role": "threat_modeler",
+     "provider": "openai_compatible",
+     "model_id": "gemini-3.8-flash",
+     "family": "gemini"
+    },
+    {
+     "id": "test-designer",
+     "role": "test_designer",
+     "provider": "openai_compatible",
+     "model_id": "gemini-3.8-flash",
+     "family": "gemini"
+    }
+   ],
+   "usage": {
+    "tokens": 120179,
+    "model_calls": 15,
+    "requests": 0,
+    "tokens_known": null
+   },
+   "reviews": [
+    {
+     "agent_id": "reviewer-gemini",
+     "status": "completed",
+     "findings": 4
+    },
+    {
+     "agent_id": "reviewer-claude",
+     "status": "completed",
+     "findings": 5
+    },
+    {
+     "agent_id": "reviewer-nemotron",
+     "status": "completed",
+     "findings": 3
+    }
+   ],
+   "scanners": [],
+   "executions": [],
+   "findings_by_state": {
+    "hypothesis": 12
+   }
+  },
+  {
+   "name": "真模型驗收 #13：Web API 合成靶場 fixed 模式（預期 pass）",
+   "run_id": "0241e977-c417-4361-ad09-d2798d163cb3",
+   "created_at": "2026-10-11T01:43:28.065833+00:00",
+   "status": "incomplete",
+   "stage": "complete",
+   "error": null,
+   "target": "http://127.0.0.1:8911",
+   "source": "fixtures/web-api",
+   "static_tools": [],
+   "models": [
+    {
+     "id": "commander",
+     "role": "commander",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-opus-5-5",
+     "family": "claude"
+    },
+    {
+     "id": "reviewer-gemini",
+     "role": "reviewer",
+     "provider": "openai_compatible",
+     "model_id": "gemini-3.8-flash",
+     "family": "gemini"
+    },
+    {
+     "id": "reviewer-claude",
+     "role": "reviewer",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-sonnet-5-5",
+     "family": "claude-sonnet"
+    },
+    {
+     "id": "reviewer-nemotron",
+     "role": "reviewer",
+     "provider": "openai_compatible",
+     "model_id": "nvidia/nemotron-3-super",
+     "family": "nemotron",
+     "json_mode": "json_schema"
+    },
+    {
+     "id": "threat-modeler",
+     "role": "threat_modeler",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-sonnet-5-5",
+     "family": "claude-sonnet"
+    },
+    {
+     "id": "test-designer",
+     "role": "test_designer",
+     "provider": "openai_compatible",
+     "model_id": "gemini-3.8-flash",
+     "family": "gemini"
+    }
+   ],
+   "usage": {
+    "tokens": 176220,
+    "model_calls": 17,
+    "requests": 2,
+    "tokens_known": null
+   },
+   "reviews": [
+    {
+     "agent_id": "reviewer-gemini",
+     "status": "completed",
+     "findings": 5
+    },
+    {
+     "agent_id": "reviewer-claude",
+     "status": "completed",
+     "findings": 7
+    },
+    {
+     "agent_id": "reviewer-nemotron",
+     "status": "completed",
+     "findings": 3
+    }
+   ],
+   "scanners": [],
+   "executions": [
+    {
+     "case_id": "case-bola-tenant-a-order-b",
+     "status": "pass",
+     "reason": "The specified response invariant held with verified prerequisites."
+    }
+   ],
+   "findings_by_state": {
+    "hypothesis": 15
+   }
+  },
+  {
+   "name": "真模型驗收 #11：Web API（vulnerable）＋靜態掃描器＋操作者案例（BOLA、登出）",
+   "run_id": "798c0956-dd88-47cb-87dd-1c78d80cb8f3",
+   "created_at": "2026-10-11T02:11:47.798661+00:00",
+   "status": "blocked",
+   "stage": "case_design",
+   "error": "Content oracle requires explicit forbidden values",
+   "target": "http://127.0.0.1:8913",
+   "source": "fixtures/web-api",
+   "static_tools": [
+    "semgrep",
+    "osv",
+    "gitleaks"
+   ],
+   "models": [
+    {
+     "id": "commander",
+     "role": "commander",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-opus-5-5",
+     "family": "claude"
+    },
+    {
+     "id": "reviewer-gemini",
+     "role": "reviewer",
+     "provider": "openai_compatible",
+     "model_id": "gemini-3.8-flash",
+     "family": "gemini"
+    },
+    {
+     "id": "reviewer-claude",
+     "role": "reviewer",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-sonnet-5-5",
+     "family": "claude-sonnet"
+    },
+    {
+     "id": "reviewer-nemotron",
+     "role": "reviewer",
+     "provider": "openai_compatible",
+     "model_id": "nvidia/nemotron-3-super",
+     "family": "nemotron",
+     "json_mode": "json_schema"
+    },
+    {
+     "id": "threat-modeler",
+     "role": "threat_modeler",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-sonnet-5-5",
+     "family": "claude-sonnet"
+    },
+    {
+     "id": "test-designer",
+     "role": "test_designer",
+     "provider": "openai_compatible",
+     "model_id": "gemini-3.8-flash",
+     "family": "gemini"
+    }
+   ],
+   "usage": {
+    "tokens": 226536,
+    "model_calls": 18,
+    "requests": 0,
+    "tokens_known": null
+   },
+   "reviews": [
+    {
+     "agent_id": "reviewer-claude",
+     "status": "completed",
+     "findings": 8
+    },
+    {
+     "agent_id": "reviewer-gemini",
+     "status": "completed",
+     "findings": 4
+    },
+    {
+     "agent_id": "reviewer-nemotron",
+     "status": "completed",
+     "findings": 3
+    }
+   ],
+   "scanners": [
+    {
+     "id": "semgrep",
+     "status": "completed",
+     "findings": 0
+    },
+    {
+     "id": "osv",
+     "status": "completed",
+     "findings": 0
+    },
+    {
+     "id": "gitleaks",
+     "status": "completed",
+     "findings": 0
+    }
+   ],
+   "executions": [],
+   "findings_by_state": {
+    "hypothesis": 15
+   }
+  },
+  {
+   "name": "真模型驗收 #14：Web API（vulnerable）＋靜態掃描器＋操作者案例（BOLA、登出）",
+   "run_id": "5d8ee429-05ec-40e3-a14e-06a46942dd33",
+   "created_at": "2026-10-11T02:31:32.687372+00:00",
+   "status": "incomplete",
+   "stage": "complete",
+   "error": null,
+   "target": "http://127.0.0.1:8913",
+   "source": "fixtures/web-api",
+   "static_tools": [
+    "semgrep",
+    "osv",
+    "gitleaks"
+   ],
+   "models": [
+    {
+     "id": "commander",
+     "role": "commander",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-opus-5-5",
+     "family": "claude"
+    },
+    {
+     "id": "reviewer-gemini",
+     "role": "reviewer",
+     "provider": "openai_compatible",
+     "model_id": "gemini-3.8-flash",
+     "family": "gemini"
+    },
+    {
+     "id": "reviewer-claude",
+     "role": "reviewer",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-sonnet-5-5",
+     "family": "claude-sonnet"
+    },
+    {
+     "id": "reviewer-nemotron",
+     "role": "reviewer",
+     "provider": "openai_compatible",
+     "model_id": "nvidia/nemotron-3-super",
+     "family": "nemotron",
+     "json_mode": "json_schema"
+    },
+    {
+     "id": "threat-modeler",
+     "role": "threat_modeler",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-sonnet-5-5",
+     "family": "claude-sonnet"
+    },
+    {
+     "id": "test-designer",
+     "role": "test_designer",
+     "provider": "openai_compatible",
+     "model_id": "gemini-3.8-flash",
+     "family": "gemini"
+    }
+   ],
+   "usage": {
+    "tokens": 162664,
+    "model_calls": 15,
+    "requests": 8,
+    "tokens_known": null
+   },
+   "reviews": [
+    {
+     "agent_id": "reviewer-gemini",
+     "status": "completed",
+     "findings": 6
+    },
+    {
+     "agent_id": "reviewer-claude",
+     "status": "completed",
+     "findings": 7
+    },
+    {
+     "agent_id": "reviewer-nemotron",
+     "status": "completed",
+     "findings": 3
+    }
+   ],
+   "scanners": [
+    {
+     "id": "semgrep",
+     "status": "completed",
+     "findings": 0
+    },
+    {
+     "id": "osv",
+     "status": "completed",
+     "findings": 0
+    },
+    {
+     "id": "gitleaks",
+     "status": "completed",
+     "findings": 0
+    }
+   ],
+   "executions": [
+    {
+     "case_id": "C-BOLA",
+     "status": "fail",
+     "reason": "A forbidden test canary was observed in the response."
+    },
+    {
+     "case_id": "C-LOGOUT",
+     "status": "fail",
+     "reason": "Synthetic session revocation sequence"
+    }
+   ],
+   "findings_by_state": {
+    "hypothesis": 16,
+    "validated_dynamic": 2
+   }
+  },
+  {
+   "name": "真模型驗收 #12：AI agent 合成靶場（vulnerable）＋原生、promptfoo、PyRIT",
+   "run_id": "02a2ce35-9e80-4030-8ccc-6398986b1684",
+   "created_at": "2026-10-11T02:48:59.000424+00:00",
+   "status": "blocked",
+   "stage": "whitebox",
+   "error": "Incomplete review or source mismatch",
+   "target": "http://127.0.0.1:8912",
+   "source": "fixtures/ai-agent",
+   "static_tools": [
+    "semgrep",
+    "osv",
+    "gitleaks"
+   ],
+   "models": [
+    {
+     "id": "commander",
+     "role": "commander",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-opus-5-5",
+     "family": "claude"
+    },
+    {
+     "id": "reviewer-gemini",
+     "role": "reviewer",
+     "provider": "openai_compatible",
+     "model_id": "gemini-3.8-flash",
+     "family": "gemini"
+    },
+    {
+     "id": "reviewer-claude",
+     "role": "reviewer",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-sonnet-5-5",
+     "family": "claude-sonnet"
+    },
+    {
+     "id": "reviewer-nemotron",
+     "role": "reviewer",
+     "provider": "openai_compatible",
+     "model_id": "nvidia/nemotron-3-super",
+     "family": "nemotron",
+     "json_mode": "json_schema"
+    },
+    {
+     "id": "threat-modeler",
+     "role": "threat_modeler",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-sonnet-5-5",
+     "family": "claude-sonnet"
+    },
+    {
+     "id": "test-designer",
+     "role": "test_designer",
+     "provider": "openai_compatible",
+     "model_id": "gemini-3.8-flash",
+     "family": "gemini"
+    }
+   ],
+   "usage": {
+    "tokens": 59113,
+    "model_calls": 11,
+    "requests": 0,
+    "tokens_known": null
+   },
+   "reviews": [
+    {
+     "agent_id": "reviewer-gemini",
+     "status": "incomplete",
+     "findings": 0
+    },
+    {
+     "agent_id": "reviewer-claude",
+     "status": "completed",
+     "findings": 9
+    },
+    {
+     "agent_id": "reviewer-nemotron",
+     "status": "completed",
+     "findings": 4
+    }
+   ],
+   "scanners": [
+    {
+     "id": "semgrep",
+     "status": "completed",
+     "findings": 0
+    },
+    {
+     "id": "osv",
+     "status": "completed",
+     "findings": 0
+    },
+    {
+     "id": "gitleaks",
+     "status": "completed",
+     "findings": 0
+    }
+   ],
+   "executions": [],
+   "findings_by_state": {}
+  },
+  {
+   "name": "真模型驗收 #15：AI agent 合成靶場（vulnerable）＋原生、promptfoo、PyRIT（第三審查員改 Gemma）",
+   "run_id": "2fc7150b-9c4d-4981-bc9a-f456d222ddbc",
+   "created_at": "2026-10-11T03:22:43.451939+00:00",
+   "status": "failed",
+   "stage": "preflight",
+   "error": "Model call failed (schema_validation): Model output failed local JSON/schema validation (not valid JSON)",
+   "target": "http://127.0.0.1:8912",
+   "source": "fixtures/ai-agent",
+   "static_tools": [
+    "semgrep",
+    "osv",
+    "gitleaks"
+   ],
+   "models": [
+    {
+     "id": "commander",
+     "role": "commander",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-opus-5-5",
+     "family": "claude"
+    },
+    {
+     "id": "reviewer-gemma",
+     "role": "reviewer",
+     "provider": "openai_compatible",
+     "model_id": "gemma-4-31b-it",
+     "family": "gemma"
+    },
+    {
+     "id": "reviewer-claude",
+     "role": "reviewer",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-sonnet-5-5",
+     "family": "claude-sonnet"
+    },
+    {
+     "id": "reviewer-nemotron",
+     "role": "reviewer",
+     "provider": "openai_compatible",
+     "model_id": "nvidia/nemotron-3-super",
+     "family": "nemotron",
+     "json_mode": "json_schema"
+    },
+    {
+     "id": "threat-modeler",
+     "role": "threat_modeler",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-sonnet-5-5",
+     "family": "claude-sonnet"
+    },
+    {
+     "id": "test-designer",
+     "role": "test_designer",
+     "provider": "openai_compatible",
+     "model_id": "gemini-3.8-flash",
+     "family": "gemini"
+    }
+   ],
+   "usage": {
+    "tokens": 736,
+    "model_calls": 3,
+    "requests": 0,
+    "tokens_known": null
+   },
+   "reviews": [],
+   "scanners": [],
+   "executions": [],
+   "findings_by_state": {}
+  },
+  {
+   "name": "真模型驗收 #16：AI agent 合成靶場（vulnerable）＋原生、promptfoo、PyRIT（Gemma 審查員）",
+   "run_id": "fa14e3b2-bc0a-4964-8509-9625717ea8fa",
+   "created_at": "2026-10-11T03:40:33.590260+00:00",
+   "status": "blocked",
+   "stage": "whitebox",
+   "error": "Provider usage is unknown; further model calls stopped",
+   "target": "http://127.0.0.1:8912",
+   "source": "fixtures/ai-agent",
+   "static_tools": [
+    "semgrep",
+    "osv",
+    "gitleaks"
+   ],
+   "models": [
+    {
+     "id": "commander",
+     "role": "commander",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-opus-5-5",
+     "family": "claude"
+    },
+    {
+     "id": "reviewer-gemma",
+     "role": "reviewer",
+     "provider": "openai_compatible",
+     "model_id": "gemma-4-31b-it",
+     "family": "gemma",
+     "json_mode": "json_schema"
+    },
+    {
+     "id": "reviewer-claude",
+     "role": "reviewer",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-sonnet-5-5",
+     "family": "claude-sonnet"
+    },
+    {
+     "id": "reviewer-nemotron",
+     "role": "reviewer",
+     "provider": "openai_compatible",
+     "model_id": "nvidia/nemotron-3-super",
+     "family": "nemotron",
+     "json_mode": "json_schema"
+    },
+    {
+     "id": "threat-modeler",
+     "role": "threat_modeler",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-sonnet-5-5",
+     "family": "claude-sonnet"
+    },
+    {
+     "id": "test-designer",
+     "role": "test_designer",
+     "provider": "openai_compatible",
+     "model_id": "gemini-3.8-flash",
+     "family": "gemini"
+    }
+   ],
+   "usage": {
+    "tokens": 34422,
+    "model_calls": 10,
+    "requests": 0,
+    "tokens_known": false
+   },
+   "reviews": [
+    {
+     "agent_id": "reviewer-gemma",
+     "status": "incomplete",
+     "findings": 0
+    },
+    {
+     "agent_id": "reviewer-claude",
+     "status": "incomplete",
+     "findings": 0
+    },
+    {
+     "agent_id": "reviewer-nemotron",
+     "status": "completed",
+     "findings": 4
+    }
+   ],
+   "scanners": [
+    {
+     "id": "semgrep",
+     "status": "completed",
+     "findings": 0
+    },
+    {
+     "id": "osv",
+     "status": "completed",
+     "findings": 0
+    },
+    {
+     "id": "gitleaks",
+     "status": "completed",
+     "findings": 0
+    }
+   ],
+   "executions": [],
+   "findings_by_state": {}
+  },
+  {
+   "name": "真模型驗收 #17：AI agent 合成靶場（vulnerable）＋原生、promptfoo、PyRIT（Gemma 審查員）",
+   "run_id": "cfc8119f-76cf-4a82-9ad5-7f69519a4711",
+   "created_at": "2026-10-11T03:57:15.187400+00:00",
+   "status": "incomplete",
+   "stage": "complete",
+   "error": null,
+   "target": "http://127.0.0.1:8912",
+   "source": "fixtures/ai-agent",
+   "static_tools": [
+    "semgrep",
+    "osv",
+    "gitleaks"
+   ],
+   "models": [
+    {
+     "id": "commander",
+     "role": "commander",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-opus-5-5",
+     "family": "claude"
+    },
+    {
+     "id": "reviewer-gemma",
+     "role": "reviewer",
+     "provider": "openai_compatible",
+     "model_id": "gemma-4-31b-it",
+     "family": "gemma",
+     "json_mode": "json_schema"
+    },
+    {
+     "id": "reviewer-claude",
+     "role": "reviewer",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-sonnet-5-5",
+     "family": "claude-sonnet"
+    },
+    {
+     "id": "reviewer-nemotron",
+     "role": "reviewer",
+     "provider": "openai_compatible",
+     "model_id": "nvidia/nemotron-3-super",
+     "family": "nemotron",
+     "json_mode": "json_schema"
+    },
+    {
+     "id": "threat-modeler",
+     "role": "threat_modeler",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-sonnet-5-5",
+     "family": "claude-sonnet"
+    },
+    {
+     "id": "test-designer",
+     "role": "test_designer",
+     "provider": "openai_compatible",
+     "model_id": "gemini-3.8-flash",
+     "family": "gemini"
+    }
+   ],
+   "usage": {
+    "tokens": 343204,
+    "model_calls": 21,
+    "requests": 54,
+    "tokens_known": null
+   },
+   "reviews": [
+    {
+     "agent_id": "reviewer-gemma",
+     "status": "completed",
+     "findings": 3
+    },
+    {
+     "agent_id": "reviewer-claude",
+     "status": "completed",
+     "findings": 9
+    },
+    {
+     "agent_id": "reviewer-nemotron",
+     "status": "completed",
+     "findings": 3
+    }
+   ],
+   "scanners": [
+    {
+     "id": "semgrep",
+     "status": "completed",
+     "findings": 0
+    },
+    {
+     "id": "osv",
+     "status": "completed",
+     "findings": 0
+    },
+    {
+     "id": "gitleaks",
+     "status": "completed",
+     "findings": 0
+    }
+   ],
+   "executions": [
+    {
+     "case_id": "C-AGENT-NATIVE",
+     "status": "fail",
+     "reason": "The trusted ledger recorded an unauthorized committed effect."
+    },
+    {
+     "case_id": "C-AGENT-PROMPTFOO",
+     "status": "fail",
+     "reason": "The trusted ledger recorded an unauthorized committed effect."
+    },
+    {
+     "case_id": "C-AGENT-PYRIT",
+     "status": "fail",
+     "reason": "The trusted ledger recorded an unauthorized committed effect."
+    }
+   ],
+   "findings_by_state": {
+    "hypothesis": 15,
+    "validated_dynamic": 3
+   }
+  }
+ ]
+}
