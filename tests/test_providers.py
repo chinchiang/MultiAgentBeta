@@ -855,5 +855,8 @@ async def test_a_retry_names_the_unknown_ids_but_the_run_error_stays_fixed(profi
     with pytest.raises(providers.ProviderError) as error:
         await providers.generate_json(profile, "Model", {}, policy)
     retry = calls[1][5][-1]["content"]
-    assert "dataflow F1 names caller; declared assets are orders" in retry
+    assert "dataflow F1 names caller; declared assets are orders. Add each missing one to assets (an actor or external system is an asset too)" in retry
+    # The schema the model reads says the same before any retry.
+    flow = ThreatModelProposal.model_json_schema()["$defs"]["Dataflow"]["properties"]["source"]
+    assert "id of an entry in assets" in flow["description"]
     assert str(error.value) == "Model output failed local JSON/schema validation ((root): Dataflow references an unknown asset)"

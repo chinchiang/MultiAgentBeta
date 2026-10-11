@@ -1967,6 +1967,139 @@
    },
    "unredacted_literals": 2,
    "note": "reviewer-gemini answered, so the fallback was not used; the threat modeler broke a dataflow reference rule twice and the run resumed once. No reviewer reported redacted session tokens, unlike #14."
+  },
+  {
+   "name": "真模型驗收 #22：Web API（vulnerable）＋操作者案例（BOLA、登出）＋不遮蔽的測試 session＋本地 Qwen 備援（同 #21）",
+   "run_id": "9dd26913-5231-48e7-aea1-58eb597de211",
+   "created_at": "2026-10-11T12:37:04.257895+00:00",
+   "status": "incomplete",
+   "stage": "complete",
+   "error": null,
+   "target": "http://127.0.0.1:8913",
+   "source": "fixtures/web-api",
+   "static_tools": [
+    "semgrep",
+    "osv",
+    "gitleaks"
+   ],
+   "models": [
+    {
+     "id": "commander",
+     "role": "commander",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-opus-5-5",
+     "family": "claude"
+    },
+    {
+     "id": "reviewer-gemini",
+     "role": "reviewer",
+     "provider": "openai_compatible",
+     "model_id": "gemini-3.8-flash",
+     "family": "gemini"
+    },
+    {
+     "id": "reviewer-claude",
+     "role": "reviewer",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-sonnet-5-5",
+     "family": "claude-sonnet"
+    },
+    {
+     "id": "reviewer-nemotron",
+     "role": "reviewer",
+     "provider": "openai_compatible",
+     "model_id": "nvidia/nemotron-3-super",
+     "family": "nemotron",
+     "json_mode": "json_schema"
+    },
+    {
+     "id": "threat-modeler",
+     "role": "threat_modeler",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-sonnet-5-5",
+     "family": "claude-sonnet"
+    },
+    {
+     "id": "test-designer",
+     "role": "test_designer",
+     "provider": "openai_compatible",
+     "model_id": "gemini-3.8-flash",
+     "family": "gemini"
+    },
+    {
+     "id": "local-fallback",
+     "role": "fallback",
+     "provider": "openai_compatible",
+     "model_id": "qwen/qwen3.8-27b",
+     "family": "qwen",
+     "json_mode": "json_schema",
+     "fallback_for": [
+      "reviewer-gemini"
+     ]
+    }
+   ],
+   "usage": {
+    "tokens": 365808,
+    "model_calls": 21,
+    "requests": 8,
+    "tokens_known": null
+   },
+   "reviews": [
+    {
+     "agent_id": "reviewer-claude",
+     "status": "completed",
+     "findings": 8
+    },
+    {
+     "agent_id": "reviewer-gemini",
+     "status": "completed",
+     "findings": 12,
+     "answered_by": "local-fallback"
+    },
+    {
+     "agent_id": "reviewer-nemotron",
+     "status": "completed",
+     "findings": 2
+    }
+   ],
+   "scanners": [
+    {
+     "id": "semgrep",
+     "status": "completed",
+     "findings": 0
+    },
+    {
+     "id": "osv",
+     "status": "completed",
+     "findings": 0
+    },
+    {
+     "id": "gitleaks",
+     "status": "completed",
+     "findings": 0
+    }
+   ],
+   "executions": [
+    {
+     "case_id": "C-BOLA",
+     "status": "fail",
+     "reason": "A forbidden test canary was observed in the response."
+    },
+    {
+     "case_id": "C-LOGOUT",
+     "status": "fail",
+     "reason": "Synthetic session revocation sequence"
+    }
+   ],
+   "findings_by_state": {
+    "hypothesis": 22,
+    "validated_dynamic": 2
+   },
+   "unredacted_literals": 2,
+   "fallback_limitations": [
+    "Fallback local-fallback (qwen/qwen3.8-27b) answered for reviewer-gemini at stage whitebox after it refused"
+   ],
+   "note": "reviewer-gemini refused and its local fallback answered the whole review; the review records answered_by and the fallback family, and the whitebox family gate passed. The threat modeler broke the dataflow reference rule on the first attempt and on one resume; after the rule was stated in the schema and the instruction (the console restarted on that code) it refused once, and passed on the next resume."
   }
  ]
 }

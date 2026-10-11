@@ -35,15 +35,17 @@ class SourceReference(Contract):
 class Asset(Contract):
     id: str = Field(min_length=1, max_length=100)
     name: str = Field(min_length=1, max_length=300)
-    kind: str = Field(min_length=1, max_length=80)
+    # The model reads these descriptions in the schema: three runs broke the dataflow rule while nothing said
+    # that a caller or an attacker is an asset too.
+    kind: str = Field(min_length=1, max_length=80, description="What it is: data, service, actor (a caller, tenant user or attacker) or external system")
     tenant_ids: list[str] = Field(default_factory=list, max_length=100)
     source_refs: list[SourceReference] = Field(default_factory=list, max_length=30)
 
 
 class Dataflow(Contract):
     id: str = Field(min_length=1, max_length=100)
-    source: str
-    target: str
+    source: str = Field(description="The id of an entry in assets; declare actors and external systems as assets first")
+    target: str = Field(description="The id of an entry in assets; declare actors and external systems as assets first")
     boundary: str = Field(min_length=1, max_length=500)
     attacker_control: str = Field(default="unknown", max_length=1000)
     source_refs: list[SourceReference] = Field(default_factory=list, max_length=30)
@@ -118,7 +120,8 @@ class ThreatModelProposal(Contract):
             if flow.source not in assets or flow.target not in assets:
                 unknown = {flow.source, flow.target} - assets
                 raise RuleViolation("Dataflow references an unknown asset",
-                                    f"dataflow {_token(flow.id)} names {_ids(unknown)}; declared assets are {_ids(assets)}")
+                                    f"dataflow {_token(flow.id)} names {_ids(unknown)}; declared assets are {_ids(assets)}. "
+                                    "Add each missing one to assets (an actor or external system is an asset too) or use a declared id")
         for threat in self.threats:
             if not set(threat.asset_ids) <= assets or not set(threat.dataflow_ids) <= flows:
                 unknown = (set(threat.asset_ids) - assets) | (set(threat.dataflow_ids) - flows)
