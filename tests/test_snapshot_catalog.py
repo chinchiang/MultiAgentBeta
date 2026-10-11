@@ -210,6 +210,7 @@ def test_the_file_limit_is_inclusive_within_one_directory(tmp_path, monkeypatch)
     assert [f["path"] for f in result["files"]] == ["a.py"] and result["gaps"] == ["File/byte limit omitted: b.py"]
 
 
+@pytest.mark.skipif(not hasattr(os, "O_NOFOLLOW") or not Path("/proc/self/fd").is_dir(), reason="Reads descriptors through POSIX O_NOFOLLOW and /proc/self/fd")
 def test_files_are_opened_without_following_links_and_checked_before_during_and_after_the_read(tmp_path, monkeypatch):
     for name in "abcdefg":
         write(tmp_path, f"{name}.py", f"{name} = 1\n")

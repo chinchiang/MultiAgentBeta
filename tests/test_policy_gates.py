@@ -199,9 +199,10 @@ def test_case_gate_names_each_refusal(run):
     broken(lambda r, c: c.update(allowed_requests=[{"method": "GET", "path": "/admin"}]), "Case or fixture request exceeds the declared method/path scope", base=as_live)
     broken(lambda r, c: c.update(fixture_profile="synthetic-web-v1", fixture_profile_hash="stale"), "Trusted fixture configuration changed after case sealing", base=as_live)
 
-    # An automated threat no case tests stops an engine-designed case set and is a recorded gap for an operator's.
+    # An automated threat no case tests is a recorded gap, named for who chose the cases; no case at all stops the set.
     untested = copy.deepcopy(run); untested["cases"] = [c for c in untested["cases"] if "T-002" not in c["threat_ids"]]
-    refused(policy.case_gate, untested, "Automated threats without cases: T-002")
+    policy.case_gate(untested)
+    assert "Automated threats without a model-designed case were not tested: T-002" in untested["gaps"]
     untested["manifest"]["cases"] = [{"id": "operator-chosen"}]; rehash_manifest(untested)
     policy.case_gate(untested); policy.case_gate(untested)
     assert untested["gaps"].count("Automated threats without a provided case were not tested: T-002") == 1

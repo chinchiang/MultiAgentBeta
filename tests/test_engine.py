@@ -324,9 +324,9 @@ async def test_provided_cases_leave_uncovered_threats_as_gaps(engine):
     run=await finished_demo(engine)
     case=next(c for c in run["cases"] if c["id"]=="C-001")
     run["cases"]=[case]
-    # Model-designed cases must cover every automated threat.
-    with pytest.raises(PolicyError,match="Automated threats without cases"):
-        engine.policy.case_gate(run)
+    # A model-designed set that leaves an automated threat out records it as untested.
+    engine.policy.case_gate(run)
+    assert any(g.startswith("Automated threats without a model-designed case were not tested") for g in run["gaps"])
     # Cases the operator (or a retest's parent) supplied are the chosen scope; the rest is a visible gap.
     run["manifest"]["cases"]=[{k:v for k,v in case.items() if k!="hash"}]
     run["manifest_hash"]=digest(run["manifest"])
