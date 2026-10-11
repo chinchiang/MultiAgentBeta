@@ -453,6 +453,17 @@ def _filtered_reply(exc: BaseException) -> dict | None:
         return None
 
 
+def _rule_hint(exc: BaseException) -> str:
+    """The plain-token hint a broken contract rule carries for the retry; it never reaches the run record."""
+    from pydantic import ValidationError as ContractViolation
+    if isinstance(exc, ContractViolation):
+        for error in exc.errors():
+            hint = getattr((error.get("ctx") or {}).get("error"), "hint", "")
+            if isinstance(hint, str) and hint:
+                return hint[:2000]
+    return ""
+
+
 def _validation_site(exc: BaseException) -> str:
     """Where an answer failed validation: the schema path and rule, never the model's own text."""
     from jsonschema.exceptions import ValidationError as SchemaViolation
@@ -614,7 +625,8 @@ async def generate_json(profile: dict, system: str, payload: dict, policy: dict)
         except Exception as exc:
             where = _validation_site(exc)
             if attempt + 1 < max_attempts:
-                messages.append({"role": "user", "content": f"The previous response did not validate ({where}). Return a JSON object satisfying the supplied schema. Do not add prose or code fences."})
+                hint = _rule_hint(exc)
+                messages.append({"role": "user", "content": f"The previous response did not validate ({where}{'; ' + hint if hint else ''}). Return a JSON object satisfying the supplied schema. Do not add prose or code fences."})
                 continue
             raise ProviderError(f"Model output failed local JSON/schema validation ({where})", code="schema_validation", usage=usage.copy()) from None
         return {"data": data, "usage": usage, "model_id": profile["model_id"], "provider": profile["provider"], "response_model_id": _get(response, "model"), "cost_usd": None, "cost_note": "Token usage is provider reported; monetary cost is not calculated or claimed.", "budget_note": "Output is capped; total input/output usage is checked after each response. Provider billing cannot be guaranteed in advance."}
