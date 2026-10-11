@@ -22,7 +22,8 @@ def write(root, relative, content="print('ok')\n"):
     if isinstance(content, bytes):
         path.write_bytes(content)
     else:
-        path.write_text(content, encoding="utf-8")
+        # newline="\n": the expected hashes and sizes are of these exact bytes, on Windows too.
+        path.write_text(content, encoding="utf-8", newline="\n")
     return path
 
 
@@ -59,8 +60,10 @@ def test_snapshot_refusals_name_their_cause(tmp_path):
     write(tmp_path, "file.py")
     with pytest.raises(ValueError, match="^Source root must be a real directory without symlink/reparse ancestors$"):
         snapshot_source(str(tmp_path / "file.py"))
-    with pytest.raises(ValueError, match="^Source directory is not accessible$"):
-        snapshot_source("x" * 5000)
+    if os.name == "posix":
+        # Windows refuses an over-long path earlier, as a missing root.
+        with pytest.raises(ValueError, match="^Source directory is not accessible$"):
+            snapshot_source("x" * 5000)
 
 
 def test_gap_list_is_bounded_with_one_closing_note(tmp_path, monkeypatch):
@@ -117,6 +120,7 @@ def test_text_files_are_chosen_by_suffix_or_build_file_name(tmp_path):
     assert [f["path"] for f in result["files"]] == ["Dockerfile", "MAKEFILE", "zapp.PY"] and result["gaps"] == []
 
 
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="Named pipes need POSIX mkfifo")
 def test_non_regular_and_hardlinked_files_are_named_not_read(tmp_path):
     write(tmp_path, "a.py", "a = 1\n")
     os.link(tmp_path / "a.py", tmp_path / "b.py")
@@ -206,6 +210,7 @@ def test_the_file_limit_is_inclusive_within_one_directory(tmp_path, monkeypatch)
     assert [f["path"] for f in result["files"]] == ["a.py"] and result["gaps"] == ["File/byte limit omitted: b.py"]
 
 
+@pytest.mark.skipif(not hasattr(os, "O_NOFOLLOW") or not Path("/proc/self/fd").is_dir(), reason="Reads descriptors through POSIX O_NOFOLLOW and /proc/self/fd")
 def test_files_are_opened_without_following_links_and_checked_before_during_and_after_the_read(tmp_path, monkeypatch):
     for name in "abcdefg":
         write(tmp_path, f"{name}.py", f"{name} = 1\n")

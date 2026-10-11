@@ -1,6 +1,7 @@
 """Versioned, bounded contracts for model proposals and security traceability."""
 from __future__ import annotations
 
+import re
 from pathlib import PurePosixPath
 from typing import Annotated, Literal
 
@@ -74,6 +75,25 @@ class Threat(Contract):
     blocked_reason: str | None = None
 
 
+class RuleViolation(ValueError):
+    """A broken contract rule: a fixed message for the run, and a hint the model's retry can act on.
+
+    The hint names only identifiers the answer itself used, each shown only if it is a plain token."""
+
+    def __init__(self, message: str, hint: str = ""):
+        super().__init__(message)
+        self.hint = hint
+
+
+def _token(value) -> str:
+    return value if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_.:-]{1,80}", value) else "(an id that is not a plain token)"
+
+
+def _ids(values) -> str:
+    listed = sorted({_token(value) for value in values})
+    return ", ".join(listed[:40]) + (" …" if len(listed) > 40 else "")
+
+
 class ThreatModelProposal(Contract):
     id: str = Field(min_length=1, max_length=100)
     version: int = Field(default=1, ge=1)
@@ -96,15 +116,20 @@ class ThreatModelProposal(Contract):
         threats = {item.id for item in self.threats}
         for flow in self.dataflows:
             if flow.source not in assets or flow.target not in assets:
-                raise ValueError("Dataflow references an unknown asset")
+                unknown = {flow.source, flow.target} - assets
+                raise RuleViolation("Dataflow references an unknown asset",
+                                    f"dataflow {_token(flow.id)} names {_ids(unknown)}; declared assets are {_ids(assets)}")
         for threat in self.threats:
             if not set(threat.asset_ids) <= assets or not set(threat.dataflow_ids) <= flows:
-                raise ValueError("Threat references an unknown graph object")
+                unknown = (set(threat.asset_ids) - assets) | (set(threat.dataflow_ids) - flows)
+                raise RuleViolation("Threat references an unknown graph object",
+                                    f"threat {_token(threat.id)} names {_ids(unknown)}; declared assets are {_ids(assets)} and dataflows {_ids(flows)}")
             if threat.testability == "blocked" and not threat.blocked_reason:
                 raise ValueError("Blocked threat needs a concrete reason")
         for requirement in self.requirements:
             if not set(requirement.threat_ids) <= threats:
-                raise ValueError("Requirement references an unknown threat")
+                raise RuleViolation("Requirement references an unknown threat",
+                                    f"requirement {_token(requirement.id)} names {_ids(set(requirement.threat_ids) - threats)}; declared threats are {_ids(threats)}")
         return self
 
 
@@ -219,9 +244,10 @@ class OperatorOracle(CaseOracle):
 class OperatorCase(CaseProposal):
     """Operator and retest cases may use any adapter or method and keep the sealed fields they were copied with."""
     model_config = ConfigDict(extra="allow")
-    adapter: Literal["http", "ai_http", "demo", "fixture", "zap", "schemathesis", "playwright", "promptfoo", "pyrit"]
-    method: Literal["GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"] = "GET"
-    preconditions: list[str | OperatorControl] = Field(default_factory=list, max_length=10)
+    # Wider than the model contract on purpose; pydantic validates each class by its own annotations.
+    adapter: Literal["http", "ai_http", "demo", "fixture", "zap", "schemathesis", "playwright", "promptfoo", "pyrit"]  # type: ignore[assignment]
+    method: Literal["GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"] = "GET"  # type: ignore[assignment]
+    preconditions: list[str | OperatorControl] = Field(default_factory=list, max_length=10)  # type: ignore[assignment]
     oracle: OperatorOracle
 
 

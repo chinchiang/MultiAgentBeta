@@ -37,8 +37,10 @@ export default function App() {
     setError(t('已登出。請用服務啟動時印出的網址重新開啟。','Signed out. Reopen the console with the URL printed when the service started.'));
   },[]);
   useEffect(()=>{void connect();},[connect]);
+  // Polling follows the selected run's identity and status, not every refresh of its record.
+  const selectedId=selected?.id; const selectedStatus=selected?.status;
   useEffect(()=>{
-    if (!selected || !['running','cancelling'].includes(selected.status)) return;
+    if (!selectedId || !['running','cancelling'].includes(selectedStatus ?? '')) return;
     let active = true;
     let fetching = false;
     // Failed refreshes back off up to 30 s and report once, not every tick.
@@ -46,17 +48,17 @@ export default function App() {
     let timer = 0;
     const refresh = async () => {
       if (fetching) return; fetching = true;
-      try { const run = await api<Run>(`/runs/${encodeURIComponent(selected.id)}`); if(active) {syncRun(run); delay = 2500;} }
+      try { const run = await api<Run>(`/runs/${encodeURIComponent(selectedId)}`); if(active) {syncRun(run); delay = 2500;} }
       catch(e) { if(active) {if(delay===2500)setError(t(`更新中斷：${e instanceof Error?e.message:'連線失敗'}。重新連線後可查看已保存進度。`,`Updates stopped: ${e instanceof Error?e.message:'connection failed'}. Reconnect to see the saved progress.`)); delay = Math.min(delay*2,30000);} }
       finally {fetching = false;}
     };
     const tick = async () => {await refresh(); if(active) timer = window.setTimeout(tick,delay);};
     const stream = new AbortController();
     // Polling below keeps the view current if the event stream drops.
-    streamEvents(`/runs/${encodeURIComponent(selected.id)}/events`,name=>{void refresh();if(name==='done'||name==='expired')stream.abort();},stream.signal).catch(()=>{});
+    streamEvents(`/runs/${encodeURIComponent(selectedId)}/events`,name=>{void refresh();if(name==='done'||name==='expired')stream.abort();},stream.signal).catch(()=>{});
     timer = window.setTimeout(tick,delay);
     return ()=>{active=false;clearTimeout(timer);stream.abort();};
-  },[selected?.id,selected?.status,syncRun]);
+  },[selectedId,selectedStatus,syncRun]);
   async function selectRun(run:RunSummary) {setBusy('load');setError('');try {syncRun(await api<Run>(`/runs/${encodeURIComponent(run.id)}`));setView('runs');setTab('overview');}catch(e){setError(e instanceof Error?e.message:String(e));}finally{setBusy('');}}
   async function action(kind:RunAction) {if(!selected)return;let body={};if(kind==='approve-cases'){const count=selected.cases.filter(c=>c.designed_by==='model').length;if(!window.confirm(t(`將送出 ${selected.cases.length} 個已封存案例，其中 ${count} 個由模型設計。請先在「追溯」分頁核對每個案例的方法、路徑、標頭、本文與身分；核准只適用於目前這組案例。`,`This sends ${selected.cases.length} sealed cases, ${count} of them designed by a model. First check each case's method, path, headers, body and identity on the Trace tab; the approval covers only this set of cases.`)))return;body={receipt:selected.gate_receipts?.cases??''};}if(kind==='reconcile'){const attestation=window.prompt(t('監督程式未能確認工作容器已移除。請說明你如何確認已清理或重設測試環境。這段說明會存為證據；此執行之後不能再恢復，請以新的執行繼續。','The supervisor could not confirm that the worker container was removed. Describe how you confirmed the test environment was cleaned up or reset. This statement is stored as evidence; this run cannot be resumed afterwards, so continue with a new run.'))?.trim();if(!attestation)return;body={attestation};}setBusy(kind);setError('');try {syncRun(await api<Run>(`/runs/${encodeURIComponent(selected.id)}/${kind}`,body));}catch(e){setError(e instanceof Error?e.message:String(e));}finally{setBusy('');}}
   async function createRun(input:RunInput) {

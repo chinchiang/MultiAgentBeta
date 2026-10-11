@@ -4,6 +4,38 @@
 
 本次已實際使用 Windows 控制台、WSL2/Linux、Docker 29.1.3、PostgreSQL 18.6 及固定版本的八種安全工具。09-24 原始驗證主機的 Windows 收據為 Python 3.12.14；10-05 的 Windows 收據為 Python 3.13.15（另以 Windows Python 3.12.10 驗證雜湊鎖定安裝），Linux 測試 venv 為 Python 3.14.4，Node 為 24.19.0。完整 Python/npm 相依套件與工具映像鎖定檔隨原始碼交付。映像與離線 OSV 資料本身不放進 ZIP。
 
+## 2026-10-10～11 真模型驗收
+
+第一次以真實模型跑完整流程。目標只有本 repo 的合成靶場，不代表模型的效果、檢出率或成本表現。每次 run 的設定、各階段結果與用量，記在 real-model-acceptance-2026-10-11.json。
+
+- **模型**：
+  - 指揮官（兼反證與架構）：Claude Opus 5.5（AWS Bedrock，以 SSO profile 簽章）。
+  - 審查員：Gemini 3.8 Flash（Google，OpenAI 相容端點）、Claude Sonnet 5.5（Bedrock）、Nemotron 3 Super（本機 LM Studio，json_schema 模式，context 71,936）。AI agent 靶場改用 Gemma 4 31B（Gemini API）取代 Gemini。
+  - 威脅建模：最後改用 Claude Sonnet 5.5。
+  - 測試設計：Gemini 3.8 Flash。
+- **環境**：PostgreSQL 18.6、Docker 29.1.3、隔離 worker；#11 起加上 Semgrep 1.153.0、Gitleaks 8.30.1、OSV-Scanner 2.3.5（離線 PyPI／npm 資料），以及 promptfoo 0.124.1、PyRIT 1.1.0 的 tools 映像。
+- **結果**：17 次 run，共約 211 萬 tokens。其中 5 次跑完全程，預期結果都成立：
+
+| run | 靶場 | 案例 | 黑箱結果 |
+|---|---|---|---|
+| #6、#8 | Web API vulnerable | 模型設計的 BOLA | fail（觀測到 tenant B 的 canary） |
+| #13 | Web API fixed | 模型設計的 BOLA | pass（真陰性，沒有誤報） |
+| #14 | Web API vulnerable，三種掃描器 | 操作者案例：BOLA、登出 | 兩者都 fail；登出後同一 session 仍可讀取 |
+| #17 | AI agent vulnerable，三種掃描器 | 操作者案例：原生 ×5、promptfoo ×2、PyRIT ×2 | 三者都 fail；可信 ledger 記錄到未授權的匯出 |
+
+- **其他 12 次 run**：都是在途中發現問題後停下，問題已逐一修正（PR #40～#43）：
+  - LiteLLM 把呼叫參數放進請求本文。
+  - LM Studio 只接受 json_schema 格式。
+  - 本地推理模型逾時，或探測、輸出被截斷。
+  - Gemini 偶發 HTTP 500 與內容過濾。
+  - 模型抄錯 UUID。
+  - 威脅模型違反參照規則。
+  - 模型案例無法涵蓋的威脅被標為 automated。
+  - Gemma 不接受 maxItems。
+  - 4xx 拒絕被當成用量不明。
+  - 操作者自己的案例設定錯誤：被 gate 正確擋下。
+- **還沒解決**：雲端模型在撰寫攻擊情境或審查提示注入程式碼時會不定期拒答：Gemini 在 #10、#12，Claude Opus 在 #5。拒答會留下明確紀錄、run 可恢復，但同一個模型通常還是拒答。目前只能換一個模型開新的 run；要不要讓角色另外指定備援模型，留待操作者決定。
+
 ## 2026-10-10 深入審查修正
 
 這一輪修正了一次全面審查找到的問題（PR #39，分支 fix/deep-review-2026-10-10，已合併 main 到 c2a027f）。
@@ -44,6 +76,7 @@
 
 | 驗收 | 實際結果 | 證據 |
 |---|---|---|
+| 真模型完整流程（2026-10-10～11） | 17 次 run；5 次跑完全程，vulnerable 靶場都 fail（BOLA、登出、AI agent 未授權匯出），fixed 靶場 pass | real-model-acceptance-2026-10-11.json |
 | Linux 全套回歸（2026-10-10，本輪修正後） | 1254 passed、22 skipped、4 subtests passed；PostgreSQL 18.6 與 Node 24 實際執行 | linux-regression-2026-10-10.xml |
 | 真 Docker 隔離測試（2026-10-10，本輪修正後） | 88 passed、1 skipped、4 subtests passed；Docker 29.1.3 | docker-isolation-2026-10-10.xml |
 | Linux 全套回歸（2026-10-05，現行程式碼） | 363 passed、21 skipped、4 subtests passed；PostgreSQL 18.6 整合（原子回復、checkpoint 與 resume、lease 並行 claim）與 Node 24 Web fixture 皆實際執行；skips 為 20 項需要 Docker 映像的整合及 1 項 Windows 專屬 | linux-regression.xml |
@@ -144,6 +177,38 @@ Validation date: 2026-09-24; after follow-up fixes from review, the full Windows
 
 This round actually used the Windows console, WSL2/Linux, Docker 29.1.3, PostgreSQL 18.6 and eight security tools at pinned versions. The original 2026-09-24 verification host's Windows receipts ran Python 3.12.14; the 2026-10-05 Windows receipts ran Python 3.13.15 (a hash-pinned install was also verified on Windows Python 3.12.10), the Linux test venv used Python 3.14.4, and Node was 24.19.0. The complete Python/npm dependency and tool image lockfiles are delivered with the source code. The images and the offline OSV data themselves are not packed into the ZIP.
 
+## 2026-10-10–11 Real-Model Acceptance
+
+The first runs of the whole workflow with real models. The only targets were the repository's synthetic fixtures, so nothing here says anything about the models' efficacy, detection rate or cost. Each run's settings, stage results and usage are in real-model-acceptance-2026-10-11.json.
+
+- **Models**:
+  - Commander (also challenger and architecture mapper): Claude Opus 5.5 (AWS Bedrock, signed with an SSO profile).
+  - Reviewers: Gemini 3.8 Flash (Google, OpenAI-compatible endpoint), Claude Sonnet 5.5 (Bedrock) and Nemotron 3 Super (local LM Studio, json_schema mode, 71,936 context). For the AI agent fixture, Gemma 4 31B (Gemini API) replaced Gemini.
+  - Threat modeler: finally Claude Sonnet 5.5.
+  - Test designer: Gemini 3.8 Flash.
+- **Environment**: PostgreSQL 18.6, Docker 29.1.3 and isolated workers. From #11 on, also Semgrep 1.153.0, Gitleaks 8.30.1 and OSV-Scanner 2.3.5 (offline PyPI/npm data), plus the tools image with promptfoo 0.124.1 and PyRIT 1.1.0.
+- **Results**: 17 runs, about 2.11 million tokens in all. Five ran end to end, and each gave the expected result:
+
+| Run | Fixture | Cases | Black-box result |
+|---|---|---|---|
+| #6, #8 | Web API, vulnerable | Model-designed BOLA | fail (tenant B's canary observed) |
+| #13 | Web API, fixed | Model-designed BOLA | pass (true negative, no false positive) |
+| #14 | Web API, vulnerable, three scanners | Operator cases: BOLA and logout | both fail; the session still worked after logout |
+| #17 | AI agent, vulnerable, three scanners | Operator cases: native ×5, promptfoo ×2, PyRIT ×2 | all three fail; the trusted ledger recorded an unauthorized export |
+
+- **The other 12 runs**: each stopped on a problem it exposed, and every one was fixed (PRs #40–#43):
+  - LiteLLM put call parameters into the request body.
+  - LM Studio accepts only json_schema.
+  - Local reasoning models timed out, or probes and outputs were truncated.
+  - Gemini returned occasional HTTP 500s and content filtering.
+  - A model miscopied a UUID.
+  - Threat models broke the reference rules.
+  - Threats that model cases cannot cover were marked automated.
+  - Gemma refuses maxItems.
+  - 4xx rejections were treated as unknown usage.
+  - An operator case of my own was wrong: the gate correctly refused it.
+- **Not yet solved**: cloud models occasionally refuse to write attack scenarios or to review prompt-injection code: Gemini in #10 and #12, Claude Opus in #5. A refusal leaves a clear record and the run can resume, but the same model usually refuses again. For now the only remedy is a new run with a different model; whether a role may name a fallback model is left to the operator.
+
 ## 2026-10-10 In-Depth Review Fixes
 
 This round fixed the issues a full review found (PR #39, branch fix/deep-review-2026-10-10, with main merged up to c2a027f).
@@ -184,6 +249,7 @@ The test groups overlap one another; **do not add the rows together and treat th
 
 | Acceptance | Actual result | Evidence |
 |---|---|---|
+| Full workflow with real models (2026-10-10–11) | 17 runs; 5 end to end, the vulnerable fixtures failing (BOLA, logout, AI agent unauthorized export) and the fixed one passing | real-model-acceptance-2026-10-11.json |
 | Full Linux regression (2026-10-10, after this round) | 1254 passed, 22 skipped, 4 subtests passed; PostgreSQL 18.6 and Node 24 actually ran | linux-regression-2026-10-10.xml |
 | Isolation tests on real Docker (2026-10-10, after this round) | 88 passed, 1 skipped, 4 subtests passed; Docker 29.1.3 | docker-isolation-2026-10-10.xml |
 | Full Linux regression (2026-10-05, current code) | 363 passed, 21 skipped, 4 subtests passed; the PostgreSQL 18.6 integration (atomic rollback, checkpoint and resume, concurrent lease claim) and the Node 24 Web fixture were actually executed; the skips are 20 integrations requiring Docker images and 1 Windows-only case | linux-regression.xml |

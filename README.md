@@ -135,7 +135,7 @@ MultiAgentBeta/
 │   ├── tests/                     #   vitest 單元與元件測試（happy-dom 模擬瀏覽器，不需後端）
 │   ├── scripts/                   #   contract-smoke、browser-smoke、check-i18n、check-messages
 │   └── dist/                      #   已建置的介面，由 FastAPI 同 origin 提供
-├── tests/                         # pytest（27 個檔案，含 test_bilingual_docs.py 文件雙語檢查與 test_properties.py 的 Hypothesis 性質測試）
+├── tests/                         # pytest（28 個檔案，含 test_bilingual_docs.py 文件雙語檢查與 test_properties.py 的 Hypothesis 性質測試）
 ├── catalogs/                      # ASVS 5.0.0、WSTG 4.2、LLM 2026、Agentic 2026 標準 JSON 與 manifest
 │   └── sources/                   #   原始標準內容與授權
 ├── fixtures/                      # 掃描器規則與設定（Semgrep、Gitleaks、OSV）
@@ -149,7 +149,7 @@ MultiAgentBeta/
 │                                  #   VIBESEC_ADVISORIES、threat-model.yaml、run-input.schema.json、驗證收據、截圖、history/
 ├── scripts/                       # setup／start-local、verify、contract-smoke、provision-runtime／offline-db、package-release、hash-lock、
 │                                  #   redact-receipts、summarize-validation、refresh-catalog、render-sample-report、mutation-test、dependency-drift
-├── .github/workflows/ci.yml       # backend（Python 3.12／3.13：ruff、pytest ＋ PostgreSQL、契約 smoke）與 frontend（typecheck、check:i18n、check:messages、建置一致性、清單）
+├── .github/workflows/ci.yml       # backend（Python 3.12／3.13：ruff、mypy、pytest ＋ PostgreSQL、契約 smoke）、frontend（typecheck、ESLint、vitest、check:i18n、check:messages、建置一致性、清單）與 Windows 全套測試
 ├── .github/workflows/integration.yml  # 以 deploy/ 建置的映像跑 Docker worker、掃描器、工具、fixture 與完整 pipeline 整合測試
 ├── .github/workflows/mutation.yml     # mutmut 突變測試：閘門與解析模組的每個突變都要被測試抓到（scripts/mutation-test.py）
 ├── .github/workflows/mutation-pr.yml  # pull request 只對改動的函式做突變測試（scripts/mutation-test.py --changed）
@@ -337,7 +337,7 @@ MultiAgentBeta/
 │   ├── tests/                     #   vitest unit and component tests (happy-dom simulated browser, no backend)
 │   ├── scripts/                   #   contract-smoke, browser-smoke, check-i18n, check-messages
 │   └── dist/                      #   built UI, served by FastAPI on the same origin
-├── tests/                         # pytest (27 files, including test_bilingual_docs.py for bilingual docs and the Hypothesis property tests in test_properties.py)
+├── tests/                         # pytest (28 files, including test_bilingual_docs.py for bilingual docs and the Hypothesis property tests in test_properties.py)
 ├── catalogs/                      # ASVS 5.0.0, WSTG 4.2, LLM 2026, Agentic 2026 standard JSON and manifest
 │   └── sources/                   #   original standard content and licenses
 ├── fixtures/                      # scanner rules and settings (Semgrep, Gitleaks, OSV)
@@ -351,7 +351,7 @@ MultiAgentBeta/
 │                                  #   VIBESEC_ADVISORIES, threat-model.yaml, run-input.schema.json, receipts, screenshots, history/
 ├── scripts/                       # setup/start-local, verify, contract-smoke, provision-runtime/offline-db, package-release, hash-lock,
 │                                  #   redact-receipts, summarize-validation, refresh-catalog, render-sample-report, mutation-test, dependency-drift
-├── .github/workflows/ci.yml       # backend (Python 3.12/3.13: ruff, pytest + PostgreSQL, contract smoke) and frontend (typecheck, check:i18n, check:messages, build parity, manifest)
+├── .github/workflows/ci.yml       # backend (Python 3.12/3.13: ruff, mypy, pytest + PostgreSQL, contract smoke), frontend (typecheck, ESLint, vitest, check:i18n, check:messages, build parity, manifest) and the full test suite on Windows
 ├── .github/workflows/integration.yml  # Docker worker, scanner, tool, fixture and full-pipeline integration tests on images built from deploy/
 ├── .github/workflows/mutation.yml     # mutmut mutation testing: every mutant of the gate and parser modules must be caught (scripts/mutation-test.py)
 ├── .github/workflows/mutation-pr.yml  # a pull request mutates only the functions it changed (scripts/mutation-test.py --changed)

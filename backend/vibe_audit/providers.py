@@ -33,6 +33,8 @@ _PROVIDERS = {"openai", "anthropic", "nvidia_nim", "openai_compatible", "bedrock
 # The only Bedrock endpoints a profile may name, so AWS-signed requests can reach nothing but Bedrock itself.
 _BEDROCK_ENDPOINT = re.compile(r"https://bedrock-runtime(?:-fips)?\.((?:[a-z]{2}(?:-gov)?-[a-z]+-\d))\.amazonaws\.com/?")
 BEDROCK_PROFILES_ENV = "VIBEAUDIT_BEDROCK_PROFILES"
+# HTTP statuses that answer without serving the request: rejected before it ran, rate limited, or a server error.
+UNSERVED_STATUSES = frozenset({400, 401, 403, 404, 413, 422, 429, *range(500, 600)})
 _TOKENIZERS = {
     "https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken": "223921b76ee99bde995b7ff738513eef100fb51d18c93597a113bcffe865b2a7",
     "https://openaipublic.blob.core.windows.net/encodings/o200k_base.tiktoken": "446a9538cb6c348e3516120d7c08b09f57c36495e2acfffe59a5bf8b0cfb1a2d",
@@ -103,7 +105,7 @@ def _is_loopback(host: str) -> bool:
         return False  # literal IPs only: no localhost DNS ambiguity
 
 
-def _validate_profile(profile: dict, policy: dict) -> tuple[str, str, str]:
+def _validate_profile(profile: dict, policy: dict) -> tuple[str, str, Any]:
     provider = profile.get("provider")
     if provider not in _PROVIDERS:
         raise ProviderError("A real supported provider is required; demo is handled separately", code="invalid_provider")
@@ -270,7 +272,7 @@ class _OriginTransport(httpx.AsyncBaseTransport):
         self.pinned_ip = pinned_ip
         self.dispatched = False
         # The status of the response actually received and relayed, if any; SDKs map other failures to 500 too.
-        self.status = None
+        self.status: int | None = None
         # The bounded body of that response, kept in memory only so a reply the SDK cannot convert is still metered.
         self.body = b""
         self.inner = httpx.AsyncHTTPTransport(retries=0, verify=True, trust_env=False)
@@ -351,8 +353,8 @@ async def _invoke(library, profile: dict, endpoint: str, origin: str, credential
         # policy error costs nothing and must not latch unknown usage.
         if _not_sent(exc) or transport is not None and transport.dispatched:
             # Billing decisions read the status the provider really sent, not the SDK's mapping of the error.
-            exc.vibeaudit_http_status = transport.status if transport is not None else None
-            exc.vibeaudit_http_body = transport.body if transport is not None else b""
+            exc.vibeaudit_http_status = transport.status if transport is not None else None  # type: ignore[attr-defined]
+            exc.vibeaudit_http_body = transport.body if transport is not None else b""  # type: ignore[attr-defined]
             raise
         raise _unsent(exc) from None
 
@@ -362,8 +364,19 @@ def _response_format(profile: dict, schema: dict | None) -> dict:
 
     Either way the answer is still validated locally against the same schema."""
     if profile.get("json_mode") == "json_schema":
-        return {"type": "json_schema", "json_schema": {"name": "response", "schema": schema or {"type": "object"}}}
+        return {"type": "json_schema", "json_schema": {"name": "response", "schema": _schema_for_endpoint(schema or {"type": "object"})}}
     return {"type": "json_object"}
+
+
+def _schema_for_endpoint(schema):
+    """The schema sent to the endpoint: without maxItems, which Gemini's API refuses (HTTP 400) at the sizes used here.
+
+    Only a request hint changes; the answer is still validated locally against the full schema, caps included."""
+    if isinstance(schema, dict):
+        return {key: _schema_for_endpoint(value) for key, value in schema.items() if key != "maxItems"}
+    if isinstance(schema, list):
+        return [_schema_for_endpoint(value) for value in schema]
+    return schema
 
 
 async def _complete(library, profile, provider, endpoint, credential, messages, output_limit, timeout, transport, schema=None):
@@ -440,6 +453,17 @@ def _filtered_reply(exc: BaseException) -> dict | None:
         return None
 
 
+def _rule_hint(exc: BaseException) -> str:
+    """The plain-token hint a broken contract rule carries for the retry; it never reaches the run record."""
+    from pydantic import ValidationError as ContractViolation
+    if isinstance(exc, ContractViolation):
+        for error in exc.errors():
+            hint = getattr((error.get("ctx") or {}).get("error"), "hint", "")
+            if isinstance(hint, str) and hint:
+                return hint[:2000]
+    return ""
+
+
 def _validation_site(exc: BaseException) -> str:
     """Where an answer failed validation: the schema path and rule, never the model's own text."""
     from jsonschema.exceptions import ValidationError as SchemaViolation
@@ -450,7 +474,7 @@ def _validation_site(exc: BaseException) -> str:
     if isinstance(exc, SchemaViolation):
         return f"{path(exc.absolute_path)}: {exc.validator}"
     if isinstance(exc, ContractViolation):
-        first = exc.errors()[0] if exc.errors() else {}
+        first: dict = dict(exc.errors()[0]) if exc.errors() else {}
         kind = re.sub(r'[^a-z_]', '', str(first.get('type', 'invalid')))[:40]
         # A contract rule's own message is fixed text from contracts.py; anything else might quote the answer.
         from .messages import ZH
@@ -497,7 +521,7 @@ async def generate_json(profile: dict, system: str, payload: dict, policy: dict)
     reject_remote_refs(schema)
     def deny_schema_retrieval(_uri):
         raise ValueError("External schema retrieval is disabled")
-    validator = Draft202012Validator(schema, registry=Registry(retrieve=deny_schema_retrieval))
+    validator = Draft202012Validator(schema, registry=Registry(retrieve=deny_schema_retrieval))  # type: ignore[call-arg]
     budget = policy.get("max_tokens", policy.get("budget", {}).get("max_tokens", 50000))
     max_calls = policy.get("max_model_calls", policy.get("budget", {}).get("max_model_calls", 2))
     if type(budget) is not int or budget <= 0 or type(max_calls) is not int or max_calls <= 0:
@@ -551,16 +575,19 @@ async def generate_json(profile: dict, system: str, payload: dict, policy: dict)
             status = received if type(received) is int else getattr(exc, "status_code", None)
             if not isinstance(exc, ProviderError) and type(status) is int and 400 <= status <= 599:
                 code = f"provider_http_{status}"
-                if received == status and (status == 429 or 500 <= status <= 599):
-                    # Operator policy: a rate limit or a server error answers without serving the request, so it is
-                    # counted as unbilled and the run may resume. A timeout (408) or other failure stays unknown.
+                if received == status and status in UNSERVED_STATUSES:
+                    # Operator policy: a rejected request (bad request, auth, not found, too large, unprocessable),
+                    # a rate limit or a server error answers without serving it, so it is counted as unbilled and
+                    # the run may resume. A timeout (408), a conflict or any other failure stays unknown.
                     usage["tokens_known"] = True
                     raise ProviderError(f"Model endpoint answered HTTP {status}; the request was not served and is treated as unbilled", code=code, usage=usage.copy()) from None
             elif not isinstance(exc, ProviderError) and isinstance(exc, (TimeoutError, asyncio.TimeoutError)) or type(exc).__name__ in {"Timeout", "APITimeoutError"}:
                 code = "provider_timeout"
             # Exception class names only (for example APIConnectionError <- RemoteProtocolError): enough to tell a
             # dropped connection from a parse failure, and they carry nothing the provider or the model wrote.
-            chain, seen, item = [], set(), exc
+            chain: list[str] = []
+            seen: set[int] = set()
+            item: BaseException | None = exc
             while item is not None and id(item) not in seen and len(chain) < 3:
                 seen.add(id(item)); chain.append(type(item).__name__); item = item.__cause__ or item.__context__
             kinds = " <- ".join(re.sub(r"[^A-Za-z0-9_]", "", name)[:40] for name in chain)
@@ -598,7 +625,8 @@ async def generate_json(profile: dict, system: str, payload: dict, policy: dict)
         except Exception as exc:
             where = _validation_site(exc)
             if attempt + 1 < max_attempts:
-                messages.append({"role": "user", "content": f"The previous response did not validate ({where}). Return a JSON object satisfying the supplied schema. Do not add prose or code fences."})
+                hint = _rule_hint(exc)
+                messages.append({"role": "user", "content": f"The previous response did not validate ({where}{'; ' + hint if hint else ''}). Return a JSON object satisfying the supplied schema. Do not add prose or code fences."})
                 continue
             raise ProviderError(f"Model output failed local JSON/schema validation ({where})", code="schema_validation", usage=usage.copy()) from None
         return {"data": data, "usage": usage, "model_id": profile["model_id"], "provider": profile["provider"], "response_model_id": _get(response, "model"), "cost_usd": None, "cost_note": "Token usage is provider reported; monetary cost is not calculated or claimed.", "budget_note": "Output is capped; total input/output usage is checked after each response. Provider billing cannot be guaranteed in advance."}

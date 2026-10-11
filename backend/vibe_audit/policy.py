@@ -158,11 +158,15 @@ class Policy:
                         raise PolicyError("Trusted fixture configuration changed after case sealing")
             covered|=tids
         missing={t for t,v in threats.items() if v["testability"]=="automated"}-covered
-        if missing and not run["manifest"].get("cases"):
+        if missing and not run["cases"] and not run["manifest"].get("cases"):
             raise PolicyError("Automated threats without cases: "+", ".join(sorted(missing)))
         if missing:
-            # The operator, or the run a retest copies, chose these cases; threats they leave out stay visible as untested.
-            gap="Automated threats without a provided case were not tested: "+", ".join(sorted(missing))
+            # The operator chose these cases, or the test designer found no single sealed request that shows the rest
+            # (real models do this with threats that need a forged Host or a session): either way the threats left
+            # out stay visible as untested and the run cannot read as complete.
+            label=("Automated threats without a provided case were not tested" if run["manifest"].get("cases")
+                   else "Automated threats without a model-designed case were not tested")
+            gap=label+": "+", ".join(sorted(missing))
             if gap not in run["gaps"]:
                 run["gaps"].append(gap)
         receipt=digest([c["hash"] for c in run["cases"]])

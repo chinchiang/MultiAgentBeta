@@ -1,6 +1,7 @@
 """Regression checks for boundaries found during the local integration audit."""
 import base64
 import copy
+import os
 import sys
 
 import pytest
@@ -75,7 +76,8 @@ def test_failure_notes_name_the_type_and_location_never_the_message(tmp_path):
     assert "secret" not in records[0] and "body" not in records[0]
     assert records[1] == "no traceback: ValueError at unknown location"
     path = diagnostics.configure(tmp_path)
-    assert path == tmp_path / "vibe-audit.log" and (path.stat().st_mode & 0o777) == 0o600
+    # Windows has no owner-only mode bits; the file still lands in the owner's data directory.
+    assert path == tmp_path / "vibe-audit.log" and (os.name != "posix" or (path.stat().st_mode & 0o777) == 0o600)
     assert "workbench started" in path.read_text(encoding="utf-8")
     diagnostics.log.handlers.clear()
 

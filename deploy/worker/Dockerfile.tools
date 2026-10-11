@@ -14,7 +14,8 @@ RUN pip install --no-cache-dir schemathesis==4.28.0 pyrit==1.1.0 \
  && pip freeze > /opt/python-tool-versions.lock.txt
 WORKDIR /opt/vibe-tools
 RUN npm init -y \
- && npm install --save-exact --no-audit --no-fund playwright@1.63.0 promptfoo@0.123.1 \
+ && npm install --save-exact --no-audit --no-fund playwright@1.63.0 promptfoo@0.124.1 \
+ && npm pkg set overrides.basic-ftp=6.2.1 && npm install --no-audit --no-fund \
  && ln -s /opt/vibe-tools/node_modules/.bin/promptfoo /usr/local/bin/promptfoo \
  && npm cache clean --force
 RUN mkdir -p /node_modules \

@@ -324,9 +324,9 @@ async def test_provided_cases_leave_uncovered_threats_as_gaps(engine):
     run=await finished_demo(engine)
     case=next(c for c in run["cases"] if c["id"]=="C-001")
     run["cases"]=[case]
-    # Model-designed cases must cover every automated threat.
-    with pytest.raises(PolicyError,match="Automated threats without cases"):
-        engine.policy.case_gate(run)
+    # A model-designed set that leaves an automated threat out records it as untested.
+    engine.policy.case_gate(run)
+    assert any(g.startswith("Automated threats without a model-designed case were not tested") for g in run["gaps"])
     # Cases the operator (or a retest's parent) supplied are the chosen scope; the rest is a visible gap.
     run["manifest"]["cases"]=[{k:v for k,v in case.items() if k!="hash"}]
     run["manifest_hash"]=digest(run["manifest"])
@@ -1747,3 +1747,16 @@ async def test_challenger_works_on_short_labels_and_drops_a_challenge_of_no_find
     first=list(reversed(run["findings"]))[0]
     assert run["challenges"]==[{"finding_id":first["id"],"counterevidence":"guarded upstream","missing_evidence":""}]
     assert any("dropped 1 challenge" in gap for gap in run["gaps"])
+
+
+async def test_each_reviewer_gap_names_the_reviewer_that_reported_it(engine):
+    run=await finished_demo(engine)
+    arm_attempt(engine,run)
+    run["gaps"]=[]
+    for review in run["reviews"]:
+        review.pop("evidence",None)
+    run["reviews"][0]["gaps"]=["Source was redacted"]
+    run["reviews"][1]["gaps"]=[run["reviews"][1]["agent_id"]+": already attributed"]
+    await engine._adjudication(run)
+    assert run["reviews"][0]["agent_id"]+": Source was redacted" in run["gaps"]
+    assert run["reviews"][1]["agent_id"]+": already attributed" in run["gaps"]

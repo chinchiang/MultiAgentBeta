@@ -14,7 +14,7 @@ import xml.etree.ElementTree as ET
 from xml.parsers import expat
 from urllib.parse import urlsplit
 
-VERSIONS = {"schemathesis": "4.28.0", "playwright": "1.63.0", "promptfoo": "0.123.1", "pyrit": "1.1.0", "zap": "2.17.0"}
+VERSIONS = {"schemathesis": "4.28.0", "playwright": "1.63.0", "promptfoo": "0.124.1", "pyrit": "1.1.0", "zap": "2.17.0"}
 DOCS = {
     "zap": "https://www.zaproxy.org/docs/desktop/addons/automation-framework/job-requestor/",
     "schemathesis": "https://schemathesis.readthedocs.io/en/latest/reference/cli/",

@@ -156,6 +156,7 @@ ZH.update({
     "Scanner did not establish coverage": "掃描器沒有建立涵蓋範圍",
     "Scanner finding location is outside the staged snapshot": "掃描器發現的位置不在 staging 快照內",
     "Automated threats without a provided case were not tested": "沒有提供案例的自動化威脅未經測試",
+    "Automated threats without a model-designed case were not tested": "模型設計的案例未涵蓋的自動化威脅未經測試",
     "Missing verification evidence": "缺少驗證證據",
     # snapshot.py: intake gaps
     "Snapshot limit reached; remaining source was not inspected.": "已達快照上限；其餘原始碼未檢查。",

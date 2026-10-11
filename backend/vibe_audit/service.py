@@ -8,7 +8,8 @@ import html
 import re
 import uuid
 from datetime import datetime
-from typing import TypedDict
+from functools import partial
+from typing import Any, TypedDict
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import InMemorySaver
@@ -41,15 +42,15 @@ class Engine:
         self.store=store
         self.database_url=database_url
         # The app sets the workbench's own origins; a live target must not be the console itself.
-        self.console_origins=set()
+        self.console_origins: set[str]=set()
         self.policy=Policy()
-        self.tasks={}
-        self.cancel_flags={}
-        self.runs={}
-        self.locks={}
+        self.tasks: dict[str,asyncio.Task]={}
+        self.cancel_flags: dict[str,asyncio.Event]={}
+        self.runs: dict[str,dict]={}
+        self.locks: dict[str,asyncio.Lock]={}
         self.checkpointer=InMemorySaver()
-        self.runtimes={}
-        self.runtime_configs={}
+        self.runtimes: dict[str,Any]={}
+        self.runtime_configs: dict[str,dict]={}
         for run in store.list():
             # A request the journal marks sent, with no recorded result, may have reached the target.
             settled=self.settle_sent_jobs(run,"The controller stopped after this request was sent; its outcome is unknown")
@@ -157,7 +158,8 @@ class Engine:
         self.event(run,"Resuming journaled workflow" if resume else "Starting evidence-gated workflow")
         task=asyncio.create_task(self._run(run))
         self.tasks[run_id]=task
-        task.add_done_callback(lambda finished,run_id=run_id,task=task,cancel_flag=cancel_flag,lock=lock,run=run: self.forget_attempt(run_id,task,cancel_flag,lock,run))
+        forget=partial(self.forget_attempt,run_id,task,cancel_flag,lock,run)
+        task.add_done_callback(lambda _finished: forget())
         return copy.deepcopy(run)
 
     def forget_attempt(self,run_id,task,cancel_flag,lock,run):
@@ -713,7 +715,9 @@ class Engine:
         unique={}
         for review in run["reviews"]:
             # A resumed adjudication would re-extend the same review gaps; keep each gap once.
-            run["gaps"].extend(gap for gap in review["gaps"] if gap not in run["gaps"])
+            # Each reviewer's own limits carry its ID: three reviewers often word the same limit three ways.
+            attributed=[gap if str(gap).startswith(review["agent_id"]+":") else f"{review['agent_id']}: {gap}" for gap in review["gaps"]]
+            run["gaps"].extend(gap for gap in attributed if gap not in run["gaps"])
             # A resumed adjudication reuses the sealed review's recorded evidence
             # instead of writing a second artifact for the same content.
             if not review.get("evidence"):
@@ -769,7 +773,7 @@ class Engine:
             context={"architecture":run.get("architecture"),"findings":run["findings"],"operator_requirements":run["manifest"].get("requirements",[]),"notes":run["manifest"]["notes"],
                      # Tracing needs the case's identity, not its header values or body, which may hold test secrets.
                      "provided_cases":[{k:c[k] for k in ("id","title","threat_ids","requirement_id","adapter","method","path","identity") if k in c} for c in run["manifest"]["cases"]]}
-            tm=await self.model(run,commander,'Build a complete threat model with explicit requirements, roles, attacker-controlled inputs, dataflows and unknowns. Every declared control needs a verifiable source reference. Use blocked with a concrete reason when no fixture/oracle exists. Preserve IDs in operator-provided cases and requirements. Never invent business authorization rules or standard IDs; standards may be empty.',{**context,"source":self.fitted_source(run,context,"Threat modeler")},ThreatModelProposal,cache="threat_modeler")
+            tm=await self.model(run,commander,'Build a complete threat model with explicit requirements, roles, attacker-controlled inputs, dataflows and unknowns. Every declared control needs a verifiable source reference. Use blocked with a concrete reason when no fixture/oracle exists. A threat is automated only when one sealed HTTP request (with optional read-only GET positive controls) by a listed test identity can show it: model-designed cases cannot log in, capture or replay a session, or chain state-changing steps, so a threat that needs those is blocked unless an operator-provided case covers it. Preserve IDs in operator-provided cases and requirements. Never invent business authorization rules or standard IDs; standards may be empty.',{**context,"source":self.fitted_source(run,context,"Threat modeler")},ThreatModelProposal,cache="threat_modeler")
             run["reserved_tokens"]=0
         tm=ThreatModelProposal.model_validate(tm).model_dump()
         # Provided and retest cases name their threats; a model that renames or drops one breaks their trace.
@@ -1029,7 +1033,7 @@ def report_markdown(run:dict,lang:str="en")->str:
             execution["reason"]=said(execution.get("reason",""))
     for key in ("name","id","mode","status","report_note"):
         if key in run: run[key]=safe(run[key])
-    challenges={}
+    challenges: dict[str,list[dict]]={}
     for item in run.get("challenges") or []:
         challenges.setdefault(item.get("finding_id"),[]).append(item)
     for finding in run["findings"]:
@@ -1083,6 +1087,7 @@ def report_sarif(run:dict)->dict:
         case=next((exercised[e] for e in f["evidence_ids"] if e in exercised),None)
         # A scanner's own rule ID names a static result better than its CWE.
         rule=f.get("rule_id") or f.get("cwe")
+        location: dict[str,Any]
         if f.get("file"):
             # A lockfile (OSV) or Gitleaks result can lack a line; it still names the file.
             line=f.get("line") if isinstance(f.get("line"),int) and f["line"]>0 else None
@@ -1095,11 +1100,11 @@ def report_sarif(run:dict)->dict:
         else:
             # No file or endpoint is known, but the finding is reported rather than dropped.
             location={"logicalLocations":[{"name":sarif_text(run["name"]),"kind":"module"}]}
-        result={"ruleId":rule or "security-hypothesis","level":SARIF_LEVELS.get(f["state"],"warning"),"message":{"text":sarif_text(f["title"])},"locations":[location],"properties":{"evidenceState":f["state"],"severity":f["severity"],"runId":run["id"],"synthetic":run["mode"]=="demo"}}
+        result: dict[str,Any]={"ruleId":rule or "security-hypothesis","level":SARIF_LEVELS.get(f["state"],"warning"),"message":{"text":sarif_text(f["title"])},"locations":[location],"properties":{"evidenceState":f["state"],"severity":f["severity"],"runId":run["id"],"synthetic":run["mode"]=="demo"}}
         if f.get("retests"):
             result["properties"]["retests"]=[{"runId":item.get("run_id"),"outcome":item.get("outcome")} for item in f["retests"]]
         if f["state"]=="resolved_in_retest":
-            passed=next((r for r in reversed(f["retests"]) if r.get("outcome")=="pass"),{})
+            passed: dict=next((r for r in reversed(f["retests"]) if r.get("outcome")=="pass"),{})
             result["suppressions"]=[{"kind":"external","status":"accepted","justification":sarif_text("Every linked retest case passed in run "+str(passed.get("run_id")))}]
         if f["state"]=="refuted":
             result["suppressions"]=[{"kind":"external","status":"accepted","justification":sarif_text("Refuted by the local operator citing black-box evidence "+", ".join(map(str,f.get("counterevidence",[]))))}]
