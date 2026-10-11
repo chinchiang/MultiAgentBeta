@@ -86,7 +86,8 @@ async def test_finished_journal_result_is_reused_not_replayed(runtime,target):
 async def test_sustained_lease_outage_fails_closed_after_three_strikes(tmp_path,monkeypatch):
     """The controller-side three-strike fail-safe must actually fire: three
     consecutive non-LeaseError renewal failures revoke the worker."""
-    rt=WorkerRuntime(tmp_path,backend="process_test",allow_process_test=True,ttl_seconds=0.2)
+    # A one-second TTL leaves a slow process start (Windows runners) time to claim before the outage begins.
+    rt=WorkerRuntime(tmp_path,backend="process_test",allow_process_test=True,ttl_seconds=1.0)
     try:
         real=rt.leases.renew
         # Renewals must keep the capability alive until the supervisor has claimed
