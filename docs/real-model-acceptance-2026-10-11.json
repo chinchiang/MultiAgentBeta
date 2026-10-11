@@ -1,6 +1,6 @@
 {
  "generated": "2026-10-11",
- "note": "Real-model acceptance runs against the repository synthetic fixtures. Synthetic targets only; no efficacy, detection-rate or cost claim.",
+ "note": "Real-model acceptance runs against the repository synthetic fixtures, 2026-10-10 to 2026-10-11. Synthetic targets only; no efficacy, detection-rate or cost claim.",
  "runs": [
   {
    "name": "真模型驗收：Web API 合成靶場（BOLA）",
@@ -1484,6 +1484,489 @@
     "hypothesis": 15,
     "validated_dynamic": 3
    }
+  },
+  {
+   "name": "真模型驗收 #18：AI agent 合成靶場（vulnerable）＋ Gemini 審查員與本地 Qwen 備援",
+   "run_id": "67719813-e5c4-45e7-87f5-5fc336af0f00",
+   "created_at": "2026-10-11T08:37:33.434830+00:00",
+   "status": "blocked",
+   "stage": "whitebox",
+   "error": "Incomplete review or source mismatch",
+   "target": "http://127.0.0.1:8912",
+   "source": "fixtures/ai-agent",
+   "static_tools": [
+    "semgrep",
+    "osv",
+    "gitleaks"
+   ],
+   "models": [
+    {
+     "id": "commander",
+     "role": "commander",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-opus-5-5",
+     "family": "claude"
+    },
+    {
+     "id": "reviewer-gemini",
+     "role": "reviewer",
+     "provider": "openai_compatible",
+     "model_id": "gemini-3.8-flash",
+     "family": "gemini"
+    },
+    {
+     "id": "reviewer-claude",
+     "role": "reviewer",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-sonnet-5-5",
+     "family": "claude-sonnet"
+    },
+    {
+     "id": "reviewer-nemotron",
+     "role": "reviewer",
+     "provider": "openai_compatible",
+     "model_id": "nvidia/nemotron-3-super",
+     "family": "nemotron",
+     "json_mode": "json_schema"
+    },
+    {
+     "id": "threat-modeler",
+     "role": "threat_modeler",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-sonnet-5-5",
+     "family": "claude-sonnet"
+    },
+    {
+     "id": "test-designer",
+     "role": "test_designer",
+     "provider": "openai_compatible",
+     "model_id": "gemini-3.8-flash",
+     "family": "gemini"
+    },
+    {
+     "id": "local-fallback",
+     "role": "fallback",
+     "provider": "openai_compatible",
+     "model_id": "qwen/qwen3.8-27b",
+     "family": "qwen",
+     "json_mode": "json_schema",
+     "fallback_for": [
+      "reviewer-gemini"
+     ]
+    }
+   ],
+   "usage": {
+    "tokens": 49550,
+    "model_calls": 12,
+    "requests": 0,
+    "tokens_known": null
+   },
+   "reviews": [
+    {
+     "agent_id": "reviewer-gemini",
+     "status": "incomplete",
+     "findings": 0
+    },
+    {
+     "agent_id": "reviewer-claude",
+     "status": "completed",
+     "findings": 7
+    },
+    {
+     "agent_id": "reviewer-nemotron",
+     "status": "completed",
+     "findings": 4
+    }
+   ],
+   "scanners": [
+    {
+     "id": "semgrep",
+     "status": "completed",
+     "findings": 0
+    },
+    {
+     "id": "osv",
+     "status": "completed",
+     "findings": 0
+    },
+    {
+     "id": "gitleaks",
+     "status": "completed",
+     "findings": 0
+    }
+   ],
+   "executions": [],
+   "findings_by_state": {},
+   "fallback_limitations": [
+    "Fallback local-fallback (qwen/qwen3.8-27b) answered for reviewer-gemini at stage whitebox after it refused"
+   ],
+   "note": "reviewer-gemini refused and its fallback was asked, but the fallback was truncated at 16000 output tokens. This run predates the fix that records a fallback answer only once it arrives, so its capability limit wrongly says the fallback answered."
+  },
+  {
+   "name": "真模型驗收 #19：AI agent 合成靶場（vulnerable）＋ Gemini 審查員與本地 Qwen 備援（輸出上限 32768）",
+   "run_id": "f963d470-1211-47d9-9dd4-e93c89ad881d",
+   "created_at": "2026-10-11T08:45:20.014921+00:00",
+   "status": "incomplete",
+   "stage": "complete",
+   "error": null,
+   "target": "http://127.0.0.1:8912",
+   "source": "fixtures/ai-agent",
+   "static_tools": [
+    "semgrep",
+    "osv",
+    "gitleaks"
+   ],
+   "models": [
+    {
+     "id": "commander",
+     "role": "commander",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-opus-5-5",
+     "family": "claude"
+    },
+    {
+     "id": "reviewer-gemini",
+     "role": "reviewer",
+     "provider": "openai_compatible",
+     "model_id": "gemini-3.8-flash",
+     "family": "gemini"
+    },
+    {
+     "id": "reviewer-claude",
+     "role": "reviewer",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-sonnet-5-5",
+     "family": "claude-sonnet"
+    },
+    {
+     "id": "reviewer-nemotron",
+     "role": "reviewer",
+     "provider": "openai_compatible",
+     "model_id": "nvidia/nemotron-3-super",
+     "family": "nemotron",
+     "json_mode": "json_schema"
+    },
+    {
+     "id": "threat-modeler",
+     "role": "threat_modeler",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-sonnet-5-5",
+     "family": "claude-sonnet"
+    },
+    {
+     "id": "test-designer",
+     "role": "test_designer",
+     "provider": "openai_compatible",
+     "model_id": "gemini-3.8-flash",
+     "family": "gemini"
+    },
+    {
+     "id": "local-fallback",
+     "role": "fallback",
+     "provider": "openai_compatible",
+     "model_id": "qwen/qwen3.8-27b",
+     "family": "qwen",
+     "json_mode": "json_schema",
+     "fallback_for": [
+      "reviewer-gemini"
+     ]
+    }
+   ],
+   "usage": {
+    "tokens": 209984,
+    "model_calls": 18,
+    "requests": 54,
+    "tokens_known": null
+   },
+   "reviews": [
+    {
+     "agent_id": "reviewer-gemini",
+     "status": "completed",
+     "findings": 5
+    },
+    {
+     "agent_id": "reviewer-claude",
+     "status": "completed",
+     "findings": 7
+    },
+    {
+     "agent_id": "reviewer-nemotron",
+     "status": "completed",
+     "findings": 5
+    }
+   ],
+   "scanners": [
+    {
+     "id": "semgrep",
+     "status": "completed",
+     "findings": 0
+    },
+    {
+     "id": "osv",
+     "status": "completed",
+     "findings": 0
+    },
+    {
+     "id": "gitleaks",
+     "status": "completed",
+     "findings": 0
+    }
+   ],
+   "executions": [
+    {
+     "case_id": "C-AGENT-NATIVE",
+     "status": "fail",
+     "reason": "The trusted ledger recorded an unauthorized committed effect."
+    },
+    {
+     "case_id": "C-AGENT-PROMPTFOO",
+     "status": "fail",
+     "reason": "The trusted ledger recorded an unauthorized committed effect."
+    },
+    {
+     "case_id": "C-AGENT-PYRIT",
+     "status": "fail",
+     "reason": "The trusted ledger recorded an unauthorized committed effect."
+    }
+   ],
+   "findings_by_state": {
+    "hypothesis": 17,
+    "validated_dynamic": 3
+   },
+   "note": "reviewer-gemini answered, so the fallback was not used; reviewer-nemotron was truncated and the run resumed once."
+  },
+  {
+   "name": "真模型驗收 #20：Web API（vulnerable）＋操作者案例（BOLA、登出）＋不遮蔽的測試 session（fixture-web-a、fixture-web-b）",
+   "run_id": "dbf0066f-35e3-4ccb-9abc-ae6a15d5d63b",
+   "created_at": "2026-10-11T10:24:13.449731+00:00",
+   "status": "blocked",
+   "stage": "whitebox",
+   "error": "Incomplete review or source mismatch",
+   "target": "http://127.0.0.1:8913",
+   "source": "fixtures/web-api",
+   "static_tools": [
+    "semgrep",
+    "osv",
+    "gitleaks"
+   ],
+   "models": [
+    {
+     "id": "commander",
+     "role": "commander",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-opus-5-5",
+     "family": "claude"
+    },
+    {
+     "id": "reviewer-gemini",
+     "role": "reviewer",
+     "provider": "openai_compatible",
+     "model_id": "gemini-3.8-flash",
+     "family": "gemini"
+    },
+    {
+     "id": "reviewer-claude",
+     "role": "reviewer",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-sonnet-5-5",
+     "family": "claude-sonnet"
+    },
+    {
+     "id": "reviewer-nemotron",
+     "role": "reviewer",
+     "provider": "openai_compatible",
+     "model_id": "nvidia/nemotron-3-super",
+     "family": "nemotron",
+     "json_mode": "json_schema"
+    },
+    {
+     "id": "threat-modeler",
+     "role": "threat_modeler",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-sonnet-5-5",
+     "family": "claude-sonnet"
+    },
+    {
+     "id": "test-designer",
+     "role": "test_designer",
+     "provider": "openai_compatible",
+     "model_id": "gemini-3.8-flash",
+     "family": "gemini"
+    }
+   ],
+   "usage": {
+    "tokens": 45003,
+    "model_calls": 10,
+    "requests": 0,
+    "tokens_known": null
+   },
+   "reviews": [
+    {
+     "agent_id": "reviewer-gemini",
+     "status": "incomplete",
+     "findings": 0
+    },
+    {
+     "agent_id": "reviewer-claude",
+     "status": "completed",
+     "findings": 8
+    },
+    {
+     "agent_id": "reviewer-nemotron",
+     "status": "completed",
+     "findings": 5
+    }
+   ],
+   "scanners": [
+    {
+     "id": "semgrep",
+     "status": "completed",
+     "findings": 0
+    },
+    {
+     "id": "osv",
+     "status": "completed",
+     "findings": 0
+    },
+    {
+     "id": "gitleaks",
+     "status": "completed",
+     "findings": 0
+    }
+   ],
+   "executions": [],
+   "findings_by_state": {},
+   "unredacted_literals": 2,
+   "note": "The sealed snapshot kept fixture-web-a and fixture-web-b readable while undeclared passwords stayed redacted; reviewer-gemini refused, and with no fallback configured the run stopped at whitebox."
+  },
+  {
+   "name": "真模型驗收 #21：Web API（vulnerable）＋操作者案例（BOLA、登出）＋不遮蔽的測試 session＋本地 Qwen 備援",
+   "run_id": "660bebe1-28b3-4ab9-bb26-a16d471b36b0",
+   "created_at": "2026-10-11T10:35:46.103093+00:00",
+   "status": "incomplete",
+   "stage": "complete",
+   "error": null,
+   "target": "http://127.0.0.1:8913",
+   "source": "fixtures/web-api",
+   "static_tools": [
+    "semgrep",
+    "osv",
+    "gitleaks"
+   ],
+   "models": [
+    {
+     "id": "commander",
+     "role": "commander",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-opus-5-5",
+     "family": "claude"
+    },
+    {
+     "id": "reviewer-gemini",
+     "role": "reviewer",
+     "provider": "openai_compatible",
+     "model_id": "gemini-3.8-flash",
+     "family": "gemini"
+    },
+    {
+     "id": "reviewer-claude",
+     "role": "reviewer",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-sonnet-5-5",
+     "family": "claude-sonnet"
+    },
+    {
+     "id": "reviewer-nemotron",
+     "role": "reviewer",
+     "provider": "openai_compatible",
+     "model_id": "nvidia/nemotron-3-super",
+     "family": "nemotron",
+     "json_mode": "json_schema"
+    },
+    {
+     "id": "threat-modeler",
+     "role": "threat_modeler",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-sonnet-5-5",
+     "family": "claude-sonnet"
+    },
+    {
+     "id": "test-designer",
+     "role": "test_designer",
+     "provider": "openai_compatible",
+     "model_id": "gemini-3.8-flash",
+     "family": "gemini"
+    },
+    {
+     "id": "local-fallback",
+     "role": "fallback",
+     "provider": "openai_compatible",
+     "model_id": "qwen/qwen3.8-27b",
+     "family": "qwen",
+     "json_mode": "json_schema",
+     "fallback_for": [
+      "reviewer-gemini"
+     ]
+    }
+   ],
+   "usage": {
+    "tokens": 212937,
+    "model_calls": 17,
+    "requests": 8,
+    "tokens_known": null
+   },
+   "reviews": [
+    {
+     "agent_id": "reviewer-gemini",
+     "status": "completed",
+     "findings": 3
+    },
+    {
+     "agent_id": "reviewer-claude",
+     "status": "completed",
+     "findings": 7
+    },
+    {
+     "agent_id": "reviewer-nemotron",
+     "status": "completed",
+     "findings": 2
+    }
+   ],
+   "scanners": [
+    {
+     "id": "semgrep",
+     "status": "completed",
+     "findings": 0
+    },
+    {
+     "id": "osv",
+     "status": "completed",
+     "findings": 0
+    },
+    {
+     "id": "gitleaks",
+     "status": "completed",
+     "findings": 0
+    }
+   ],
+   "executions": [
+    {
+     "case_id": "C-BOLA",
+     "status": "fail",
+     "reason": "A forbidden test canary was observed in the response."
+    },
+    {
+     "case_id": "C-LOGOUT",
+     "status": "fail",
+     "reason": "Synthetic session revocation sequence"
+    }
+   ],
+   "findings_by_state": {
+    "hypothesis": 12,
+    "validated_dynamic": 2
+   },
+   "unredacted_literals": 2,
+   "note": "reviewer-gemini answered, so the fallback was not used; the threat modeler broke a dataflow reference rule twice and the run resumed once. No reviewer reported redacted session tokens, unlike #14."
   }
  ]
 }
