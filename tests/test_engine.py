@@ -740,6 +740,17 @@ def test_model_designed_cases_follow_a_strict_contract():
             CaseDesignProposal.model_validate({"cases":[{**case,**change}]})
 
 
+def test_live_run_example_is_a_valid_live_input_naming_no_local_account():
+    folder=Path(__file__).resolve().parents[1]/"fixtures/web-api"
+    example=json.loads((folder/"live-run.example.json").read_text(encoding="utf-8"))
+    run=RunInput.model_validate(example)
+    assert run.mode=="live" and run.source_path=="fixtures/web-api"
+    # The operator puts in their own SSO profile; the example carries only the placeholder.
+    assert {p.aws_profile for p in run.models if p.provider=="bedrock"}=={"your-sso-profile"}
+    # The BOLA case is the one documented beside it, so the two cannot drift apart.
+    assert run.cases[0]==json.loads((folder/"bola-case.json").read_text(encoding="utf-8"))
+
+
 async def test_invalid_unicode_escapes_from_untrusted_json_never_stop_saving(engine):
     run=await finished_demo(engine)
     lone=json.loads('"leak \\ud800 title"')

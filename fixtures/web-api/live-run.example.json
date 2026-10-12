@@ -1,0 +1,279 @@
+{
+  "schema_version": 2,
+  "name": "Web API fixture (vulnerable): BOLA and logout cases, local Qwen fallback",
+  "mode": "live",
+  "source_path": "fixtures/web-api",
+  "deployment_id": "web-api-vulnerable-8913",
+  "target_url": "http://127.0.0.1:8913",
+  "data_policy": "cloud_allowed",
+  "allowed_model_origins": [
+    "https://generativelanguage.googleapis.com",
+    "https://bedrock-runtime.ap-southeast-1.amazonaws.com",
+    "http://127.0.0.1:5422"
+  ],
+  "allowed_target_ips": [
+    "127.0.0.1"
+  ],
+  "allowed_requests": [
+    {
+      "method": "GET",
+      "path": "/orders/order-a"
+    },
+    {
+      "method": "GET",
+      "path": "/orders/order-b"
+    },
+    {
+      "method": "GET",
+      "path": "/me"
+    },
+    {
+      "method": "POST",
+      "path": "/auth/login"
+    },
+    {
+      "method": "POST",
+      "path": "/auth/logout"
+    },
+    {
+      "method": "POST",
+      "path": "/__fixture/reset"
+    }
+  ],
+  "budget": {
+    "max_seconds": 5400,
+    "max_requests": 40,
+    "max_model_calls": 40,
+    "max_tokens": 800000
+  },
+  "models": [
+    {
+      "id": "commander",
+      "role": "commander",
+      "provider": "bedrock",
+      "model_id": "global.anthropic.claude-opus-5-5",
+      "family": "claude",
+      "endpoint": "https://bedrock-runtime.ap-southeast-1.amazonaws.com",
+      "credential_env": "",
+      "aws_profile": "your-sso-profile",
+      "json_mode": "json_object",
+      "temperature": null,
+      "max_output_tokens": 16000,
+      "timeout_seconds": 300,
+      "prompt_version": "v2"
+    },
+    {
+      "id": "reviewer-gemini",
+      "role": "reviewer",
+      "provider": "openai_compatible",
+      "model_id": "gemini-3.8-flash",
+      "family": "gemini",
+      "endpoint": "https://generativelanguage.googleapis.com/v1beta/openai",
+      "credential_env": "VIBEAUDIT_GEMINI_API_KEY",
+      "aws_profile": "",
+      "json_mode": "json_object",
+      "temperature": null,
+      "max_output_tokens": 8000,
+      "timeout_seconds": 300,
+      "prompt_version": "v2"
+    },
+    {
+      "id": "reviewer-claude",
+      "role": "reviewer",
+      "provider": "bedrock",
+      "model_id": "global.anthropic.claude-sonnet-5-5",
+      "family": "claude-sonnet",
+      "endpoint": "https://bedrock-runtime.ap-southeast-1.amazonaws.com",
+      "credential_env": "",
+      "aws_profile": "your-sso-profile",
+      "json_mode": "json_object",
+      "temperature": null,
+      "max_output_tokens": 8000,
+      "timeout_seconds": 300,
+      "prompt_version": "v2"
+    },
+    {
+      "id": "reviewer-nemotron",
+      "role": "reviewer",
+      "provider": "openai_compatible",
+      "model_id": "nvidia/nemotron-3-super",
+      "family": "nemotron",
+      "endpoint": "http://127.0.0.1:5422/v1",
+      "credential_env": "VIBEAUDIT_LMSTUDIO_API_TOKEN",
+      "aws_profile": "",
+      "json_mode": "json_schema",
+      "temperature": null,
+      "max_output_tokens": 16000,
+      "timeout_seconds": 1800,
+      "prompt_version": "v2"
+    },
+    {
+      "id": "threat-modeler",
+      "role": "threat_modeler",
+      "provider": "bedrock",
+      "model_id": "global.anthropic.claude-sonnet-5-5",
+      "family": "claude-sonnet",
+      "endpoint": "https://bedrock-runtime.ap-southeast-1.amazonaws.com",
+      "credential_env": "",
+      "aws_profile": "your-sso-profile",
+      "json_mode": "json_object",
+      "temperature": null,
+      "max_output_tokens": 16000,
+      "timeout_seconds": 300,
+      "prompt_version": "v2"
+    },
+    {
+      "id": "test-designer",
+      "role": "test_designer",
+      "provider": "openai_compatible",
+      "model_id": "gemini-3.8-flash",
+      "family": "gemini",
+      "endpoint": "https://generativelanguage.googleapis.com/v1beta/openai",
+      "credential_env": "VIBEAUDIT_GEMINI_API_KEY",
+      "aws_profile": "",
+      "json_mode": "json_object",
+      "temperature": null,
+      "max_output_tokens": 8000,
+      "timeout_seconds": 300,
+      "prompt_version": "v2"
+    },
+    {
+      "id": "local-fallback",
+      "role": "fallback",
+      "provider": "openai_compatible",
+      "model_id": "qwen/qwen3.8-27b",
+      "family": "qwen",
+      "endpoint": "http://127.0.0.1:5422/v1",
+      "credential_env": "VIBEAUDIT_LMSTUDIO_API_TOKEN",
+      "aws_profile": "",
+      "json_mode": "json_schema",
+      "temperature": null,
+      "max_output_tokens": 32768,
+      "timeout_seconds": 1800,
+      "prompt_version": "v2",
+      "fallback_for": [
+        "reviewer-gemini",
+        "threat-modeler"
+      ]
+    }
+  ],
+  "auth_profiles": [
+    {
+      "id": "tenant-a",
+      "credential_env": "VIBEAUDIT_FIXTURE_A"
+    },
+    {
+      "id": "tenant-b",
+      "credential_env": "VIBEAUDIT_FIXTURE_B"
+    }
+  ],
+  "requirements": [
+    {
+      "id": "R-TENANT-ISOLATION",
+      "statement": "A tenant must not read another tenant's orders.",
+      "threat_ids": [
+        "T-BOLA"
+      ],
+      "source_kind": "operator",
+      "source": "fixtures/web-api/README.md"
+    },
+    {
+      "id": "R-SESSION-REVOCATION",
+      "statement": "Logging out must revoke the session token.",
+      "threat_ids": [
+        "T-SESSION"
+      ],
+      "source_kind": "operator",
+      "source": "fixtures/web-api/README.md"
+    }
+  ],
+  "static_tools": [
+    "semgrep",
+    "osv",
+    "gitleaks"
+  ],
+  "runtime_profile": "default",
+  "fixture_profile": "synthetic-web-v1",
+  "cases": [
+    {
+      "id": "C-BOLA",
+      "threat_ids": [
+        "T-BOLA"
+      ],
+      "requirement_id": "R-TENANT-ISOLATION",
+      "title": "Tenant A must not read tenant B synthetic order",
+      "adapter": "http",
+      "method": "GET",
+      "path": "/orders/order-b",
+      "headers": {},
+      "body": null,
+      "identity": "tenant-a",
+      "preconditions": [
+        {
+          "name": "fixture_exists",
+          "method": "GET",
+          "path": "/orders/order-b",
+          "identity": "tenant-b",
+          "expected_status": 200,
+          "required_text": [
+            "TENANT_B_ORDER_CANARY"
+          ]
+        }
+      ],
+      "oracle": {
+        "kind": "deny_sensitive",
+        "forbidden_text": [
+          "TENANT_B_ORDER_CANARY"
+        ],
+        "allowed_statuses": [
+          403,
+          404
+        ],
+        "required_observations": [
+          "http_response"
+        ],
+        "expected_role": null
+      },
+      "cleanup": null,
+      "side_effects": false,
+      "repetitions": 1,
+      "observation_mode": "external_observation"
+    },
+    {
+      "id": "C-LOGOUT",
+      "title": "Logout must revoke the synthetic session",
+      "threat_ids": [
+        "T-SESSION"
+      ],
+      "requirement_id": "R-SESSION-REVOCATION",
+      "adapter": "fixture",
+      "method": "POST",
+      "path": "/auth/logout",
+      "headers": {},
+      "body": {},
+      "identity": "tenant-a",
+      "preconditions": [],
+      "oracle": {
+        "kind": "deny_sensitive",
+        "forbidden_text": [
+          "TENANT_A_ORDER_CANARY"
+        ],
+        "allowed_statuses": [
+          401
+        ],
+        "required_observations": [
+          "logout_sequence"
+        ],
+        "expected_role": null
+      },
+      "cleanup": null,
+      "side_effects": true,
+      "repetitions": 1,
+      "observation_mode": "external_observation"
+    }
+  ],
+  "unredacted_literals": [
+    "fixture-web-a",
+    "fixture-web-b"
+  ]
+}
