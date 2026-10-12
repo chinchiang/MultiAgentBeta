@@ -15,6 +15,7 @@ import logging
 import os
 import re
 import socket
+import ssl
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -24,9 +25,12 @@ from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
 from referencing import Registry
 
-from .adapters import CREDENTIAL_ORIGINS_ENV, DEFAULT_CREDENTIAL_ORIGINS, credential_env_allowed
+from .adapters import CREDENTIAL_ORIGINS_ENV, DEFAULT_CREDENTIAL_ORIGINS, PRIVATE_MODEL_CA_ENV, PRIVATE_MODEL_ORIGINS_ENV, credential_env_allowed
 
 MAX_ATTEMPTS = 2
+PROBE_OUTPUT_TOKENS = 1024
+# RFC 1918 and IPv6 unique-local space only: link-local (cloud metadata), CGNAT and reserved ranges stay denied.
+_PRIVATE_NETWORKS = tuple(ipaddress.ip_network(net) for net in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7"))
 MAX_RESPONSE_BYTES = 512 * 1024
 MAX_PAYLOAD_BYTES = 512 * 1024
 _PROVIDERS = {"openai", "anthropic", "nvidia_nim", "openai_compatible"}
@@ -106,6 +110,38 @@ def credential_origins(environ=None) -> dict[str, set[str]]:
             raise ProviderError(f"{CREDENTIAL_ORIGINS_ENV} entries must be VIBEAUDIT_NAME=scheme://host[:port]", code="invalid_credential_binding") from None
         rebound.setdefault(name.strip(), set()).add(origin)
     return {**bound, **rebound}
+
+
+def private_model_origins(environ=None) -> set[str]:
+    """HTTPS model origins the operator runs on a private network, so they may resolve to RFC 1918/ULA addresses.
+
+    Without this, a model hostname must resolve only to globally routable addresses. Format: comma-separated origins.
+    """
+    environ = os.environ if environ is None else environ
+    origins = set()
+    for entry in filter(None, (item.strip() for item in environ.get(PRIVATE_MODEL_ORIGINS_ENV, "").split(","))):
+        try:
+            if not entry.startswith("https://") or urlsplit(entry).path not in {"", "/"}:
+                raise ValueError
+            origins.add(_origin(entry)[0])
+        except (ValueError, ProviderError):
+            raise ProviderError(f"{PRIVATE_MODEL_ORIGINS_ENV} entries must be https://host[:port] origins", code="invalid_private_origin") from None
+    return origins
+
+
+def _model_address_allowed(ip, origin: str) -> bool:
+    return ip.is_global or (any(ip in net for net in _PRIVATE_NETWORKS) and origin in private_model_origins())
+
+
+def _tls_verify(origin: str):
+    """Public CAs by default. The operator's CA file replaces them for its private-network origins only."""
+    path = os.environ.get(PRIVATE_MODEL_CA_ENV, "")
+    if not path or origin not in private_model_origins():
+        return True
+    try:
+        return ssl.create_default_context(cafile=path)
+    except (OSError, ssl.SSLError):
+        raise ProviderError(f"{PRIVATE_MODEL_CA_ENV} must name a readable PEM CA file", code="invalid_private_ca") from None
 
 
 def _is_loopback(host: str) -> bool:
@@ -243,7 +279,7 @@ class _OriginTransport(httpx.AsyncBaseTransport):
         self.origin = origin
         self.pinned_ip = pinned_ip
         self.dispatched = False
-        self.inner = httpx.AsyncHTTPTransport(retries=0, verify=True, trust_env=False)
+        self.inner = httpx.AsyncHTTPTransport(retries=0, verify=_tls_verify(origin), trust_env=False)
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         actual, _ = _origin(str(request.url.copy_with(query=None, fragment=None)))
@@ -288,10 +324,11 @@ class _OriginTransport(httpx.AsyncBaseTransport):
 async def _resolve_model_ip(endpoint: str) -> str:
     parsed = urlsplit(endpoint)
     host = parsed.hostname
+    origin = _origin(endpoint)[0]
     try:
         literal = ipaddress.ip_address(host)
-        if not literal.is_global and not literal.is_loopback:
-            raise ProviderError("Model endpoint IP must be global or explicit loopback", code="origin_denied")
+        if not literal.is_loopback and not _model_address_allowed(literal, origin):
+            raise ProviderError(f"Model endpoint IP must be global, explicit loopback, or private under an origin listed in {PRIVATE_MODEL_ORIGINS_ENV}", code="origin_denied")
         return str(literal)
     except ValueError:
         pass
@@ -299,8 +336,8 @@ async def _resolve_model_ip(endpoint: str) -> str:
         addresses = await asyncio.get_running_loop().getaddrinfo(host, parsed.port or 443, type=socket.SOCK_STREAM)
         # IPv4 first, in numeric order, like target pinning: many hosts (WSL2 NAT among them) lack IPv6 routes.
         ips = sorted({ipaddress.ip_address(item[4][0]) for item in addresses}, key=lambda ip: (ip.version, int(ip)))
-        if not ips or any(not ip.is_global for ip in ips):
-            raise ProviderError("Model DNS resolved outside globally routable addresses", code="origin_denied")
+        if not ips or any(not _model_address_allowed(ip, origin) for ip in ips):
+            raise ProviderError(f"Model DNS resolved outside globally routable addresses; list a private-network model origin in {PRIVATE_MODEL_ORIGINS_ENV}", code="origin_denied")
         return str(ips[0])
     except (OSError, ValueError):
         raise _NotSent("Model DNS resolution failed", code="endpoint_unavailable") from None
@@ -342,7 +379,9 @@ async def _complete(library, profile, provider, endpoint, credential, messages, 
             temperature=profile.get("temperature", 0), max_tokens=output_limit,
             timeout=timeout, stream=False, num_retries=0, max_retries=0,
             fallbacks=None, drop_params=False, caching=False,
-            success_callback=[], failure_callback=[], input_callback=[],
+            # Not input_callback: LiteLLM 1.102.1 forwards that unknown name into the request body, which strict APIs reject.
+            # _load_litellm already empties the module-level callback lists.
+            success_callback=[], failure_callback=[],
         )
 
 
@@ -478,6 +517,7 @@ async def probe_model(profile: dict, policy: dict) -> dict:
     probe_policy = dict(policy)
     probe_policy["response_schema"] = {"type": "object", "properties": {"probe": {"const": "vibeaudit"}, "ok": {"const": True}}, "required": ["probe", "ok"], "additionalProperties": False}
     probe_profile = dict(profile)
-    probe_profile["max_output_tokens"] = min(profile.get("max_output_tokens", 3000), 128)
+    # Reasoning models spend output tokens on hidden reasoning first; a tighter cap truncates them intermittently.
+    probe_profile["max_output_tokens"] = min(profile.get("max_output_tokens", 3000), PROBE_OUTPUT_TOKENS)
     result = await generate_json(probe_profile, "This is a harmless connectivity and JSON capability probe. Return {\"probe\":\"vibeaudit\",\"ok\":true}.", {"request": "probe"}, probe_policy)
     return {"id": profile.get("id"), "provider": profile["provider"], "model_id": profile["model_id"], "status": "verified", "available": True, "simulated": False, "capabilities": {"connectivity": "verified", "json_object": "verified", "local_schema_validation": "verified", "tool_calling": "not_tested", "parallel_tool_calling": "not_tested", "native_json_schema": "not_tested"}, "usage": result["usage"], "limitations": ["One successful probe does not establish security-review accuracy.", "Provider-native strict schema/tool calling were not tested.", "A local endpoint may itself forward data; operate it within a trusted egress boundary.", "No monetary cost claim; token accounting is provider reported."]}
