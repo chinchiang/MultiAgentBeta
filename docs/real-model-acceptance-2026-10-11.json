@@ -2234,6 +2234,408 @@
     "Fallback local-fallback (qwen/qwen3.8-27b) answered for reviewer-gemini at stage whitebox after it refused"
    ],
    "note": "The local fallback stood in for reviewer-gemini and the threat modeler. reviewer-gemini refused and the fallback answered the whole review again, with the family gate passing; the threat modeler did not refuse and met the dataflow rule on its first attempt on the code that states it, so its fallback was not used. Ran end to end with no resume."
+  },
+  {
+   "name": "真模型驗收 #24：Web API（vulnerable）＋操作者案例（BOLA、登出）＋不遮蔽的測試 session＋本地 Qwen 備援（審查員與威脅建模員）",
+   "run_id": "9cbf9cbb-e593-4646-9f85-d1308e2c7714",
+   "created_at": "2026-10-11T15:40:42.446795+00:00",
+   "status": "incomplete",
+   "stage": "complete",
+   "error": null,
+   "target": "http://127.0.0.1:8913",
+   "source": "fixtures/web-api",
+   "static_tools": [
+    "semgrep",
+    "osv",
+    "gitleaks"
+   ],
+   "models": [
+    {
+     "id": "commander",
+     "role": "commander",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-opus-5-5",
+     "family": "claude"
+    },
+    {
+     "id": "reviewer-gemini",
+     "role": "reviewer",
+     "provider": "openai_compatible",
+     "model_id": "gemini-3.8-flash",
+     "family": "gemini"
+    },
+    {
+     "id": "reviewer-claude",
+     "role": "reviewer",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-sonnet-5-5",
+     "family": "claude-sonnet"
+    },
+    {
+     "id": "reviewer-nemotron",
+     "role": "reviewer",
+     "provider": "openai_compatible",
+     "model_id": "nvidia/nemotron-3-super",
+     "family": "nemotron",
+     "json_mode": "json_schema"
+    },
+    {
+     "id": "threat-modeler",
+     "role": "threat_modeler",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-sonnet-5-5",
+     "family": "claude-sonnet"
+    },
+    {
+     "id": "test-designer",
+     "role": "test_designer",
+     "provider": "openai_compatible",
+     "model_id": "gemini-3.8-flash",
+     "family": "gemini"
+    },
+    {
+     "id": "local-fallback",
+     "role": "fallback",
+     "provider": "openai_compatible",
+     "model_id": "qwen/qwen3.8-27b",
+     "family": "qwen",
+     "json_mode": "json_schema",
+     "fallback_for": [
+      "reviewer-gemini",
+      "threat-modeler"
+     ]
+    }
+   ],
+   "usage": {
+    "tokens": 217695,
+    "model_calls": 20,
+    "requests": 8,
+    "tokens_known": null
+   },
+   "reviews": [
+    {
+     "agent_id": "reviewer-claude",
+     "status": "completed",
+     "findings": 6
+    },
+    {
+     "agent_id": "reviewer-gemini",
+     "status": "completed",
+     "findings": 16,
+     "answered_by": "local-fallback"
+    },
+    {
+     "agent_id": "reviewer-nemotron",
+     "status": "completed",
+     "findings": 3
+    }
+   ],
+   "scanners": [
+    {
+     "id": "semgrep",
+     "status": "completed",
+     "findings": 0
+    },
+    {
+     "id": "osv",
+     "status": "completed",
+     "findings": 0
+    },
+    {
+     "id": "gitleaks",
+     "status": "completed",
+     "findings": 0
+    }
+   ],
+   "executions": [
+    {
+     "case_id": "C-BOLA",
+     "status": "fail",
+     "reason": "A forbidden test canary was observed in the response."
+    },
+    {
+     "case_id": "C-LOGOUT",
+     "status": "fail",
+     "reason": "Synthetic session revocation sequence"
+    }
+   ],
+   "findings_by_state": {
+    "hypothesis": 25,
+    "validated_dynamic": 2
+   },
+   "unredacted_literals": 2,
+   "fallback_limitations": [
+    "Fallback local-fallback (qwen/qwen3.8-27b) answered for reviewer-gemini at stage whitebox after it refused"
+   ],
+   "note": "The threat modeler did not refuse and passed on its first attempt, so its fallback was not used. reviewer-gemini refused and the fallback answered the whole review, the family gate passing. Nemotron was truncated twice: the first resume failed again because LM Studio had reloaded it after the reboot with an 8,192-token context; after reloading it with 71,936 the next resume passed whitebox. The AWS SSO session then expired at adjudication (no request sent), and after sign-in the last resume ran to the end. An earlier attempt failed at preflight because LM Studio was not reachable; it is not recorded. After a host reboot the environment was rebuilt (database, fixture, offline OSV data, runtime profile, console) and the run input was rewritten from the #23 record and the fixture's README; the C-LOGOUT case, the two operator requirements and the commander and threat modeler output limits (16,000) may differ from #23's."
+  },
+  {
+   "name": "真模型驗收 #25：Web API（vulnerable）＋操作者案例（BOLA、登出）＋不遮蔽的測試 session＋本地 Qwen 備援（審查員與威脅建模員）",
+   "run_id": "c5e778a4-cd60-4bdf-bc39-279f6ffda8cc",
+   "created_at": "2026-10-11T21:39:26.953566+00:00",
+   "status": "incomplete",
+   "stage": "complete",
+   "error": null,
+   "target": "http://127.0.0.1:8913",
+   "source": "fixtures/web-api",
+   "static_tools": [
+    "semgrep",
+    "osv",
+    "gitleaks"
+   ],
+   "models": [
+    {
+     "id": "commander",
+     "role": "commander",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-opus-5-5",
+     "family": "claude"
+    },
+    {
+     "id": "reviewer-gemini",
+     "role": "reviewer",
+     "provider": "openai_compatible",
+     "model_id": "gemini-3.8-flash",
+     "family": "gemini"
+    },
+    {
+     "id": "reviewer-claude",
+     "role": "reviewer",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-sonnet-5-5",
+     "family": "claude-sonnet"
+    },
+    {
+     "id": "reviewer-nemotron",
+     "role": "reviewer",
+     "provider": "openai_compatible",
+     "model_id": "nvidia/nemotron-3-super",
+     "family": "nemotron",
+     "json_mode": "json_schema"
+    },
+    {
+     "id": "threat-modeler",
+     "role": "threat_modeler",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-sonnet-5-5",
+     "family": "claude-sonnet"
+    },
+    {
+     "id": "test-designer",
+     "role": "test_designer",
+     "provider": "openai_compatible",
+     "model_id": "gemini-3.8-flash",
+     "family": "gemini"
+    },
+    {
+     "id": "local-fallback",
+     "role": "fallback",
+     "provider": "openai_compatible",
+     "model_id": "qwen/qwen3.8-27b",
+     "family": "qwen",
+     "json_mode": "json_schema",
+     "fallback_for": [
+      "reviewer-gemini",
+      "threat-modeler"
+     ]
+    }
+   ],
+   "usage": {
+    "tokens": 233235,
+    "model_calls": 18,
+    "requests": 8,
+    "tokens_known": null
+   },
+   "reviews": [
+    {
+     "agent_id": "reviewer-claude",
+     "status": "completed",
+     "findings": 7
+    },
+    {
+     "agent_id": "reviewer-gemini",
+     "status": "completed",
+     "findings": 17,
+     "answered_by": "local-fallback"
+    },
+    {
+     "agent_id": "reviewer-nemotron",
+     "status": "completed",
+     "findings": 4
+    }
+   ],
+   "scanners": [
+    {
+     "id": "semgrep",
+     "status": "completed",
+     "findings": 0
+    },
+    {
+     "id": "osv",
+     "status": "completed",
+     "findings": 0
+    },
+    {
+     "id": "gitleaks",
+     "status": "completed",
+     "findings": 0
+    }
+   ],
+   "executions": [
+    {
+     "case_id": "C-BOLA",
+     "status": "fail",
+     "reason": "A forbidden test canary was observed in the response."
+    },
+    {
+     "case_id": "C-LOGOUT",
+     "status": "fail",
+     "reason": "Synthetic session revocation sequence"
+    }
+   ],
+   "findings_by_state": {
+    "hypothesis": 28,
+    "validated_dynamic": 2
+   },
+   "unredacted_literals": 2,
+   "fallback_limitations": [
+    "Fallback local-fallback (qwen/qwen3.8-27b) answered for reviewer-gemini at stage whitebox after it refused"
+   ],
+   "note": "The threat modeler did not refuse and passed on its first attempt, so its fallback was not used. reviewer-gemini refused and the fallback answered the whole review, the family gate passing. Nemotron was truncated at its 16,000 output limit once (context 71,936), and one resume ran to the end. After a host reboot the environment was rebuilt (database, fixture, offline OSV data, runtime profile, console) and the run input was rewritten from the #23 record and the fixture's README; the C-LOGOUT case, the two operator requirements and the commander and threat modeler output limits (16,000) may differ from #23's."
+  },
+  {
+   "name": "真模型驗收 #26：Web API（vulnerable）＋操作者案例（BOLA、登出）＋不遮蔽的測試 session＋本地 Qwen 備援（審查員與威脅建模員）",
+   "run_id": "dcf44321-0ad6-4274-b346-b07977adffa8",
+   "created_at": "2026-10-11T22:21:44.428420+00:00",
+   "status": "incomplete",
+   "stage": "complete",
+   "error": null,
+   "target": "http://127.0.0.1:8913",
+   "source": "fixtures/web-api",
+   "static_tools": [
+    "semgrep",
+    "osv",
+    "gitleaks"
+   ],
+   "models": [
+    {
+     "id": "commander",
+     "role": "commander",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-opus-5-5",
+     "family": "claude"
+    },
+    {
+     "id": "reviewer-gemini",
+     "role": "reviewer",
+     "provider": "openai_compatible",
+     "model_id": "gemini-3.8-flash",
+     "family": "gemini"
+    },
+    {
+     "id": "reviewer-claude",
+     "role": "reviewer",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-sonnet-5-5",
+     "family": "claude-sonnet"
+    },
+    {
+     "id": "reviewer-nemotron",
+     "role": "reviewer",
+     "provider": "openai_compatible",
+     "model_id": "nvidia/nemotron-3-super",
+     "family": "nemotron",
+     "json_mode": "json_schema"
+    },
+    {
+     "id": "threat-modeler",
+     "role": "threat_modeler",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-sonnet-5-5",
+     "family": "claude-sonnet"
+    },
+    {
+     "id": "test-designer",
+     "role": "test_designer",
+     "provider": "openai_compatible",
+     "model_id": "gemini-3.8-flash",
+     "family": "gemini"
+    },
+    {
+     "id": "local-fallback",
+     "role": "fallback",
+     "provider": "openai_compatible",
+     "model_id": "qwen/qwen3.8-27b",
+     "family": "qwen",
+     "json_mode": "json_schema",
+     "fallback_for": [
+      "reviewer-gemini",
+      "threat-modeler"
+     ]
+    }
+   ],
+   "usage": {
+    "tokens": 208006,
+    "model_calls": 17,
+    "requests": 8,
+    "tokens_known": null
+   },
+   "reviews": [
+    {
+     "agent_id": "reviewer-claude",
+     "status": "completed",
+     "findings": 5
+    },
+    {
+     "agent_id": "reviewer-gemini",
+     "status": "completed",
+     "findings": 16,
+     "answered_by": "local-fallback"
+    },
+    {
+     "agent_id": "reviewer-nemotron",
+     "status": "completed",
+     "findings": 3
+    }
+   ],
+   "scanners": [
+    {
+     "id": "semgrep",
+     "status": "completed",
+     "findings": 0
+    },
+    {
+     "id": "osv",
+     "status": "completed",
+     "findings": 0
+    },
+    {
+     "id": "gitleaks",
+     "status": "completed",
+     "findings": 0
+    }
+   ],
+   "executions": [
+    {
+     "case_id": "C-BOLA",
+     "status": "fail",
+     "reason": "A forbidden test canary was observed in the response."
+    },
+    {
+     "case_id": "C-LOGOUT",
+     "status": "fail",
+     "reason": "Synthetic session revocation sequence"
+    }
+   ],
+   "findings_by_state": {
+    "hypothesis": 24,
+    "validated_dynamic": 2
+   },
+   "unredacted_literals": 2,
+   "fallback_limitations": [
+    "Fallback local-fallback (qwen/qwen3.8-27b) answered for reviewer-gemini at stage whitebox after it refused"
+   ],
+   "note": "The threat modeler did not refuse and passed on its first attempt, so its fallback was not used. reviewer-gemini refused and the fallback answered the whole review, the family gate passing. Ran end to end with no resume. After a host reboot the environment was rebuilt (database, fixture, offline OSV data, runtime profile, console) and the run input was rewritten from the #23 record and the fixture's README; the C-LOGOUT case, the two operator requirements and the commander and threat modeler output limits (16,000) may differ from #23's."
   }
  ]
 }
