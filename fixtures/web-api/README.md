@@ -37,6 +37,13 @@ $env:VIBEAUDIT_FIXTURE_B = 'fixture-web-b'
 
 `bola-case.json` 是核心 HTTP adapter 的案例範例。使用時在 run 中允許 `GET /orders/order-b`，auth profiles ID 必須為 `tenant-a`、`tenant-b`，且威脅模型要包含 `T-BOLA` 與 `R-TENANT-ISOLATION` 的對應需求。Compiler 會補來源／威脅版本雜湊；不要手動偽造 gate receipt。此檔本身不是已完成的測試結果。
 
+`live-run.example.json` 是真模型驗收 #24～#26 用的完整 live run 設定，已去掉 AWS profile 與本機路徑。它對 vulnerable 靶場（8913）跑 BOLA 與登出兩個操作者案例，宣告 `fixture-web-a`、`fixture-web-b` 為不遮蔽的測試字面值，並以本地 Qwen 當 Gemini 審查員與威脅建模員的備援。使用前：
+
+- 從 repo 根目錄啟動控制台，`source_path` 的相對路徑才會指到這個目錄；把 `your-sso-profile` 換成 `VIBEAUDIT_BEDROCK_PROFILES` 列出的 profile。
+- 設定 `VIBEAUDIT_GEMINI_API_KEY`、`VIBEAUDIT_LMSTUDIO_API_TOKEN`，並在 `VIBEAUDIT_MODEL_CREDENTIAL_ORIGINS` 把它們分別綁到 `https://generativelanguage.googleapis.com` 與 `http://127.0.0.1:5422`。
+- 設定 `VIBEAUDIT_FIXTURE_A`、`VIBEAUDIT_FIXTURE_B`，並在 `VIBEAUDIT_TARGET_CREDENTIAL_ORIGINS` 綁到 `http://127.0.0.1:8913`；另外需要 `VIBEAUDIT_DATABASE_URL` 與提供三種靜態掃描器的 `VIBEAUDIT_RUNTIME_CONFIG`。
+- LM Studio 先以足夠的上下文載入兩個本地模型（驗收時 Nemotron 71,936、Qwen 81,920）；收到請求才自動載入時上下文可能只有 8,192，輸出會被截斷。
+
 ---
 # Local Synthetic Web/API Range
 
@@ -76,3 +83,10 @@ The logout test logs in as `alice` and captures the session, first successfully 
 `fixed` only fixes the two deliberate defects above; it is not a comprehensively secure application template.
 
 `bola-case.json` is a case example for the core HTTP adapter. To use it, allow `GET /orders/order-b` in the run, the auth profile IDs must be `tenant-a` and `tenant-b`, and the threat model must include the requirements mapped to `T-BOLA` and `R-TENANT-ISOLATION`. The compiler fills in the source/threat version hashes; do not manually forge the gate receipt. This file itself is not a completed test result.
+
+`live-run.example.json` is the complete live run input of real-model acceptance runs #24–#26, with the AWS profile and local paths removed. It runs the BOLA and logout operator cases against the vulnerable fixture (8913), declares `fixture-web-a` and `fixture-web-b` unredacted test literals, and makes a local Qwen the fallback for the Gemini reviewer and the threat modeler. Before using it:
+
+- Start the console from the repository root, so the relative `source_path` points at this directory, and replace `your-sso-profile` with a profile listed in `VIBEAUDIT_BEDROCK_PROFILES`.
+- Set `VIBEAUDIT_GEMINI_API_KEY` and `VIBEAUDIT_LMSTUDIO_API_TOKEN`, and bind them in `VIBEAUDIT_MODEL_CREDENTIAL_ORIGINS` to `https://generativelanguage.googleapis.com` and `http://127.0.0.1:5422`.
+- Set `VIBEAUDIT_FIXTURE_A` and `VIBEAUDIT_FIXTURE_B`, and bind them in `VIBEAUDIT_TARGET_CREDENTIAL_ORIGINS` to `http://127.0.0.1:8913`; `VIBEAUDIT_DATABASE_URL` and a `VIBEAUDIT_RUNTIME_CONFIG` providing the three static scanners are needed too.
+- Load both local models in LM Studio with enough context first (71,936 for Nemotron and 81,920 for Qwen in the acceptance runs); a model loaded on first request may get only 8,192, and its output is truncated.
