@@ -81,7 +81,9 @@ async def test_full_pipeline_with_synthetic_models_and_real_isolated_http(tmp_pa
         engine.start(run['id']);await engine.tasks[run['id']]
         result=store.get(run['id'])
         assert result['stage']=='complete',result.get('error')
-        assert result['status']=='completed',result.get('gaps')
+        assert result['status']==('incomplete' if static_tools else 'completed'),result.get('gaps')
+        if static_tools:
+            assert any(g.startswith('Finding lacks threat traceability:') for g in result['gaps'])
         assert len(review_inputs)==3 and review_inputs[0]==review_inputs[1]==review_inputs[2]
         assert review_inputs[0]['core_questions'] and review_inputs[0]['untrusted_commander_focus']==[]
         assert result['executions'][0]['status']=='pass'

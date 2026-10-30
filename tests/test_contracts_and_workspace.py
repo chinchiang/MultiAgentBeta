@@ -307,7 +307,7 @@ def test_workspace_settings_catalog_and_linked_retest(tmp_path):
         child=response.json()
         assert child["manifest"]["parent_run_id"]==run["id"]
         assert child["status"]=="created" and child["executions"]==[]
-        assert len(child["manifest"]["cases"])==3
+        assert len(child["manifest"]["cases"])==2
         finding_id=run["findings"][0]["id"]
         links=client.get(f"/api/runs/{child['id']}/trace").json()["links"]
         assert {(l["target_kind"],l["target_id"]) for l in links if l["relation"]=="retests"}=={("run",run["id"]),("finding",finding_id)}
@@ -351,6 +351,8 @@ def test_run_inventory_carries_summaries_and_concurrent_decisions_both_persist(t
         assert {"events","findings","artifacts"}<=set(whole) and all(whole.get(key)==value for key,value in listed[0].items())
         execution={x["case_id"]:x["evidence_id"] for x in run["executions"]}
         hypotheses=[f for f in run["findings"] if f["state"]=="hypothesis"][:2]
+        for finding in hypotheses: finding["threat_ids"]=[]
+        app.state.store.save(run)
         assert len(hypotheses)==2
         def decide(finding):
             body={"decision":"inconclusive","rationale":"Operator retest","evidence_ids":[execution["C-003"]],"threat_ids":["T-002"]}
@@ -378,6 +380,8 @@ def test_finding_decision_needs_independent_execution_evidence(tmp_path):
         # A hypothesis some review did not raise, so that review is not its own evidence.
         hypothesis=next(f for f in run["findings"] if f["state"]=="hypothesis" and set(reviews)-set(f["evidence_ids"]))
         review=next(key for key in reviews if key not in hypothesis["evidence_ids"])
+        hypothesis["threat_ids"]=[]
+        app.state.store.save(run)
         def decide(finding,decision,*evidence,threats=()):
             url=f"/api/runs/{run['id']}/findings/{finding['id']}/decision"
             body={"decision":decision,"rationale":"Operator retest","evidence_ids":list(evidence),"threat_ids":list(threats)}
@@ -406,6 +410,7 @@ def test_finding_decision_needs_independent_execution_evidence(tmp_path):
         # A run whose only T-001 execution passed lets that pass refute the hypothesis.
         stored=app.state.store.get(run["id"])
         stored["executions"]=[e for e in stored["executions"] if e["case_id"]!="C-001"]
+        stored["cases"]=[c for c in stored["cases"] if c["id"]!="C-001"]
         stored["findings"]=[f for f in stored["findings"] if f["id"]!=observed["id"]]
         app.state.store.save(stored)
         response=decide(hypothesis,"refuted",execution["C-002"],threats=["T-001"])

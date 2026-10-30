@@ -337,6 +337,74 @@ async def test_dns_rejects_private_results(monkeypatch):
         await providers._resolve_model_ip("https://api.example.com/v1")
 
 
+def test_private_model_origins_are_explicit_https_origins():
+    assert providers.private_model_origins({}) == set()
+    listed = providers.private_model_origins({"VIBEAUDIT_PRIVATE_MODEL_ORIGINS": "https://llm.corp.example, https://10.0.0.5:8443/"})
+    assert listed == {"https://llm.corp.example", "https://10.0.0.5:8443"}
+    for raw in ["http://llm.corp.example", "llm.corp.example", "https://llm.corp.example/v1", "https://user:pw@llm.corp.example"]:
+        with pytest.raises(providers.ProviderError) as err:
+            providers.private_model_origins({"VIBEAUDIT_PRIVATE_MODEL_ORIGINS": raw})
+        assert err.value.code == "invalid_private_origin"
+    from vibe_audit.adapters import credential_env_allowed
+    assert not credential_env_allowed("VIBEAUDIT_PRIVATE_MODEL_ORIGINS", {})
+    assert not credential_env_allowed("VIBEAUDIT_PRIVATE_MODEL_CA_FILE", {})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("listed,answer,allowed", [
+    ("", "10.6.94.120", False),
+    ("https://other.corp.example", "10.6.94.120", False),
+    ("https://llm.corp.example", "10.6.94.120", True),
+    ("https://llm.corp.example", "192.168.1.20", True),
+    ("https://llm.corp.example", "fd12:3456::1", True),
+    # Listing an origin never opens loopback-by-DNS, cloud metadata, CGNAT or reserved space.
+    ("https://llm.corp.example", "127.0.0.1", False),
+    ("https://llm.corp.example", "169.254.169.254", False),
+    ("https://llm.corp.example", "100.64.0.1", False),
+    ("https://llm.corp.example", "0.0.0.0", False),
+])
+async def test_private_dns_answers_need_the_listed_origin(monkeypatch, listed, answer, allowed):
+    async def answers(*_, **__):
+        return [(2, 1, 6, "", (answer, 443))]
+    monkeypatch.setattr(providers.asyncio.get_running_loop(), "getaddrinfo", answers)
+    monkeypatch.setenv("VIBEAUDIT_PRIVATE_MODEL_ORIGINS", listed)
+    if allowed:
+        assert await providers._resolve_model_ip("https://llm.corp.example/v1") == answer
+    else:
+        with pytest.raises(providers.ProviderError) as err:
+            await providers._resolve_model_ip("https://llm.corp.example/v1")
+        assert err.value.code == "origin_denied"
+
+
+@pytest.mark.asyncio
+async def test_private_literal_ip_needs_the_listed_origin(monkeypatch):
+    monkeypatch.delenv("VIBEAUDIT_PRIVATE_MODEL_ORIGINS", raising=False)
+    with pytest.raises(providers.ProviderError):
+        await providers._resolve_model_ip("https://10.0.0.5/v1")
+    monkeypatch.setenv("VIBEAUDIT_PRIVATE_MODEL_ORIGINS", "https://10.0.0.5,https://169.254.169.254")
+    assert await providers._resolve_model_ip("https://10.0.0.5/v1") == "10.0.0.5"
+    with pytest.raises(providers.ProviderError):
+        await providers._resolve_model_ip("https://169.254.169.254/v1")
+
+
+def test_private_ca_file_applies_only_to_listed_origins(monkeypatch, tmp_path):
+    import ssl
+    import certifi
+    monkeypatch.delenv("VIBEAUDIT_PRIVATE_MODEL_ORIGINS", raising=False)
+    monkeypatch.setenv("VIBEAUDIT_PRIVATE_MODEL_CA_FILE", certifi.where())
+    assert providers._tls_verify("https://llm.corp.example") is True
+    monkeypatch.setenv("VIBEAUDIT_PRIVATE_MODEL_ORIGINS", "https://llm.corp.example")
+    assert providers._tls_verify("https://api.openai.com") is True
+    context = providers._tls_verify("https://llm.corp.example")
+    assert isinstance(context, ssl.SSLContext) and context.verify_mode == ssl.CERT_REQUIRED and context.check_hostname
+    monkeypatch.setenv("VIBEAUDIT_PRIVATE_MODEL_CA_FILE", str(tmp_path / "missing.pem"))
+    with pytest.raises(providers.ProviderError) as err:
+        providers._OriginTransport("https://llm.corp.example", "10.0.0.5")
+    assert err.value.code == "invalid_private_ca"
+    monkeypatch.delenv("VIBEAUDIT_PRIVATE_MODEL_CA_FILE")
+    assert providers._tls_verify("https://llm.corp.example") is True
+
+
 def test_snapshot_redacts_excludes_secret_files_and_hashes(tmp_path):
     raw = 'password = "literal-test-secret"\n@app.get("/health")\ndef health(): pass\n'
     (tmp_path / "app.py").write_text(raw, encoding="utf-8")
@@ -436,7 +504,7 @@ async def test_installed_litellm_sdk_uses_guarded_http_transport(profile, policy
         with pytest.raises(providers.ProviderError) as error:
             await providers.generate_json(profile, "Return JSON.", {}, policy)
         # Operator policy: a received 429 or 5xx was not served and counts as unbilled; a redirect stays unknown.
-        assert error.value.usage["tokens_known"] is (response_status != 302)
+        assert error.value.usage["tokens_known"] is False
     assert len(captured) == 1
     assert not stray_connections
     assert captured[0].url.host == "127.0.0.1"
@@ -771,8 +839,8 @@ async def test_json_mode_asks_for_the_schema_where_a_server_accepts_only_that(pr
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failure,code,known", [(503, "provider_http_503", True), (500, "provider_http_500", True), (429, "provider_http_429", True),
-                                                (408, "provider_http_408", False), (400, "provider_http_400", True), (409, "provider_http_409", False), ("timeout", "provider_timeout", False)])
+@pytest.mark.parametrize("failure,code,known", [(503, "provider_http_503", False), (500, "provider_http_500", False), (429, "provider_http_429", False),
+                                                (408, "provider_http_408", False), (400, "provider_http_400", False), (409, "provider_http_409", False), ("timeout", "provider_timeout", False)])
 async def test_a_failed_model_call_names_its_status_but_never_its_body(profile, policy, fake_provider, failure, code, known):
     calls, answers = fake_provider
     class StatusError(Exception):
@@ -786,7 +854,7 @@ async def test_a_failed_model_call_names_its_status_but_never_its_body(profile, 
     if not known:
         # The exception class names the kind of failure without anything it carried.
         assert ("StatusError" in str(error.value)) or ("TimeoutError" in str(error.value))
-    # Operator policy: a rate limit or server error was not served and is unbilled; anything else stays unknown.
+    # An HTTP status alone cannot prove whether upstream work was billed.
     assert error.value.usage["tokens_known"] is known
 
 

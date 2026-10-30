@@ -76,7 +76,7 @@ assets:
   - id: a-model-keys
     name: 模型 API 金鑰（model profile 引用的 VIBEAUDIT_* 環境變數）
     sensitivity: secret
-    store: controller 處理程序環境（providers.py:141-143）
+    store: controller 處理程序環境（providers.py:179-181）
   - id: a-db
     name: VIBEAUDIT_DATABASE_URL 與 job／lease 帳本、LangGraph checkpoint
     sensitivity: secret
@@ -158,7 +158,7 @@ trust_boundaries:
   - { id: tb-supply,    name: provisioning 來源 ↔ host（hash 鎖定、image digest；掃描時不拉映像、不安裝套件）,           zones: [z-vendor, z-host] }
 
 agents:
-  # 所有模型呼叫都經 providers.generate_json()：不傳 tools，回覆含 tool_calls 即拒絕（providers.py:399-409、587-588），
+  # 所有模型呼叫都經 providers.generate_json()：不傳 tools，回覆含 tool_calls 即拒絕（providers.py:438-448、626-627），
   # 輸出須過 JSON schema 與 Pydantic（extra=forbid）。所以除了 test_designer，模型的輸出不觸發動作；但會成為下一個模型的輸入
   # （commander → reviewers、reviewers → challenger／threat_modeler／reporter、architecture_mapper → threat_modeler；retest 時上一個 run 的
   # test_designer 案例 → 新 run 的 threat_modeler；test_designer 寫的案例標題成為黑箱發現的標題 → reporter），見 t-agent-trust-propagation。
@@ -206,7 +206,7 @@ agents:
     high_impact_tools: [sealed_case_http_dispatch]   # 它設計的封存案例由確定性程式派發為送往目標的 HTTP 請求；live 時須經操作者核准（service.py:864-867、policy.py:184-186）
     # 設計上的控制（見 t-indirect-injection、t-model-identity）：method/path（含 query）須完全符合操作者的 allowed_requests；
     # 模型設計的 POST 一律 blocked（fixture profile 除外）；fixture 路徑的模型本文只送往操作者標 model_body 的端點（service.py:898、962-974）；
-    # header 名稱只允許 6 個、拼法與順序固定、值限固定詞彙中的單一值（adapters.py:151-181、232-258）；身分限 model_selectable（policy.py:144-148）；
+    # header 名稱只允許 6 個、拼法與順序固定、值限固定詞彙中的單一值（adapters.py:152-182、233-259）；身分限 model_selectable（policy.py:144-148）；
     # 目標 IP 釘選；整組封存案例須經操作者核准才發出第一個請求（service.py:864-867）。
     # 這些是程式碼層控制，VibeSec 目前只能驗證 claude_permission 類證據，所以沒有 mitigation_evidence。
     # 2026-10-06 由 @chinchiang 決定：以上控制視為切斷對外通訊這隻腳。can_communicate_externally 仍標 true，因為請求確實會送出；
@@ -241,11 +241,11 @@ threats:
       6 個名稱，值只能是固定詞彙中的單一值、不得列多項或帶 q 參數：Accept 18 種（不帶與明列預設的 application/json 在線路上相同）、Accept-Language 26 種、Content-Type 4 種（charset 參數只有
       `; charset=utf-8` 一種寫法）、
       If-Match／If-None-Match 只能是 *（模型看不到目標回應，沒有真的 ETag）、X-Requested-With 只能是 XMLHttpRequest
-      （adapters.py:172-181）。2026-10-07 起再收窄：模型設計的請求只能用操作者在 allowed_requests[].model_headers 為該 method
-      與 path 明列的值，清單只能是上述詞彙的子集（adapters.py:184-212、232-258；RunInput 驗證 domain.py:163-166）；沒有清單的端點，
+      （adapters.py:173-182）。2026-10-07 起再收窄：模型設計的請求只能用操作者在 allowed_requests[].model_headers 為該 method
+      與 path 明列的值，清單只能是上述詞彙的子集（adapters.py:185-213、233-259；RunInput 驗證 domain.py:163-166）；沒有清單的端點，
       模型設計的請求不能帶任何 header，所以預設沒有 header 選擇。清單由 case_gate 與 supervisor 依請求的 method 與 path 檢查；不受信任的 worker 拿到的 manifest 不含 allowed_requests，只檢查固定詞彙，不是這道控制的一環。supervisor 為本文補上的 Content-Type 屬傳輸層，不算模型選擇
-      （adapters.py:475-505；worker_entry.py:377-385）。header 名稱只有一種拼法（Accept、Accept-Language…），大小寫不同的重複名稱在設計階段即拒絕，
-      依名稱排序送出（adapters.py:151-153、215-231；service.py:820-830）：大小寫、重複與順序都不再是模型的選擇。
+      （adapters.py:476-506；worker_entry.py:377-385）。header 名稱只有一種拼法（Accept、Accept-Language…），大小寫不同的重複名稱在設計階段即拒絕，
+      依名稱排序送出（adapters.py:152-154、216-232；service.py:820-830）：大小寫、重複與順序都不再是模型的選擇。
       case_gate 先擋（policy.py:138-143）；目標前最後一個受信任的節點 supervisor 依 sealed case 的來源標記，再以模型詞彙與操作者清單重驗
       （worker_entry.py:372-391），不只靠不受信任容器內的檢查。fixture 路徑上，模型撰寫的本文只送往操作者在 allowed_requests
       標 model_body 的端點（service.py:898、962-974；supervisor 再擋一次，worker_entry.py:374-376）。整組封存案例須經操作者
@@ -266,7 +266,7 @@ threats:
     category: STRIDE-E
     target: c-test-designer
     description: >-
-      case.identity 會讓 supervisor 附上對應 auth profile 的憑證（adapters.py:510-534）；若模型可任選已設定的身分，注入或誤判
+      case.identity 會讓 supervisor 附上對應 auth profile 的憑證（adapters.py:511-535）；若模型可任選已設定的身分，注入或誤判
       就能讓案例以高權限身分送出。
     mitigation: >-
       測試身分新增 model_selectable，預設 false（domain.py:84-86）；case_gate 拒絕模型設計的案例（含 positive control、retest
@@ -282,7 +282,7 @@ threats:
       快照遮罩是啟發式（snapshot.py:53、209），漏掉的寫法（例如無前綴的隨機 token、camelCase 的 dbPass、未知前綴的金鑰）會進入
       模型輸入；啟用 cloud_allowed 時送到雲端 provider，並以 evidence 保存。scanner 回報的檔案路徑（例如被 gitleaks 標記的 .env）也會送給模型。
     mitigation: >-
-      預設 local_only（只接受 literal loopback IP，providers.py:99-123）；機密檔與 .ssh、.aws、.git 整個排除；PEM、已知 token
+      預設 local_only（只接受 literal loopback IP，providers.py:137-161）；機密檔與 .ssh、.aws、.git 整個排除；PEM、已知 token
       前綴、Bearer、連線字串密碼遮罩；gitleaks 的 Secret／Match 欄位丟棄（sandbox.py:178-180）。名稱片段 pass／pwd／passphrase、
       signing／encryption／HMAC／master／webhook key、Azure AccountKey／SharedAccessKey，以及 Hugging Face、SendGrid、AWS STS、
       Google OAuth、Shopify、DigitalOcean、PyPI token 與 Slack webhook 也會遮罩（snapshot.py:28-29、41、45）。
@@ -295,7 +295,11 @@ threats:
     description: 啟用 cloud_allowed 時，去識別化後的受測原始碼、發現與操作者備註會送往第三方模型供應商。
     mitigation: >-
       預設 local_only；cloud 需操作者列出 allowed_model_origins，且須 HTTPS、全域 IP、IP 釘選、不跟隨 redirect、trust_env=False、
-      關閉 LiteLLM telemetry 與 callback（providers.py:134-372）。由操作者依資料分級逐 run 決定。
+      關閉 LiteLLM telemetry 與 callback（providers.py:172-411）。由操作者依資料分級逐 run 決定。
+      公司內網的模型閘道是唯一的全域 IP 例外：操作者須在環境變數 VIBEAUDIT_PRIVATE_MODEL_ORIGINS 逐一列出 HTTPS origin，
+      該 origin 才可解析到 RFC 1918／IPv6 ULA；loopback、link-local／雲端 metadata、CGNAT 與保留位址即使列出也拒絕
+      （providers.py:106-125、360-378）。VIBEAUDIT_PRIVATE_MODEL_CA_FILE 指定的 CA 只用來驗證這些 origin，並取代公開 CA；
+      公開端點仍只信任內建的公開 CA（providers.py:128-136、316）。兩個變數都列為保留設定（adapters.py:38），請求本文無法改變。
     status: accepted
     gate: null
   - id: t-probe-key-exfil
@@ -307,12 +311,12 @@ threats:
     mitigation: >-
       只監聽 127.0.0.1；啟動權杖、CSRF、Host／Origin、Sec-Fetch-Site 檢查；CSP script-src 'self'；憑證引用拒絕工具自身設定。
       模型金鑰只會送到操作者在環境變數 VIBEAUDIT_MODEL_CREDENTIAL_ORIGINS 綁定的 origin，loopback 也不例外，請求本文無法改變
-      （providers.py:84-96、146-148）；VIBEAUDIT_OPENAI_API_KEY 與 VIBEAUDIT_ANTHROPIC_API_KEY 預設綁定官方端點；該變數列為保留
-      設定，不能被當成憑證引用（adapters.py:32-38）。目標測試身分的路徑也一樣：凡是環境綁定為模型金鑰的變數（不論本 run 的模型是否
-      引用），以及與它同值的變數，都不能當測試身分的憑證；預檢、supervisor 環境與送出前都會拒絕（adapters.py:62-75、120-134、522-523）。
+      （providers.py:89-101、184-186）；VIBEAUDIT_OPENAI_API_KEY 與 VIBEAUDIT_ANTHROPIC_API_KEY 預設綁定官方端點；該變數列為保留
+      設定，不能被當成憑證引用（adapters.py:32-39）。目標測試身分的路徑也一樣：凡是環境綁定為模型金鑰的變數（不論本 run 的模型是否
+      引用），以及與它同值的變數，都不能當測試身分的憑證；預檢、supervisor 環境與送出前都會拒絕（adapters.py:63-76、121-135、523-524）。
       測試身分的憑證也比照辦理：run 自己指定 target_url，所以憑證只送往操作者在 VIBEAUDIT_TARGET_CREDENTIAL_ORIGINS 綁定的
       origin，預設不綁定；預檢列出未綁定的變數並拒絕（service.py:472-477），supervisor 環境不帶未綁定的值、只帶綁定設定本身
-      （worker_runtime.py:81-99），送出前再以環境的綁定核對一次（adapters.py:78-117、524-526）；該變數也列為保留設定（adapters.py:32-38）。
+      （worker_runtime.py:81-99），送出前再以環境的綁定核對一次（adapters.py:79-118、525-527）；該變數也列為保留設定（adapters.py:32-39）。
       2026-10-06 第 6 次 G4 identity 審查指出原本只綁定模型金鑰，已補上（行為變更，2026-10-06 @chinchiang 確認保留）。
       殘留：持有 session 的人仍可在已綁定的 origin 使用金鑰（耗用額度），也可用已綁定的測試身分對該 origin 送出 allowed_requests 內的請求。
     status: mitigated
@@ -321,12 +325,12 @@ threats:
     category: STRIDE-I
     target: a-model-keys
     description: >-
-      credential_env_allowed 只擋工具自身設定與其別名（adapters.py:48-59）；測試身分若引用模型金鑰（同名或同值的變數），設定錯誤時
+      credential_env_allowed 只擋工具自身設定與其別名（adapters.py:49-60）；測試身分若引用模型金鑰（同名或同值的變數），設定錯誤時
       模型金鑰會被當成目標憑證送到目標，或目標憑證被送到模型供應商。
     mitigation: >-
       只能引用 VIBEAUDIT_* 名稱；拒絕 URL 值與工具設定的別名。建立 run 時拒絕模型與測試身分引用同名變數（domain.py:155-157）；
-      live 預檢拒絕同名或同值（service.py:457-460，shared_credentials 見 adapters.py:120-134）；環境綁定為模型金鑰的變數一律算模型
-      憑證，不論本 run 的模型是否引用（adapters.py:62-75）。送出前再擋（adapters.py:522-523）：supervisor 收到的 manifest 帶有模型
+      live 預檢拒絕同名或同值（service.py:457-460，shared_credentials 見 adapters.py:121-135）；環境綁定為模型金鑰的變數一律算模型
+      憑證，不論本 run 的模型是否引用（adapters.py:63-76）。送出前再擋（adapters.py:523-524）：supervisor 收到的 manifest 帶有模型
       憑證的名稱（不含值），所以這一層在送到目標前的最後一個受信任節點也有效（worker_runtime.py:66-73）；supervisor 的環境也不帶
       與模型金鑰同值的目標憑證（worker_runtime.py:81-99）。
     status: mitigated
@@ -340,8 +344,8 @@ threats:
     mitigation: >-
       目標須是單一 origin 加操作者明列的 literal IP；DNS 結果須是其子集；連線用釘選的 IP 並驗證 TLS SNI；method/path 精確白名單。
       雲端 metadata（169.254.169.254、fd00:ec2::254、100.100.100.200）、link-local、unspecified、multicast 與 IPv4 保留位址一律拒絕，
-      建立 run 時與每次連線前都檢查（adapters.py:341-371、418-419；domain.py:118-128）；live 預檢拒絕會連到控制台 origin、
-      VIBEAUDIT_DATABASE_URL 或 lease 資料庫 host:port 的目標（adapters.py:374-406、service.py:466-471、api.py:83）。帶測試身分的
+      建立 run 時與每次連線前都檢查（adapters.py:342-372、419-420；domain.py:118-128）；live 預檢拒絕會連到控制台 origin、
+      VIBEAUDIT_DATABASE_URL 或 lease 資料庫 host:port 的目標（adapters.py:375-407、service.py:466-471、api.py:83）。帶測試身分的
       請求只送往環境綁定給該憑證的 origin（見 t-probe-key-exfil）。
       殘留：loopback 與私有位址仍允許（本機與內部 staging 需要），本機其他服務、經主機 LAN IP 連到資料庫的情況不在比對範圍；
       不帶身分的請求，目標是否已授權仍依操作者宣告。
@@ -458,7 +462,7 @@ threats:
     mitigation: >-
       核心審查問題由 harness 持有，commander 不能刪減；commander 的 focus 每項最多 300 字，放在獨立欄位並標為不受信任的模型衍生
       資料交給 reviewer（contracts.py:233-236、service.py:642-644、661）。所有模型的系統提示都把受測 repo、工具內容與其他 agent 的
-      輸出標為資料、不是指示（service.py:28、providers.py:511）。三位 reviewer 須屬不同 family（policy.py:53-65）；這些 agent 沒有
+      輸出標為資料、不是指示（service.py:28、providers.py:550）。三位 reviewer 須屬不同 family（policy.py:53-65）；這些 agent 沒有
       工具，輸出不觸發動作，所以影響限於審查完整性，不開啟對外通訊（見 t-indirect-injection）。retest 複製的模型案例保留 designed_by，
       照樣受 case_gate 的詞彙與身分限制，也要操作者重新核准才送出。threat_modeler 的 provided_cases 只帶追溯所需的欄位
       （id、標題、威脅與需求 ID、adapter、method、path、身分），不帶 header 值與本文，操作者寫進案例的測試帳密不會送到模型

@@ -767,7 +767,9 @@ async def test_trace_marks_the_current_version_of_each_entity(engine):
     finding["state"]="inconclusive"
     engine.store.save(run)
     versions=[e for e in engine.store.trace(run["id"])["entities"] if e["kind"]=="finding" and e["id"]==finding["id"]]
-    assert [(e["current"],e["value"]["state"]) for e in versions]==[(True,"inconclusive"),(False,"hypothesis")]
+    assert [(e["current"],e["value"]["state"]) for e in versions if e["current"]]==[(True,"inconclusive")]
+    assert all(e["value"]["state"]=="hypothesis" for e in versions if not e["current"])
+    assert {tuple(e["value"]["threat_ids"]) for e in versions if not e["current"]}=={(),("T-001",)}
 
 
 def test_live_requires_diversity_and_no_demo():

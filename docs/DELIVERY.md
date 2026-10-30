@@ -1,12 +1,12 @@
 # 0.2.1 交付範圍與原計畫對照
 
-0.2.0 接續 0.1.0，補上隔離 worker、PostgreSQL 整合、動態工具 adapter、fixture 重置、副作用收集、標準目錄及控制台工作台；0.2.1 再加入盲審 matching 工具、逐端點 header 清單與多輪審查修正（最近一輪見 [VALIDATION.md](VALIDATION.md) 的「2026-10-10 深入審查修正」）。使用者已指定先完成工程與本地整合，真實三模型端點尚未準備。
+0.2.0 接續 0.1.0，補上隔離 worker、PostgreSQL 整合、動態工具 adapter、fixture 重置、副作用收集、標準目錄及控制台工作台；0.2.1 再加入盲審 matching 工具、逐端點 header 清單與多輪審查修正（最近一輪見 [VALIDATION.md](VALIDATION.md) 的「2026-10-10 深入審查修正」）。使用者已指定先完成工程與本地整合，已記錄 26 次真模型與合成靶場整合驗收，正式效果比較仍待執行。
 
 「已實作」與「已驗證」分開記錄。實際測試結果以 [VALIDATION.md](VALIDATION.md) 和附帶的 JUnit XML 為準；程式存在本身不等於模型或工具的效果已被證明。
 
 | 階段 | 工程交付 | 外部驗收界線 |
 |---|---|---|
-| P0 | schema v2、逐 Agent 模型、禁止 fallback、四類 provider SDK 合成傳輸契約、固定相依套件版本（npm 鎖定檔含 integrity 雜湊；Python 鎖定檔逐項釘版本並附發布 hash，安裝以 --require-hashes 驗證）、image/rule/database 雜湊、授權來源 | 真實 Claude/OpenAI/Nemotron 型號、額度及用量待端點驗收 |
+| P0 | schema v2、逐 Agent 模型、禁止隱性 fallback；允許明確設定的備援、五類 provider（含 Bedrock）SDK 合成傳輸契約、固定相依套件版本（npm 鎖定檔含 integrity 雜湊；Python 鎖定檔逐項釘版本並附發布 hash，安裝以 --require-hashes 驗證）、image/rule/database 雜湊、授權來源 | 既有 26 次真模型整合已存檔；新增型號、端點與環境仍須各別驗收，品質與成本待正式比較 |
 | P1 | LangGraph、PostgreSQL job ledger（恢復依 run 紀錄與 ledger，不讀 LangGraph checkpoint）、原子提交、獨立 supervisor、持久 lease、撤網先於停止、loopback UI、設定、SSE | 本地單使用者；沒有多人 SaaS 或跨主機 worker fleet 承諾 |
 | P2 | 私有唯讀 staging、三份同核心問題初審、並行靜態工具、一輪 Challenger、程式引用、少數發現聯集、Semgrep/Gitleaks/OSV runner | 程式摘要有上限；模型品質與任意 framework 深度分析不能由契約測試推論 |
 | P3 | 威脅/Requirement gate、版本凍結、追溯、ZAP/Schemathesis/Playwright、登入/登出 fixture、正控制與 oracle | ZAP 為核准路徑 requestor + passive；Schemathesis 為明確 example；Playwright 為 API 流程，不是任意探索、全站 fuzz 或任意瀏覽器腳本 |
@@ -31,13 +31,13 @@
 
 # 0.2.1 Delivery Scope Compared with the Original Plan
 
-0.2.0 continues from 0.1.0, adding the isolated worker, PostgreSQL integration, dynamic tool adapters, fixture reset, side-effect collection, the standards catalog and the console workbench; 0.2.1 adds the blind-review matching tool, per-endpoint header lists and several rounds of review fixes (the latest is "2026-10-10 in-depth review fixes" in [VALIDATION.md](VALIDATION.md)). The user has specified completing the engineering and local integration first; the real three-model endpoints are not yet prepared.
+0.2.0 continues from 0.1.0, adding the isolated worker, PostgreSQL integration, dynamic tool adapters, fixture reset, side-effect collection, the standards catalog and the console workbench; 0.2.1 adds the blind-review matching tool, per-endpoint header lists and several rounds of review fixes (the latest is "2026-10-10 in-depth review fixes" in [VALIDATION.md](VALIDATION.md)). The user has specified completing the engineering and local integration first; 26 real-model runs against synthetic targets are recorded; formal efficacy comparison remains outstanding.
 
 "Implemented" and "verified" are recorded separately. Actual test results are governed by [VALIDATION.md](VALIDATION.md) and the accompanying JUnit XML; the mere existence of code does not mean the effects of models or tools have been proven.
 
 | Phase | Engineering deliverables | External acceptance boundary |
 |---|---|---|
-| P0 | schema v2, per-Agent models, fallback forbidden, synthetic transport contracts for the four provider SDK types, pinned dependency versions (the npm lockfile includes integrity hashes; the Python lockfile pins versions item by item and carries release hashes, with installation verified via --require-hashes), image/rule/database hashes, license sources | Real Claude/OpenAI/Nemotron model names, quotas and usage await endpoint acceptance |
+| P0 | schema v2, per-Agent models, implicit fallback forbidden; explicitly configured fallback supported, synthetic transport contracts for five provider SDK types, including Bedrock, pinned dependency versions (the npm lockfile includes integrity hashes; the Python lockfile pins versions item by item and carries release hashes, with installation verified via --require-hashes), image/rule/database hashes, license sources | 26 real-model integrations are recorded; new models/endpoints/environments need separate acceptance, and quality/cost await formal comparison |
 | P1 | LangGraph, PostgreSQL job ledger (recovery follows the run records and the ledger, not LangGraph checkpoints), atomic commits, an independent supervisor, persistent leases, network revocation before stopping, loopback UI, settings, SSE | Local single-user; no multi-user SaaS or cross-host worker fleet commitments |
 | P2 | Private read-only staging, three first-pass reviews of the same core questions, parallel static tools, one round of Challenger, program citations, a union of the minority findings, Semgrep/Gitleaks/OSV runners | Program summaries are capped; model quality and deep analysis of arbitrary frameworks cannot be inferred from contract tests |
 | P3 | Threat/Requirement gates, version freezing, traceability, ZAP/Schemathesis/Playwright, login/logout fixtures, positive controls and oracles | ZAP is an approved-path requestor + passive; Schemathesis uses explicit examples; Playwright is API flows, not arbitrary exploration, full-site fuzzing or arbitrary browser scripts |

@@ -101,6 +101,14 @@ ZAP 只執行經審查的 requestor/passive 計畫。Schemathesis 使用明確�
 
 沒有完整的語意呼叫圖或窮盡的原始碼閱讀、沒有經證明的模型獨立性、不能以合成基準宣稱有效性、沒有遠端 fleet／SaaS、沒有任意的瀏覽器自動化、沒有正式環境的部署／修補。透過操作者提供的標頭進行的原始碼對部署比對，只證明該標頭相等，而非與原始碼的密碼學對應。主機管理員仍然受信任；檔案雜湊不是鑑識等級的不可變性。
 
+## 2026-10-31 審查修正的契約
+
+白箱模型與掃描器的發現透過 threats[].finding_ids 明確連結威脅；finding_gaps 保存無法對應的原因，缺少對應不得悄悄複測。歷史發現沒有威脅連結時，建立複測會被拒絕。排除發現需要引用所有相關案例、每次重複與每個威脅的通過證據；缺少、未引用、證據不足或失敗的執行均不能排除整筆發現。複測同樣不能略過原先相關案例。動態違規的證據狀態與嚴重度分開：採用操作者在案例指定的 severity，未指定則為 unrated（尚未評級），不再一律列為高風險。
+
+模型端點的 HTTP 狀態不作為未計費證明；已送出的失敗若沒有可驗證用量，保留預留額並阻擋付費恢復。案例設計輸入含完整 allowed_requests、model_body、model_headers 與 fixture_profile，不含憑證值，也不含不可供模型選用的身分。
+
+原始碼 intake 上限為 2,000 檔、每檔 256 KiB、總量 8 MiB，仍受 5,000 項目與深度上限限制。三位 reviewer 以有界批次閱讀所有已納入的文字，保留原始路徑與 line_start；每批答案依輸入雜湊快取。review_coverage 記錄納入檔數、字元數與每位 reviewer 完成的批次。超過 intake 上限、無法解析與跨檔案語意未知仍列為缺口；後續架構與威脅建模的情境裁切也保留缺口，不宣稱完整語意分析。
+
 ---
 # Architecture and methodology — 0.2.1
 
@@ -204,3 +212,11 @@ Built-in TS Web and Python AI targets are synthetic and deterministic. AI trials
 ## Limits
 
 No complete semantic call graph or exhaustive source reading, no proven model independence, no effectiveness claim from synthetic benchmarks, no remote fleet/SaaS, no arbitrary browser automation, no production deployment/patching. Source-to-deployment matching via an operator-supplied header proves that header equality, not cryptographic correspondence to the source. Host administrators remain trusted; file hashes are not forensic immutability.
+
+## Contracts of the 2026-10-31 review repairs
+
+White-box model and scanner findings explicitly link to threats through threats[].finding_ids. finding_gaps records unmapped reasons; a missing mapping cannot silently create a retest. Retests of historical findings without threat links are refused. Refuting a finding requires cited passing evidence for every related case, repetition and threat; missing, uncited, inconclusive or failed executions cannot refute the whole finding. Retests likewise cannot omit originally related cases. Dynamic confirmation and impact severity are separate: the operator may specify case severity; otherwise the finding is unrated instead of automatically high.
+
+An HTTP status is not proof of unbilled usage. Sent failures without verifiable metering retain their reservations and block paid resume. Case-design input includes the complete allowed_requests, model_body, model_headers and fixture_profile; it contains no credential values or identities that the operator did not make model-selectable.
+
+Source intake is bounded at 2,000 files, 256 KiB per file and 8 MiB total, still subject to 5,000 entries and the depth limit. All three reviewers read every included character in bounded batches with original paths and line_start; each batch answer is cached against its input hash. review_coverage records included file/character counts and each reviewer's completed batches. Intake omissions, parsing failures and unknown cross-file semantics remain gaps; later architecture/threat context trimming also records gaps and makes no exhaustive semantic-analysis claim.

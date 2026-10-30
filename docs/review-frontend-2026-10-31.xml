@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<testsuites name="vitest tests" tests="42" failures="0" errors="0" time="3.569448495">
+    <testsuite name="tests/api.test.ts" timestamp="2026-10-30T22:28:35.530Z" hostname="redacted-host" tests="9" failures="0" errors="0" skipped="0" time="0.193033624">
+        <testcase classname="tests/api.test.ts" name="the startup token &gt; is read from the fragment for /session only, then dropped from the address bar" time="0.120594021">
+        </testcase>
+        <testcase classname="tests/api.test.ts" name="the startup token &gt; is forgotten after logout, so the page cannot quietly open a new session" time="0.010066288">
+        </testcase>
+        <testcase classname="tests/api.test.ts" name="the CSRF token &gt; is sent on every request after setCSRF, kept in sessionStorage, and cleared on a 401 session" time="0.008950452">
+        </testcase>
+        <testcase classname="tests/api.test.ts" name="the CSRF token &gt; is restored from sessionStorage on a reload, and PUT is honoured" time="0.007610361">
+        </testcase>
+        <testcase classname="tests/api.test.ts" name="errors &gt; read the service detail in the console language, switching with it" time="0.009980837">
+        </testcase>
+        <testcase classname="tests/api.test.ts" name="errors &gt; fall back to the English detail, a serialised detail, or an HTTP status" time="0.006992561">
+        </testcase>
+        <testcase classname="tests/api.test.ts" name="download &gt; fetches with the CSRF header and hands the browser a named file" time="0.006255891">
+        </testcase>
+        <testcase classname="tests/api.test.ts" name="streamEvents &gt; reports each event name as it arrives, across chunk boundaries, and stops at the end of the stream" time="0.013727753">
+        </testcase>
+        <testcase classname="tests/api.test.ts" name="streamEvents &gt; turns a refused stream into the service error" time="0.003221535">
+        </testcase>
+    </testsuite>
+    <testsuite name="tests/capabilities.test.tsx" timestamp="2026-10-30T22:28:35.541Z" hostname="redacted-host" tests="4" failures="0" errors="0" skipped="0" time="0.176433514">
+        <testcase classname="tests/capabilities.test.tsx" name="limitationText &gt; pairs each English limitation with its Chinese wording, and falls back to English when the lists differ" time="0.007082877">
+        </testcase>
+        <testcase classname="tests/capabilities.test.tsx" name="CapabilitiesView &gt; shows each tool with its availability, status and detail, and the limitations once each" time="0.104334766">
+        </testcase>
+        <testcase classname="tests/capabilities.test.tsx" name="CapabilitiesView &gt; reads in English, using each tool&apos;s English detail" time="0.032264995">
+        </testcase>
+        <testcase classname="tests/capabilities.test.tsx" name="CapabilitiesView &gt; says so when there is no tool list yet" time="0.026893319">
+        </testcase>
+    </testsuite>
+    <testsuite name="tests/create-form.test.tsx" timestamp="2026-10-30T22:28:35.546Z" hostname="redacted-host" tests="8" failures="0" errors="0" skipped="0" time="1.705656381">
+        <testcase classname="tests/create-form.test.tsx" name="parseRequestLine &gt; reads method and path, the model-body flag and the trailing header JSON" time="0.00997146">
+        </testcase>
+        <testcase classname="tests/create-form.test.tsx" name="parseRequestLine &gt; refuses anything else: unknown methods, relative paths, a brace in the path, and header JSON of the wrong shape" time="0.002453203">
+        </testcase>
+        <testcase classname="tests/create-form.test.tsx" name="parseRequestLine &gt; round-trips through requestLine" time="0.002141808">
+        </testcase>
+        <testcase classname="tests/create-form.test.tsx" name="CreateForm &gt; submits a synthetic demo with the four synthetic models and no scope" time="0.40292178">
+        </testcase>
+        <testcase classname="tests/create-form.test.tsx" name="CreateForm &gt; cannot be submitted while the service is not connected or a creation is in progress" time="0.1937156">
+        </testcase>
+        <testcase classname="tests/create-form.test.tsx" name="CreateForm &gt; refuses an empty live assessment with the reasons, and the scope rules, before asking the backend" time="0.451474678">
+        </testcase>
+        <testcase classname="tests/create-form.test.tsx" name="CreateForm &gt; adds a fallback that must name the agents it stands in for, and bounds the unredacted literals" time="0.574629035">
+        </testcase>
+        <testcase classname="tests/create-form.test.tsx" name="CreateForm &gt; switches to English with the interface" time="0.063766462">
+        </testcase>
+    </testsuite>
+    <testsuite name="tests/i18n.test.ts" timestamp="2026-10-30T22:28:35.558Z" hostname="redacted-host" tests="5" failures="0" errors="0" skipped="0" time="0.105549246">
+        <testcase classname="tests/i18n.test.ts" name="the default language &gt; is Traditional Chinese, with the page language and title to match" time="0.03187897">
+        </testcase>
+        <testcase classname="tests/i18n.test.ts" name="the default language &gt; is English when this browser chose English before" time="0.00491028">
+        </testcase>
+        <testcase classname="tests/i18n.test.ts" name="the default language &gt; ignores a stored value that is not a language, and storage that throws" time="0.008920939">
+        </testcase>
+        <testcase classname="tests/i18n.test.ts" name="setLang &gt; switches every reader, remembers the choice and survives storage that throws" time="0.011220435">
+        </testcase>
+        <testcase classname="tests/i18n.test.ts" name="setLang &gt; re-renders components that use useLang, and stops once they unmount" time="0.042346146">
+        </testcase>
+    </testsuite>
+    <testsuite name="tests/messages.test.ts" timestamp="2026-10-30T22:28:35.563Z" hostname="redacted-host" tests="7" failures="0" errors="0" skipped="0" time="0.028826105">
+        <testcase classname="tests/messages.test.ts" name="zh &gt; reads fixed messages, patterns with values, and statuses inside values" time="0.008561847">
+        </testcase>
+        <testcase classname="tests/messages.test.ts" name="zh &gt; reads &quot;&lt;label&gt;: &lt;message&gt;&quot; when either side is known, and leaves the rest as written" time="0.00399583">
+        </testcase>
+        <testcase classname="tests/messages.test.ts" name="zh &gt; never reads an Object prototype member as an entry" time="0.001826228">
+        </testcase>
+        <testcase classname="tests/messages.test.ts" name="zh &gt; matches a pattern against the whole message only" time="0.001341482">
+        </testcase>
+        <testcase classname="tests/messages.test.ts" name="say &gt; shows the Chinese reading in Chinese and the original in English" time="0.001719461">
+        </testcase>
+        <testcase classname="tests/messages.test.ts" name="say &gt; turns anything that is not text into text" time="0.001067865">
+        </testcase>
+        <testcase classname="tests/messages.test.ts" name="loadMessages &gt; asks for /messages once and keeps the console working when the table cannot be loaded" time="0.005647556">
+        </testcase>
+    </testsuite>
+    <testsuite name="tests/run-detail.test.tsx" timestamp="2026-10-30T22:28:35.572Z" hostname="redacted-host" tests="9" failures="0" errors="0" skipped="0" time="1.359949625">
+        <testcase classname="tests/run-detail.test.tsx" name="RunDetail &gt; shows included source coverage and partial reviewer progress without claiming full coverage" time="0.215085636">
+        </testcase>
+        <testcase classname="tests/run-detail.test.tsx" name="RunDetail &gt; shows the synthetic banner, the truthful status, the stage pipeline and the metrics" time="0.150916281">
+        </testcase>
+        <testcase classname="tests/run-detail.test.tsx" name="RunDetail &gt; offers the actions the status allows and asks for the tab the operator clicks" time="0.281899751">
+        </testcase>
+        <testcase classname="tests/run-detail.test.tsx" name="RunDetail &gt; lists every event of the activity log with its stage in the interface language" time="0.123186697">
+        </testcase>
+        <testcase classname="tests/run-detail.test.tsx" name="RunDetail &gt; filters findings by evidence state and links each to its evidence" time="0.176097375">
+        </testcase>
+        <testcase classname="tests/run-detail.test.tsx" name="the evidence decision &gt; keeps refutation disabled when a second linked threat is inconclusive" time="0.089818239">
+        </testcase>
+        <testcase classname="tests/run-detail.test.tsx" name="the evidence decision &gt; never refutes an observed violation here" time="0.056801128">
+        </testcase>
+        <testcase classname="tests/run-detail.test.tsx" name="the evidence decision &gt; mirrors the backend rules: cited evidence must test the chosen threats, and Refuted needs a pass with no observed violation" time="0.122718185">
+        </testcase>
+        <testcase classname="tests/run-detail.test.tsx" name="the evidence decision &gt; shows the service refusal next to the form" time="0.139174268">
+        </testcase>
+    </testsuite>
+</testsuites>

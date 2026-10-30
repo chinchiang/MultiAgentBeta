@@ -3,7 +3,7 @@
 # names, and none of them may let more mutants escape than tests/mutation-baseline.json records for it (a new
 # function must let none). The full run (mutation.yml) keeps the per-module ceilings.
 #
-# Off by default: the pull-request run happens only when the repository variable VIBEAUDIT_MUTATION is "true"
+# On by default; set VIBEAUDIT_MUTATION="false" to disable automatic runs.
 # (Settings > Secrets and variables > Actions > Variables); a manual dispatch always runs.
 name: mutation-pr
 
@@ -27,7 +27,7 @@ concurrency:
 
 jobs:
   changed:
-    if: github.event_name == 'workflow_dispatch' || vars.VIBEAUDIT_MUTATION == 'true'
+    if: github.event_name == 'workflow_dispatch' || vars.VIBEAUDIT_MUTATION != 'false'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     services:

@@ -4,7 +4,6 @@ import copy
 from concurrent.futures import ThreadPoolExecutor
 import os
 import time
-from urllib.parse import urlsplit, urlunsplit
 import uuid
 import pytest
 import threading
@@ -24,8 +23,8 @@ class Backend:
         self.service,self.name=service,"lease_test_"+uuid.uuid4().hex
         with psycopg.connect(service,autocommit=True) as conn:
             conn.execute(f'CREATE DATABASE "{self.name}" TEMPLATE template0 ENCODING \'UTF8\'')
-        parts=urlsplit(service)
-        self.url=urlunsplit(parts._replace(path="/"+self.name))
+        from psycopg.conninfo import conninfo_to_dict, make_conninfo
+        self.url=make_conninfo(**(conninfo_to_dict(service)|{"dbname":self.name}))
 
     def open(self):
         if self.kind=="sqlite":return LeaseStore(self.path,clock=lambda:self.clock[0])

@@ -1,0 +1,33 @@
+{
+  "command": "python scripts/mutation-test.py --changed HEAD",
+  "exit_code": 0,
+  "source_file": "backend/vibe_audit/snapshot.py",
+  "source_sha256": "05d936c0da170c0a9333146743c55d8cbca765242679dab8e826f03f0a4d41ab",
+  "baseline_file": "tests/mutation-baseline.json",
+  "baseline_sha256": "c19e2fa68e23c1d52ba96c8793d1918dee5ff29d8906f881e51a6a677c3b175a",
+  "functions": {
+    "x_snapshot_source": {
+      "total": 278,
+      "killed": 270,
+      "survived": 7,
+      "timeout": 1,
+      "surviving_mutants": [
+        "vibe_audit.snapshot.x_snapshot_source__mutmut_135",
+        "vibe_audit.snapshot.x_snapshot_source__mutmut_136",
+        "vibe_audit.snapshot.x_snapshot_source__mutmut_142",
+        "vibe_audit.snapshot.x_snapshot_source__mutmut_143",
+        "vibe_audit.snapshot.x_snapshot_source__mutmut_147",
+        "vibe_audit.snapshot.x_snapshot_source__mutmut_150",
+        "vibe_audit.snapshot.x_snapshot_source__mutmut_153"
+      ]
+    },
+    "x_review_batches": {
+      "total": 72,
+      "killed": 72,
+      "survived": 0,
+      "timeout": 0,
+      "surviving_mutants": []
+    }
+  },
+  "note": "New review_batches: every mutant killed. Existing snapshot_source retains its previously recorded ceiling of 7 survivors, with 1 timeout separately reported; this is not a claim that all existing mutants are caught."
+}

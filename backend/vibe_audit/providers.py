@@ -15,6 +15,7 @@ import logging
 import os
 import re
 import socket
+import ssl
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -33,8 +34,10 @@ _PROVIDERS = {"openai", "anthropic", "nvidia_nim", "openai_compatible", "bedrock
 # The only Bedrock endpoints a profile may name, so AWS-signed requests can reach nothing but Bedrock itself.
 _BEDROCK_ENDPOINT = re.compile(r"https://bedrock-runtime(?:-fips)?\.((?:[a-z]{2}(?:-gov)?-[a-z]+-\d))\.amazonaws\.com/?")
 BEDROCK_PROFILES_ENV = "VIBEAUDIT_BEDROCK_PROFILES"
-# HTTP statuses that answer without serving the request: rejected before it ran, rate limited, or a server error.
-UNSERVED_STATUSES = frozenset({400, 401, 403, 404, 413, 422, 429, *range(500, 600)})
+PRIVATE_MODEL_ORIGINS_ENV = "VIBEAUDIT_PRIVATE_MODEL_ORIGINS"
+PRIVATE_MODEL_CA_ENV = "VIBEAUDIT_PRIVATE_MODEL_CA_FILE"
+# RFC 1918 and IPv6 unique-local space only: link-local (cloud metadata), CGNAT and reserved ranges stay denied.
+_PRIVATE_NETWORKS = tuple(ipaddress.ip_network(net) for net in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7"))
 _TOKENIZERS = {
     "https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken": "223921b76ee99bde995b7ff738513eef100fb51d18c93597a113bcffe865b2a7",
     "https://openaipublic.blob.core.windows.net/encodings/o200k_base.tiktoken": "446a9538cb6c348e3516120d7c08b09f57c36495e2acfffe59a5bf8b0cfb1a2d",
@@ -96,6 +99,39 @@ def credential_origins(environ=None) -> dict[str, set[str]]:
     except ValueError:
         raise ProviderError(f"{CREDENTIAL_ORIGINS_ENV} entries must be VIBEAUDIT_NAME=scheme://host[:port]", code="invalid_credential_binding") from None
     return {**bound, **rebound}
+
+
+def private_model_origins(environ=None) -> set[str]:
+    """HTTPS model origins the operator runs on a private network, so they may resolve to RFC 1918/ULA addresses.
+
+    Without this, a model hostname must resolve only to globally routable addresses. Format: comma-separated origins.
+    """
+    environ = os.environ if environ is None else environ
+    origins = set()
+    for entry in filter(None, (item.strip() for item in environ.get(PRIVATE_MODEL_ORIGINS_ENV, "").split(","))):
+        try:
+            scheme, host, port = parse_origin(entry)
+            if scheme != "https":
+                raise ValueError
+        except ValueError:
+            raise ProviderError(f"{PRIVATE_MODEL_ORIGINS_ENV} entries must be https://host[:port] origins", code="invalid_private_origin") from None
+        origins.add(format_origin(scheme, host, port, omit_default_port=True))
+    return origins
+
+
+def _model_address_allowed(ip, origin: str) -> bool:
+    return ip.is_global or (any(ip in net for net in _PRIVATE_NETWORKS) and origin in private_model_origins())
+
+
+def _tls_verify(origin: str):
+    """Public CAs by default. The operator's CA file replaces them for its private-network origins only."""
+    path = os.environ.get(PRIVATE_MODEL_CA_ENV, "")
+    if not path or origin not in private_model_origins():
+        return True
+    try:
+        return ssl.create_default_context(cafile=path)
+    except (OSError, ssl.SSLError):
+        raise ProviderError(f"{PRIVATE_MODEL_CA_ENV} must name a readable PEM CA file", code="invalid_private_ca") from None
 
 
 def _is_loopback(host: str) -> bool:
@@ -275,7 +311,7 @@ class _OriginTransport(httpx.AsyncBaseTransport):
         self.status: int | None = None
         # The bounded body of that response, kept in memory only so a reply the SDK cannot convert is still metered.
         self.body = b""
-        self.inner = httpx.AsyncHTTPTransport(retries=0, verify=True, trust_env=False)
+        self.inner = httpx.AsyncHTTPTransport(retries=0, verify=_tls_verify(origin), trust_env=False)
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         actual, _ = _origin(str(request.url.copy_with(query=None, fragment=None)))
@@ -321,10 +357,11 @@ class _OriginTransport(httpx.AsyncBaseTransport):
 
 async def _resolve_model_ip(endpoint: str) -> str:
     _, host, port = parse_origin(endpoint, allow_path=True)
+    origin = _origin(endpoint)[0]
     try:
         literal = ipaddress.ip_address(host)
-        if not literal.is_global and not literal.is_loopback:
-            raise ProviderError("Model endpoint IP must be global or explicit loopback", code="origin_denied")
+        if not literal.is_loopback and not _model_address_allowed(literal, origin):
+            raise ProviderError(f"Model endpoint IP must be global, explicit loopback, or private under an origin listed in {PRIVATE_MODEL_ORIGINS_ENV}", code="origin_denied")
         return str(literal)
     except ValueError:
         pass
@@ -332,8 +369,8 @@ async def _resolve_model_ip(endpoint: str) -> str:
         addresses = await asyncio.get_running_loop().getaddrinfo(host, port, type=socket.SOCK_STREAM)
         # IPv4 first, in numeric order, like target pinning: many hosts (WSL2 NAT among them) lack IPv6 routes.
         ips = sorted({ipaddress.ip_address(item[4][0]) for item in addresses}, key=lambda ip: (ip.version, int(ip)))
-        if not ips or any(not ip.is_global for ip in ips):
-            raise ProviderError("Model DNS resolved outside globally routable addresses", code="origin_denied")
+        if not ips or any(not _model_address_allowed(ip, origin) for ip in ips):
+            raise ProviderError(f"Model DNS resolved outside globally routable addresses; list a private-network model origin in {PRIVATE_MODEL_ORIGINS_ENV}", code="origin_denied")
         return str(ips[0])
     except (OSError, ValueError):
         raise _NotSent("Model DNS resolution failed", code="endpoint_unavailable") from None
@@ -575,12 +612,8 @@ async def generate_json(profile: dict, system: str, payload: dict, policy: dict)
             status = received if type(received) is int else getattr(exc, "status_code", None)
             if not isinstance(exc, ProviderError) and type(status) is int and 400 <= status <= 599:
                 code = f"provider_http_{status}"
-                if received == status and status in UNSERVED_STATUSES:
-                    # Operator policy: a rejected request (bad request, auth, not found, too large, unprocessable),
-                    # a rate limit or a server error answers without serving it, so it is counted as unbilled and
-                    # the run may resume. A timeout (408), a conflict or any other failure stays unknown.
-                    usage["tokens_known"] = True
-                    raise ProviderError(f"Model endpoint answered HTTP {status}; the request was not served and is treated as unbilled", code=code, usage=usage.copy()) from None
+                # A gateway status is not a metering receipt. Even 4xx/5xx may follow upstream work;
+                # keep the reservation and block paid resume unless the response supplies verified usage.
             elif not isinstance(exc, ProviderError) and isinstance(exc, (TimeoutError, asyncio.TimeoutError)) or type(exc).__name__ in {"Timeout", "APITimeoutError"}:
                 code = "provider_timeout"
             # Exception class names only (for example APIConnectionError <- RemoteProtocolError): enough to tell a
