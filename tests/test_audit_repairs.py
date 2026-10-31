@@ -10,6 +10,7 @@ from vibe_audit.api import create_app
 from vibe_audit.domain import RunInput
 from vibe_audit.service import Engine
 from vibe_audit.store import Store
+from vibe_audit.model_calls import ModelAnswer
 
 
 @pytest.fixture
@@ -101,7 +102,7 @@ async def test_case_designer_receives_complete_scope_without_credentials(tmp_pat
 
         async def model(run, profile, instruction, payload, *args, **kwargs):
             captured.update(copy.deepcopy(payload))
-            return {"cases": [], "gaps": []}
+            return ModelAnswer({"cases": [], "gaps": []}, profile["id"])
 
         monkeypatch.setattr(engine, "model", model)
         monkeypatch.setattr(engine.policy, "case_gate", lambda run: None)
@@ -245,7 +246,7 @@ async def test_each_reviewer_reads_all_batches_and_resume_reuses_paid_batches(tm
     store = Store(tmp_path)
     try:
         engine = Engine(store)
-        run = engine.create(RunInput())
+        run = engine.create(RunInput(budget={"max_model_calls": 200, "max_tokens": 2000000}))
         run["mode"] = "live"
         run["source_digest"] = digest("large")
         artifact = store.put_evidence(run["id"], "source-snapshot", {"digest": run["source_digest"],
@@ -254,23 +255,25 @@ async def test_each_reviewer_reads_all_batches_and_resume_reuses_paid_batches(tm
         run["snapshot_id"] = artifact["id"]
         engine.cancel_flags[run["id"]] = asyncio.Event()
         monkeypatch.setattr(providers, "MAX_PAYLOAD_BYTES", 4096)
+        engine.locks[run["id"]] = asyncio.Lock()
         seen = defaultdict(list)
         fail = [True]
 
-        async def call(run, profile, instruction, payload, response_contract=None):
+        async def call(profile, system, payload, policy):
+            await policy["request_hook"]()
             if profile["role"] == "commander":
-                return {"reviewer_order": ["reviewer-a", "reviewer-b", "reviewer-c"], "focus": [], "rationale": "Same scope"}
+                return {"data": {"reviewer_order": ["reviewer-a", "reviewer-b", "reviewer-c"], "focus": [], "rationale": "Same scope"}, "usage": {"tokens": 1}}
             batch = payload["source"]
             if profile["id"] == "reviewer-a" and len(seen["reviewer-a"]) == 1 and fail[0]:
                 fail[0] = False
                 raise providers.ProviderError("Model output was truncated", code="truncated")
             seen[profile["id"]].append(batch)
-            return {"findings": [], "gaps": []}
+            return {"data": {"findings": [], "gaps": []}, "usage": {"tokens": 1}}
 
         async def scan(run):
             return None
 
-        monkeypatch.setattr(engine, "call_model", call)
+        monkeypatch.setattr(providers, "generate_json", call)
         monkeypatch.setattr(engine, "_scan_source", scan)
         with pytest.raises(Exception, match="Incomplete review"):
             await engine._whitebox(run)
@@ -301,7 +304,7 @@ async def test_unknown_provider_usage_retains_reservation_and_blocks_resume(tmp_
 
         monkeypatch.setattr(providers, "generate_json", rejected)
         with pytest.raises(providers.ProviderError):
-            await engine.call_model(run, run["manifest"]["models"][0], "Review", {})
+            await engine.model(run, run["manifest"]["models"][0], "Review", {})
         assert run["usage_unknown"] and run["reserved_tokens"] > 0
         run["status"] = "blocked"
         store.save(run)

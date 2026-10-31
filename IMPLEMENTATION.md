@@ -65,6 +65,10 @@ Case 會綁定威脅模型、需求、原始碼、fixture 與 case 的雜湊。C
 
 原始碼 intake 上限為 2,000 檔、每檔 256 KiB、總量 8 MiB，仍受 5,000 項目與深度上限限制。三位 reviewer 以有界批次閱讀所有已納入的文字，保留原始路徑與 line_start；每批答案依輸入雜湊快取。review_coverage 記錄納入檔數、字元數與每位 reviewer 完成的批次。超過 intake 上限、無法解析與跨檔案語意未知仍列為缺口；後續架構與威脅建模的情境裁切也保留缺口，不宣稱完整語意分析。
 
+## 模型呼叫 module
+
+`model_calls.py` 的 `ModelCalls.answer` 回傳 `ModelAnswer(data, answered_by)`；階段 caller 不再傳入可變的回答者清單。module 管理每次嘗試的預留、結算、明確備援、答案快取與保存；`probe` 使用相同計量 implementation。providers 的 request hook 在每次有界格式重試前預留預算。未知用量保留額度，取消只結算自身預留；快取的 binding、data 與 answered_by 欄位維持既有格式。底層傳輸與格式驗證重試仍位於 providers adapter。
+
 ---
 # Implementation contract — 0.2.1
 
@@ -132,3 +136,7 @@ White-box model and scanner findings explicitly link to threats through threats[
 An HTTP status is not proof of unbilled usage. Sent failures without verifiable metering retain their reservations and block paid resume. Case-design input includes the complete allowed_requests, model_body, model_headers and fixture_profile; it contains no credential values or identities that the operator did not make model-selectable.
 
 Source intake is bounded at 2,000 files, 256 KiB per file and 8 MiB total, still subject to 5,000 entries and the depth limit. All three reviewers read every included character in bounded batches with original paths and line_start; each batch answer is cached against its input hash. review_coverage records included file/character counts and each reviewer's completed batches. Intake omissions, parsing failures and unknown cross-file semantics remain gaps; later architecture/threat context trimming also records gaps and makes no exhaustive semantic-analysis claim.
+
+## Model-call module
+
+`ModelCalls.answer` in `model_calls.py` returns `ModelAnswer(data, answered_by)`; stage callers no longer pass a mutable author list. The module owns per-attempt reservations, settlement, explicit fallback, answer caching and persistence; `probe` shares the accounting implementation. The providers request hook reserves budget before each bounded format retry. Unknown usage retains its reservation, and cancellation settles only its own reservations. Cache binding, data and answered_by fields retain their existing format. Transport and format-validation retries remain in the providers adapter.

@@ -68,7 +68,7 @@ assets:
   - id: a-snapshot
     name: 給模型的去識別化快照（啟發式遮罩，snapshot.py:53、209）
     sensitivity: confidential
-    store: 送往 model profile 的端點；並以 evidence 保存（service.py:536）
+    store: 送往 model profile 的端點；並以 evidence 保存（service.py:424）
   - id: a-target-creds
     name: 目標認證（auth_profiles 引用的 VIBEAUDIT_* 環境變數）
     sensitivity: secret
@@ -162,61 +162,61 @@ agents:
   # 輸出須過 JSON schema 與 Pydantic（extra=forbid）。所以除了 test_designer，模型的輸出不觸發動作；但會成為下一個模型的輸入
   # （commander → reviewers、reviewers → challenger／threat_modeler／reporter、architecture_mapper → threat_modeler；retest 時上一個 run 的
   # test_designer 案例 → 新 run 的 threat_modeler；test_designer 寫的案例標題成為黑箱發現的標題 → reporter），見 t-agent-trust-propagation。
-  # 目標回應從不送回任何模型（service.py:919；observation 不進模型輸入）。
+  # 目標回應從不送回任何模型（service.py:789；observation 不進模型輸入）。
   - id: c-commander
-    accesses_private_data: true          # 快照的檔案路徑清單與操作者備註（service.py:639）
+    accesses_private_data: true          # 快照的檔案路徑清單與操作者備註（service.py:507）
     exposed_to_untrusted_content: true   # 路徑來自受測 repo
-    can_communicate_externally: false    # 輸出只有 reviewer 順序（必須恰為三位 reviewer，service.py:640-641）與 focus 文字；focus 每項 ≤ 300 字，以獨立、標為不受信任的欄位交給 reviewer（service.py:642-644、661）
+    can_communicate_externally: false    # 輸出只有 reviewer 順序（必須恰為三位 reviewer，service.py:508-509）與 focus 文字；focus 每項 ≤ 300 字，以獨立、標為不受信任的欄位交給 reviewer（service.py:510-512、529）
     tools: []
     mitigations: [tool_allowlist]
     trifecta_leg_cut: null
   - id: c-reviewers
-    accesses_private_data: true          # 完整的去識別化快照（service.py:661）
+    accesses_private_data: true          # 完整的去識別化快照（service.py:529）
     exposed_to_untrusted_content: true   # 受測 repo 的文字（可夾帶提示注入）
     can_communicate_externally: false    # 無工具；來源引用須與快照相符（contracts.py:242-254）
     tools: []
     mitigations: [tool_allowlist]
     trifecta_leg_cut: null
   - id: c-challenger
-    accesses_private_data: true          # 快照與以 F-1、F-2… 短標籤匿名化的發現（service.py:743-746）
+    accesses_private_data: true          # 快照與以 F-1、F-2… 短標籤匿名化的發現（service.py:613-616）
     exposed_to_untrusted_content: true
-    can_communicate_externally: false    # 只能引用既有發現的標籤；對不上的反證捨棄並記為缺口（service.py:751-754）
+    can_communicate_externally: false    # 只能引用既有發現的標籤；對不上的反證捨棄並記為缺口（service.py:621-624）
     tools: []
     mitigations: [tool_allowlist]
     trifecta_leg_cut: null
   - id: c-arch-mapper
-    accesses_private_data: true          # 快照、操作者需求與備註（service.py:757-758）
+    accesses_private_data: true          # 快照、操作者需求與備註（service.py:627-628）
     exposed_to_untrusted_content: true
     can_communicate_externally: false
     tools: []
     mitigations: [tool_allowlist]
     trifecta_leg_cut: null
   - id: c-threat-modeler
-    accesses_private_data: true          # 架構圖（模型輸出）、發現、需求、快照（service.py:771-774）
+    accesses_private_data: true          # 架構圖（模型輸出）、發現、需求、快照（service.py:641-644）
     exposed_to_untrusted_content: true
     can_communicate_externally: false    # 輸出經 threat_gate（policy.py:67-106）
     tools: []
     mitigations: [tool_allowlist]
     trifecta_leg_cut: null
   - id: c-test-designer
-    accesses_private_data: true          # 整份威脅模型、target_url、操作者備註（service.py:816）。威脅模型由讀過整份快照的 threat_modeler 寫成：source_refs／control_evidence 是與快照逐字相符的引用（每則至多 2000 字），invariant、impact、assumptions、需求敘述等其他自由文字不經逐字核對（contracts.py:21-24、51-87；service.py:786-787）
+    accesses_private_data: true          # 整份威脅模型、target_url、操作者備註（service.py:686）。威脅模型由讀過整份快照的 threat_modeler 寫成：source_refs／control_evidence 是與快照逐字相符的引用（每則至多 2000 字），invariant、impact、assumptions、需求敘述等其他自由文字不經逐字核對（contracts.py:21-24、51-87；service.py:656-657）
     exposed_to_untrusted_content: true   # 間接：威脅模型由讀過受測 repo 的模型產生（repo → reviewers → threat_modeler → test_designer）
-    can_communicate_externally: true     # 它設計的案例經 case_gate、authorize 與 supervisor 後真的送到目標（service.py:815-821、policy.py:108-212、worker_entry.py:319-395）
+    can_communicate_externally: true     # 它設計的案例經 case_gate、authorize 與 supervisor 後真的送到目標（service.py:685-691、policy.py:108-212、worker_entry.py:319-395）
     tools: []                            # 沒有函式工具；「送出」發生在確定性程式依它的輸出派發請求
-    high_impact_tools: [sealed_case_http_dispatch]   # 它設計的封存案例由確定性程式派發為送往目標的 HTTP 請求；live 時須經操作者核准（service.py:864-867、policy.py:184-186）
+    high_impact_tools: [sealed_case_http_dispatch]   # 它設計的封存案例由確定性程式派發為送往目標的 HTTP 請求；live 時須經操作者核准（service.py:734-737、policy.py:184-186）
     # 設計上的控制（見 t-indirect-injection、t-model-identity）：method/path（含 query）須完全符合操作者的 allowed_requests；
-    # 模型設計的 POST 一律 blocked（fixture profile 除外）；fixture 路徑的模型本文只送往操作者標 model_body 的端點（service.py:898、962-974）；
+    # 模型設計的 POST 一律 blocked（fixture profile 除外）；fixture 路徑的模型本文只送往操作者標 model_body 的端點（service.py:768、832-844）；
     # header 名稱只允許 6 個、拼法與順序固定、值限固定詞彙中的單一值（adapters.py:152-182、233-259）；身分限 model_selectable（policy.py:144-148）；
-    # 目標 IP 釘選；整組封存案例須經操作者核准才發出第一個請求（service.py:864-867）。
+    # 目標 IP 釘選；整組封存案例須經操作者核准才發出第一個請求（service.py:734-737）。
     # 這些是程式碼層控制，VibeSec 目前只能驗證 claude_permission 類證據，所以沒有 mitigation_evidence。
     # 2026-10-06 由 @chinchiang 決定：以上控制視為切斷對外通訊這隻腳。can_communicate_externally 仍標 true，因為請求確實會送出；
     # 切腳靠的是上述程式碼層控制。接受的殘留：fixture profile 的 JSON body 仍由模型決定，以及低頻寬的選擇通道（見 decisions、t-indirect-injection）。
     mitigations: [egress_allowlist, tool_allowlist, human_in_the_loop]
     trifecta_leg_cut: external_comms
   - id: c-reporter
-    accesses_private_data: true          # 發現（含檔案、行號與標題，service.py:951）
+    accesses_private_data: true          # 發現（含檔案、行號與標題，service.py:821）
     exposed_to_untrusted_content: true   # 發現文字源自模型與受測 repo
-    can_communicate_externally: false    # 輸出必須恰為發現 ID 的排列（service.py:953-954）
+    can_communicate_externally: false    # 輸出必須恰為發現 ID 的排列（service.py:823-824）
     tools: []
     mitigations: [tool_allowlist]
     trifecta_leg_cut: null
@@ -245,11 +245,11 @@ threats:
       與 path 明列的值，清單只能是上述詞彙的子集（adapters.py:185-213、233-259；RunInput 驗證 domain.py:163-166）；沒有清單的端點，
       模型設計的請求不能帶任何 header，所以預設沒有 header 選擇。清單由 case_gate 與 supervisor 依請求的 method 與 path 檢查；不受信任的 worker 拿到的 manifest 不含 allowed_requests，只檢查固定詞彙，不是這道控制的一環。supervisor 為本文補上的 Content-Type 屬傳輸層，不算模型選擇
       （adapters.py:476-506；worker_entry.py:377-385）。header 名稱只有一種拼法（Accept、Accept-Language…），大小寫不同的重複名稱在設計階段即拒絕，
-      依名稱排序送出（adapters.py:152-154、216-232；service.py:820-830）：大小寫、重複與順序都不再是模型的選擇。
+      依名稱排序送出（adapters.py:152-154、216-232；service.py:690-700）：大小寫、重複與順序都不再是模型的選擇。
       case_gate 先擋（policy.py:138-143）；目標前最後一個受信任的節點 supervisor 依 sealed case 的來源標記，再以模型詞彙與操作者清單重驗
       （worker_entry.py:372-391），不只靠不受信任容器內的檢查。fixture 路徑上，模型撰寫的本文只送往操作者在 allowed_requests
-      標 model_body 的端點（service.py:898、962-974；supervisor 再擋一次，worker_entry.py:374-376）。整組封存案例須經操作者
-      核准（核准綁定案例雜湊收據），之後才發出第一個請求（service.py:193-207、864-867）；執行 capability 本身也要求這份核准
+      標 model_body 的端點（service.py:768、832-844；supervisor 再擋一次，worker_entry.py:374-376）。整組封存案例須經操作者
+      核准（核准綁定案例雜湊收據），之後才發出第一個請求（service.py:189-203、734-737）；執行 capability 本身也要求這份核准
       （policy.py:184-186），不只靠 black-box 階段的順序。身分只能是 model_selectable 的測試身分
       （見 t-model-identity）。
       殘留：(1) 操作者標 model_body 的端點上，JSON 本文仍由模型決定，操作者在核准前可看到完整本文；(2) 低頻寬的選擇通道：模型
@@ -270,7 +270,7 @@ threats:
       就能讓案例以高權限身分送出。
     mitigation: >-
       測試身分新增 model_selectable，預設 false（domain.py:84-86）；case_gate 拒絕模型設計的案例（含 positive control、retest
-      複製的模型案例）使用未標記的身分（policy.py:144-148）；test_designer 只收到可選的身分清單（service.py:816）。模型設計的案例
+      複製的模型案例）使用未標記的身分（policy.py:144-148）；test_designer 只收到可選的身分清單（service.py:686）。模型設計的案例
       只能是 GET（state-changing 一律 blocked）；supervisor 逐請求比對 sealed case 的身分。操作者自填的案例不受此限。
       殘留：操作者若把高權限帳號標成 model_selectable，限制即失效（工作台在勾選處提示不要這樣做）。
     status: mitigated
@@ -315,7 +315,7 @@ threats:
       設定，不能被當成憑證引用（adapters.py:32-39）。目標測試身分的路徑也一樣：凡是環境綁定為模型金鑰的變數（不論本 run 的模型是否
       引用），以及與它同值的變數，都不能當測試身分的憑證；預檢、supervisor 環境與送出前都會拒絕（adapters.py:63-76、121-135、523-524）。
       測試身分的憑證也比照辦理：run 自己指定 target_url，所以憑證只送往操作者在 VIBEAUDIT_TARGET_CREDENTIAL_ORIGINS 綁定的
-      origin，預設不綁定；預檢列出未綁定的變數並拒絕（service.py:472-477），supervisor 環境不帶未綁定的值、只帶綁定設定本身
+      origin，預設不綁定；預檢列出未綁定的變數並拒絕（service.py:361-366），supervisor 環境不帶未綁定的值、只帶綁定設定本身
       （worker_runtime.py:81-99），送出前再以環境的綁定核對一次（adapters.py:79-118、525-527）；該變數也列為保留設定（adapters.py:32-39）。
       2026-10-06 第 6 次 G4 identity 審查指出原本只綁定模型金鑰，已補上（行為變更，2026-10-06 @chinchiang 確認保留）。
       殘留：持有 session 的人仍可在已綁定的 origin 使用金鑰（耗用額度），也可用已綁定的測試身分對該 origin 送出 allowed_requests 內的請求。
@@ -329,7 +329,7 @@ threats:
       模型金鑰會被當成目標憑證送到目標，或目標憑證被送到模型供應商。
     mitigation: >-
       只能引用 VIBEAUDIT_* 名稱；拒絕 URL 值與工具設定的別名。建立 run 時拒絕模型與測試身分引用同名變數（domain.py:155-157）；
-      live 預檢拒絕同名或同值（service.py:457-460，shared_credentials 見 adapters.py:121-135）；環境綁定為模型金鑰的變數一律算模型
+      live 預檢拒絕同名或同值（service.py:346-349，shared_credentials 見 adapters.py:121-135）；環境綁定為模型金鑰的變數一律算模型
       憑證，不論本 run 的模型是否引用（adapters.py:63-76）。送出前再擋（adapters.py:523-524）：supervisor 收到的 manifest 帶有模型
       憑證的名稱（不含值），所以這一層在送到目標前的最後一個受信任節點也有效（worker_runtime.py:66-73）；supervisor 的環境也不帶
       與模型金鑰同值的目標憑證（worker_runtime.py:81-99）。
@@ -345,7 +345,7 @@ threats:
       目標須是單一 origin 加操作者明列的 literal IP；DNS 結果須是其子集；連線用釘選的 IP 並驗證 TLS SNI；method/path 精確白名單。
       雲端 metadata（169.254.169.254、fd00:ec2::254、100.100.100.200）、link-local、unspecified、multicast 與 IPv4 保留位址一律拒絕，
       建立 run 時與每次連線前都檢查（adapters.py:342-372、419-420；domain.py:118-128）；live 預檢拒絕會連到控制台 origin、
-      VIBEAUDIT_DATABASE_URL 或 lease 資料庫 host:port 的目標（adapters.py:375-407、service.py:466-471、api.py:83）。帶測試身分的
+      VIBEAUDIT_DATABASE_URL 或 lease 資料庫 host:port 的目標（adapters.py:375-407、service.py:355-360、api.py:83）。帶測試身分的
       請求只送往環境綁定給該憑證的 origin（見 t-probe-key-exfil）。
       殘留：loopback 與私有位址仍允許（本機與內部 staging 需要），本機其他服務、經主機 LAN IP 連到資料庫的情況不在比對範圍；
       不帶身分的請求，目標是否已授權仍依操作者宣告。
@@ -390,7 +390,7 @@ threats:
       資料庫 all.zip 內的紀錄 ID；其他一律記為 unrecognized-rule 並列為缺口（sandbox.py:82-139、202-204；worker_runtime.py:624-625；
       resource_manifest.py:19）。發現先去重並依檔案、行號、規則排序，順序與重複不帶資訊（sandbox.py:198-201）。檔案路徑須在
       staging 清單內並經遮罩，行號不得超過 staging 副本中該檔的行數（副本雜湊不符即不採計），否則整筆不匯入並記為缺口，證據也只
-      保存收斂後的結果（service.py:576-596；staging.py:145-158；service.py:733-740）。
+      保存收斂後的結果（service.py:444-464；staging.py:145-158；service.py:603-610）。
       殘留：沒有自訂 seccomp 或 AppArmor profile、
       未要求 userns；/tmp tmpfs 可執行；kernel 漏洞仍可逃逸。容器內的程式仍可藉由選擇回報哪些「檔案、行號、已知規則」組合帶出資訊：
       每個 scanner 至多 1000 筆、以集合計，數百個檔案、每檔數百行時約為每次掃描數 KB，足以帶出一份小型 .env。
@@ -457,16 +457,16 @@ threats:
       發現送給 challenger、threat_modeler 與 reporter，architecture_mapper 的架構圖送給 threat_modeler。受測 repo 若能左右上游模型，
       就能把文字從資料通道帶進下游模型的指示，影響審查與威脅模型的完整性（漏報、威脅模型偏斜）。retest 也是一條跨 run 的鏈：上一個 run
       由 test_designer 設計的案例原樣複製進新 run 的 manifest（workspace_api.py:92-102；只複製測試所選發現之威脅的案例），新 run 的 threat_modeler 以 provided_cases 讀到。
-      test_designer 寫的案例標題也成為黑箱發現的標題（service.py:919），送進 reporter（service.py:951）。benchmark CLI 的 debate
+      test_designer 寫的案例標題也成為黑箱發現的標題（service.py:789），送進 reporter（service.py:821）。benchmark CLI 的 debate
       把前幾個模型的審查交給下一個模型（benchmark.py:348-349）。
     mitigation: >-
       核心審查問題由 harness 持有，commander 不能刪減；commander 的 focus 每項最多 300 字，放在獨立欄位並標為不受信任的模型衍生
-      資料交給 reviewer（contracts.py:233-236、service.py:642-644、661）。所有模型的系統提示都把受測 repo、工具內容與其他 agent 的
-      輸出標為資料、不是指示（service.py:28、providers.py:550）。三位 reviewer 須屬不同 family（policy.py:53-65）；這些 agent 沒有
+      資料交給 reviewer（contracts.py:233-236、service.py:510-512、529）。所有模型的系統提示都把受測 repo、工具內容與其他 agent 的
+      輸出標為資料、不是指示（service.py:29、providers.py:550）。三位 reviewer 須屬不同 family（policy.py:53-65）；這些 agent 沒有
       工具，輸出不觸發動作，所以影響限於審查完整性，不開啟對外通訊（見 t-indirect-injection）。retest 複製的模型案例保留 designed_by，
       照樣受 case_gate 的詞彙與身分限制，也要操作者重新核准才送出。threat_modeler 的 provided_cases 只帶追溯所需的欄位
       （id、標題、威脅與需求 ID、adapter、method、path、身分），不帶 header 值與本文，操作者寫進案例的測試帳密不會送到模型
-      （service.py:772-773）。reporter 的輸出只能是發現 ID 的排列（service.py:953-954），影響限於報告順序；benchmark 的模型沒有
+      （service.py:642-643）。reporter 的輸出只能是發現 ID 的排列（service.py:823-824），影響限於報告順序；benchmark 的模型沒有
       對外動作，輸出只寫入本機結果檔。殘留：標記是提示層級，不是硬邊界；
       common-mode 影響仍可能讓三位 reviewer 同時漏報，靠 challenger、靜態掃描器與人工審查補足。
     status: mitigated
@@ -510,8 +510,8 @@ threats:
       發現標題可能源自模型或掃描器輸出；SARIF 檢視器會把純文字裡的 [文字](目標) 呈現為連結，控制字元與 bidi 標記可隱藏或重排
       文字，下游若以 Markdown／HTML 呈現還可能被注入內容。
     mitigation: >-
-      SARIF 的 message.text、logicalLocation 名稱與 suppression 理由都經 sarif_text（service.py:1066-1076）：依 SARIF 2.1.0 §3.11.6
-      以反斜線跳脫方括號、移除控制字元與 bidi／零寬字元、上限 1000 字。Markdown 匯出有跳脫，裸 URL 與 www. 也會解除連結（service.py:1004-1059）；React 工作台
+      SARIF 的 message.text、logicalLocation 名稱與 suppression 理由都經 sarif_text（service.py:936-946）：依 SARIF 2.1.0 §3.11.6
+      以反斜線跳脫方括號、移除控制字元與 bidi／零寬字元、上限 1000 字。Markdown 匯出有跳脫，裸 URL 與 www. 也會解除連結（service.py:874-929）；React 工作台
       以 <pre> 呈現 JSON，沒有 dangerouslySetInnerHTML。殘留：不合規的檢視器若把純文字當 HTML 渲染，< > 仍原樣保留。
     status: mitigated
     gate: G3
@@ -539,7 +539,7 @@ threats:
     target: a-target-source
     description: raw staging 副本保留受測 repo 的機密檔；處理程序被強制終止後到下次啟動之間仍留在磁碟。
     mitigation: >-
-      whitebox 結束、每次 attempt 結束（finally）與啟動時都會刪除（service.py:71-96、251-293）；父目錄 0700；resume 須與凍結摘要相符。
+      whitebox 結束、每次 attempt 結束（finally）與啟動時都會刪除（service.py:68-92、246-288）；父目錄 0700；resume 須與凍結摘要相符。
       data_dir 與 artifacts 目錄設為 0700、evidence 檔 0600；POSIX 上無法設成只有擁有者可存取時拒絕啟動（store.py:30-45、98-101、283）。
       殘留：只在 POSIX 強制；Windows 只支援 demo（live 需要 Linux Docker runtime），資料為合成資料，目錄權限依上層目錄的 ACL 繼承。
     status: mitigated
