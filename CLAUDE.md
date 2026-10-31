@@ -45,6 +45,19 @@ python -m pip install --require-hashes -r requirements.mutation.lock.txt && pyth
 | `VIBEAUDIT_TEST_WORKER_IMAGE`、`VIBEAUDIT_INTEGRATION_IMAGE`、`VIBEAUDIT_FIXTURE_IMAGE`、`VIBEAUDIT_TEST_RUNTIME_CONFIG` | Docker worker、掃描器、工具與 fixture 整合（見 docs/DOCKER_INTEGRATION_TESTING.md） |
 | `VIBEAUDIT_JUNIT_XML` | `scripts/verify-linux.sh` 寫出 JUnit 收據 |
 
+## Agent skills
+
+### Issue tracker
+處理工作項目時，使用 chinchiang/MultiAgentBeta 的 GitHub Issues；
+操作規則見 `docs/agents/issue-tracker.md`。
+
+### Triage labels
+分類工作項目時，依 `docs/agents/triage-labels.md` 使用五種角色標籤。
+
+### Domain docs
+探索領域概念或架構決策前，依 `docs/agents/domain.md`
+讀取 single-context 文件。
+
 ---
 # CLAUDE.md
 
@@ -92,3 +105,17 @@ Unset means the matching tests skip with a stated reason.
 | `VIBEAUDIT_TEST_NODE` | TypeScript Web fixture (needs Node 24) |
 | `VIBEAUDIT_TEST_WORKER_IMAGE`, `VIBEAUDIT_INTEGRATION_IMAGE`, `VIBEAUDIT_FIXTURE_IMAGE`, `VIBEAUDIT_TEST_RUNTIME_CONFIG` | Docker worker, scanner, tool and fixture integrations (see docs/DOCKER_INTEGRATION_TESTING.md) |
 | `VIBEAUDIT_JUNIT_XML` | `scripts/verify-linux.sh` writes a JUnit receipt |
+
+## Agent skills
+
+### Issue tracker
+For tickets, use GitHub Issues in chinchiang/MultiAgentBeta.
+See `docs/agents/issue-tracker.md` for operations.
+
+### Triage labels
+For ticket classification, use the five role labels in
+`docs/agents/triage-labels.md`.
+
+### Domain docs
+Before exploring domain concepts or architecture decisions, read the
+single-context documents specified in `docs/agents/domain.md`.
