@@ -13,9 +13,9 @@ from pathlib import Path
 import re
 import stat
 
-MAX_FILES = 120
-MAX_FILE_BYTES = 64 * 1024
-MAX_TOTAL_BYTES = 384 * 1024
+MAX_FILES = 2000
+MAX_FILE_BYTES = 256 * 1024
+MAX_TOTAL_BYTES = 8 * 1024 * 1024
 MAX_ENTRIES = 5000
 MAX_DEPTH = 12
 MAX_GAPS = 256
@@ -111,8 +111,10 @@ def snapshot_source(path: str, keep: frozenset[str] = frozenset()) -> dict:
         raise ValueError("source_path must identify an existing source directory")
     root = Path(os.path.abspath(path))
     try:
-        if not root.is_dir() or not _safe_ancestors(root):
+        if not stat.S_ISDIR(root.stat().st_mode) or not _safe_ancestors(root):
             raise ValueError("Source root must be a real directory without symlink/reparse ancestors")
+    except FileNotFoundError:
+        raise ValueError("Source root must be a real directory without symlink/reparse ancestors") from None
     except OSError:
         raise ValueError("Source directory is not accessible") from None
     files: list[dict] = []
@@ -218,3 +220,37 @@ def snapshot_source(path: str, keep: frozenset[str] = frozenset()) -> dict:
         gaps.insert(0, f"Operator-declared test literals left unredacted: {found} of {len(keep)} appear in the snapshot")
     return {"digest": digest, "files": files, "gaps": gaps, "routes": routes[:500], "bytes_read": total_bytes,
             "limitations": ["Snapshot is bounded; route extraction and secret redaction are heuristic, not exhaustive. Repository code was not executed."]}
+
+
+def review_batches(source: dict, max_bytes: int) -> list[dict]:
+    """Deterministic bounded batches for every included character, with original path/line coordinates.
+
+    Chunks use a conservative character budget (JSON escaping can take six bytes per character).
+    Each packed batch is still measured as UTF-8 JSON. Fixed boundaries keep resume cache keys stable.
+    """
+    def size(value):
+        return len(json.dumps(value, ensure_ascii=False).encode())
+
+    if size(source) <= max_bytes:
+        return [source]
+    batches: list[dict] = []
+    batch = {"digest": source["digest"], "files": []}
+    if max_bytes < 128:
+        raise ValueError("Model batch limit is too small for source metadata")
+    chunk_characters = max_bytes // 8
+    for original in source["files"]:
+        content = original["content"]
+        starts = range(0, len(content), chunk_characters) if content else (0,)
+        for start in starts:
+            chunk = {**original, "content": content[start:start + chunk_characters],
+                     "line_start": content[:start].count("\n") + 1, "char_start": start}
+            candidate = {**batch, "files": [*batch["files"], chunk]}
+            if size(candidate) > max_bytes:
+                batches.append(batch)
+                candidate = {"digest": source["digest"], "files": [chunk]}
+                if size(candidate) > max_bytes:
+                    raise ValueError("Model batch limit is too small for source metadata")
+            batch = candidate
+    if batch["files"]:
+        batches.append(batch)
+    return batches

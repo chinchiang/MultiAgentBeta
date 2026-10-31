@@ -1,0 +1,26 @@
+{
+  "check": "loopback API + React SSR, not browser E2E",
+  "run_id": "c1b02dc3-fe58-4e23-8751-b20411560bbd",
+  "status": "incomplete",
+  "reviews": 3,
+  "outcomes": [
+    "fail",
+    "pass",
+    "inconclusive"
+  ],
+  "tabs_rendered": [
+    "overview",
+    "trace",
+    "findings",
+    "evidence",
+    "activity"
+  ],
+  "evidence_verified": 7,
+  "report_formats": [
+    "markdown",
+    "json",
+    "sarif"
+  ],
+  "safe_text_escaped": true,
+  "live_models_tested": false
+}

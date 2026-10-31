@@ -19,6 +19,50 @@ class Contract(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+def bind_finding_threats(run):
+    """Apply explicit model mappings only after checking their IDs against this run."""
+    findings = {f["id"]: f for f in run["findings"]}
+    tm = run["threat_model"]
+    gaps = tm.get("finding_gaps", {})
+    references = set(gaps) | {key for t in tm["threats"] for key in t.get("finding_ids", [])}
+    if references - findings.keys():
+        raise ValueError("Threat model references a finding outside this run")
+    mapped = {key: sorted(t["id"] for t in tm["threats"] if key in t.get("finding_ids", [])) for key in findings}
+    if any(mapped[key] for key in gaps) or any(not str(reason).strip() for reason in gaps.values()):
+        raise ValueError("Finding mapping gaps need a reason and cannot also claim a threat mapping")
+    for key, finding in findings.items():
+        finding["threat_ids"] = mapped[key]
+        if not mapped[key]:
+            finding["trace_gap"] = gaps.get(key, "No explicit finding-to-threat mapping was supplied")
+            gap = "Finding lacks threat traceability: " + key
+            if gap not in run["gaps"]:
+                run["gaps"].append(gap)
+        else:
+            finding.pop("trace_gap", None)
+
+
+def threat_coverage_outcome(run, threats, *, evidence_ids=None, required_case_ids=None):
+    """No partial case, repetition, citation or threat coverage can establish a whole finding."""
+    threats = set(threats)
+    cases = {c["id"]: c for c in run.get("cases", []) if threats & set(c.get("threat_ids", []))}
+    if not threats or not cases:
+        return "untraced"
+    executions = [e for e in run.get("executions", []) if e.get("case_id") in cases]
+    if any(e["status"] == "fail" for e in executions):
+        return "fail"
+    if required_case_ids is not None and not set(required_case_ids) <= cases.keys():
+        return "inconclusive"
+    if not threats <= {t for c in cases.values() for t in c.get("threat_ids", [])}:
+        return "inconclusive"
+    for key, case in cases.items():
+        rows = [e for e in executions if e["case_id"] == key]
+        count = 1 if case.get("fixture_profile") else case.get("repetitions", 1)
+        if (len(rows) != count or {e.get("repetition", 0) for e in rows} != set(range(count))
+                or any(e["status"] != "pass" or (evidence_ids is not None and e.get("evidence_id") not in evidence_ids) for e in rows)):
+            return "inconclusive"
+    return "pass"
+
+
 class SourceReference(Contract):
     file: str = Field(min_length=1, max_length=500)
     line: int = Field(ge=1)
@@ -73,6 +117,7 @@ class Threat(Contract):
     unknowns: list[str] = Field(default_factory=list, max_length=100)
     requirement_id: str = Field(min_length=1, max_length=100)
     dataflow_ids: list[str] = Field(default_factory=list, max_length=100)
+    finding_ids: list[str] = Field(default_factory=list, max_length=500, description="IDs of existing findings this threat explains; never invent an ID")
     testability: Literal["automated", "blocked"]
     blocked_reason: str | None = None
 
@@ -103,6 +148,7 @@ class ThreatModelProposal(Contract):
     dataflows: list[Dataflow] = Field(min_length=1, max_length=1000)
     threats: list[Threat] = Field(min_length=1, max_length=500)
     requirements: list[SecurityRequirement] = Field(default_factory=list, max_length=500)
+    finding_gaps: dict[str, str] = Field(default_factory=dict, max_length=500, description="Existing finding ID to a concrete reason why it has no threat mapping")
     roles: list[dict] = Field(default_factory=list, max_length=100)
     assumptions: list[str] = Field(default_factory=list, max_length=100)
     unknowns: list[str] = Field(default_factory=list, max_length=100)
@@ -248,6 +294,7 @@ class OperatorCase(CaseProposal):
     """Operator and retest cases may use any adapter or method and keep the sealed fields they were copied with."""
     model_config = ConfigDict(extra="allow")
     # Wider than the model contract on purpose; pydantic validates each class by its own annotations.
+    severity: Literal["critical", "high", "medium", "low", "info", "unrated"] = "unrated"
     adapter: Literal["http", "ai_http", "demo", "fixture", "zap", "schemathesis", "playwright", "promptfoo", "pyrit"]  # type: ignore[assignment]
     method: Literal["GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"] = "GET"  # type: ignore[assignment]
     preconditions: list[str | OperatorControl] = Field(default_factory=list, max_length=10)  # type: ignore[assignment]

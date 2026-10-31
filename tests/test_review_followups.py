@@ -315,7 +315,9 @@ def test_live_run_keeps_the_source_path_it_checked(tmp_path, monkeypatch):
         # A retest of a finished live run checks and keeps its own source path the same way.
         store = client.app.state.store
         parent = store.get(created.json()["id"])
-        parent.update(status="incomplete", findings=[{"id": "F1", "title": "t"}])
+        from pathlib import Path
+        case=json.loads((Path(__file__).resolve().parents[1]/"fixtures/web-api/bola-case.json").read_text())
+        parent.update(status="incomplete", findings=[{"id": "F1", "title": "t", "threat_ids":["T-BOLA"]}], cases=[case])
         store.save(parent)
         retest = client.post(f"/api/runs/{parent['id']}/retest", json={"name": "Retest", "source_path": crafted,
                                                                       "deployment_id": "v2", "finding_ids": ["F1"]})

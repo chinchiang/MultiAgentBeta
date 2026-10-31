@@ -22,7 +22,10 @@ for path in sorted((root/"docs").glob("*.xml")):
         "failures_detail":[{"test":test.get("classname","")+"."+test.get("name",""),"reason":node.get("message","")}
             for test in doc.iter("testcase") for node in list(test) if node.tag in {"failure","error"}]})
 result = {"generated_at":datetime.datetime.now(datetime.timezone.utc).isoformat(),
-    "model_endpoints_tested":False,"efficacy_established":False,
+    "junit_model_endpoints_tested":False,"efficacy_established":False,
+    "historical_model_acceptance":{"file":"docs/real-model-acceptance-2026-10-11.json",
+        "runs":len(json.loads((root/"docs/real-model-acceptance-2026-10-11.json").read_text(encoding="utf-8"))["runs"]),
+        "target_kind":"synthetic fixtures; historical integration evidence, not efficacy evidence"},
     "note":"Suites overlap; do not add counts as distinct tests. JUnit successful records include subtests where emitted. Docker, database and synthetic model contracts are separate evidence.",
     "reports":reports}
 # Fixed CRLF, so a summary regenerated on Linux or Windows has the same bytes.

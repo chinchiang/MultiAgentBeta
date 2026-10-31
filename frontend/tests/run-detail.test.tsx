@@ -22,6 +22,15 @@ beforeEach(() => {
 afterEach(() => { setLang('zh-Hant'); });
 
 describe('RunDetail', () => {
+  it('shows included source coverage and partial reviewer progress without claiming full coverage', () => {
+    const copy = structuredClone(run);
+    copy.review_coverage = {source_digest:'frozen',files:29,characters:400000,batches:4,completed:{'reviewer-a':[0,1]}};
+    detail({run:copy});
+    expect(screen.getByText('已納入的閱讀範圍')).toBeTruthy();
+    expect(screen.getByText('reviewer-a: 2/4')).toBeTruthy();
+    expect(screen.getByText('reviewer-b: 0/4')).toBeTruthy();
+    expect(screen.getByText(/省略與語意限制仍見驗證缺口/)).toBeTruthy();
+  });
   it('shows the synthetic banner, the truthful status, the stage pipeline and the metrics', () => {
     detail();
     expect(screen.getByText('合成示範 · 不是實際安全評估')).toBeTruthy();
@@ -78,6 +87,22 @@ describe('RunDetail', () => {
 });
 
 describe('the evidence decision', () => {
+  it('keeps refutation disabled when a second linked threat is inconclusive', () => {
+    const copy = structuredClone(run);
+    const candidate = copy.findings.find(f => f.state === 'hypothesis')!;
+    candidate.threat_ids = ['T-001', 'T-002'];
+    copy.cases = copy.cases.filter(c => c.id !== 'C-001');
+    copy.executions = copy.executions.filter(e => (e as {case_id?:string}).case_id !== 'C-001');
+    detail({ run: copy, tab: 'findings' });
+    const card = document.getElementById(`finding-${candidate.id}`) ?? screen.getAllByRole('article').find(a => a.textContent!.includes(candidate.id))!;
+    fireEvent.click(within(card).getByText('證據裁決'));
+    fireEvent.change(within(card).getByLabelText('裁決理由（會存入證據紀錄）'), { target: { value: 'Only one threat passed' } });
+    fireEvent.change(within(card).getByLabelText('裁決'), { target: { value: 'refuted' } });
+    const pass = within(card).getAllByRole('checkbox').find(box => box.parentElement!.textContent!.includes('C-002'))!;
+    fireEvent.click(pass);
+    expect(within(card).getByRole('button', { name: '記錄證據裁決' })).toHaveProperty('disabled', true);
+    expect(card.textContent).toContain('所有相關案例、重複次數與威脅');
+  });
   const hypothesis = run.findings.find(f => f.state === 'hypothesis' && f.threat_ids.length === 0)!;
   const validated = run.findings.find(f => f.state === 'validated_dynamic')!;
   const cardOf = (id: string) => screen.getAllByRole('article').find(article => article.textContent!.includes(id))!;

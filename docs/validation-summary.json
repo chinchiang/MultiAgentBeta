@@ -1,7 +1,12 @@
 {
-  "generated_at": "2026-10-10T11:51:30.724369+00:00",
-  "model_endpoints_tested": false,
+  "generated_at": "2026-10-30T22:42:46.858121+00:00",
+  "junit_model_endpoints_tested": false,
   "efficacy_established": false,
+  "historical_model_acceptance": {
+    "file": "docs/real-model-acceptance-2026-10-11.json",
+    "runs": 26,
+    "target_kind": "synthetic fixtures; historical integration evidence, not efficacy evidence"
+  },
   "note": "Suites overlap; do not add counts as distinct tests. JUnit successful records include subtests where emitted. Docker, database and synthetic model contracts are separate evidence.",
   "reports": [
     {
@@ -170,6 +175,69 @@
         "2026-09-24T12:28:32.834198+08:00"
       ],
       "skip_reasons": [],
+      "failures_detail": []
+    },
+    {
+      "file": "docs/review-final-guards-2026-10-31.xml",
+      "tests": 69,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "passed": 69,
+      "seconds": 5.336,
+      "timestamp": [
+        "2026-10-31T06:42:00.451408+08:00"
+      ],
+      "skip_reasons": [],
+      "failures_detail": []
+    },
+    {
+      "file": "docs/review-frontend-2026-10-31.xml",
+      "tests": 42,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "passed": 42,
+      "seconds": 3.569,
+      "timestamp": [
+        "2026-10-30T22:28:35.530Z",
+        "2026-10-30T22:28:35.541Z",
+        "2026-10-30T22:28:35.546Z",
+        "2026-10-30T22:28:35.558Z",
+        "2026-10-30T22:28:35.563Z",
+        "2026-10-30T22:28:35.572Z"
+      ],
+      "skip_reasons": [],
+      "failures_detail": []
+    },
+    {
+      "file": "docs/review-lease-2026-10-31.xml",
+      "tests": 45,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "passed": 45,
+      "seconds": 7.77,
+      "timestamp": [
+        "2026-10-31T06:25:13.520974+08:00"
+      ],
+      "skip_reasons": [],
+      "failures_detail": []
+    },
+    {
+      "file": "docs/review-regression-2026-10-31.xml",
+      "tests": 1373,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 1,
+      "passed": 1372,
+      "seconds": 495.45,
+      "timestamp": [
+        "2026-10-31T06:30:02.112478+08:00"
+      ],
+      "skip_reasons": [
+        "Windows redirector process-tree fallback"
+      ],
       "failures_detail": []
     },
     {

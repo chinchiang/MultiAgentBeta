@@ -48,6 +48,7 @@ export interface Run {
   manifest: RunInput; events: AuditEvent[]; reviews: Review[]; threat_model: ThreatModel | null; cases: TestCase[];
   executions: Record<string,unknown>[]; findings: Finding[]; gaps: unknown[]; limitations?: string[]; usage: {requests:number;model_calls:number;tokens:number};
   artifacts: unknown[]; error: unknown; error_zh?: string | null; workers_pending_cleanup?: boolean; usage_unknown?: boolean; deployment_changed?: boolean;
+  review_coverage?: {source_digest:string; files:number; characters:number; batches:number; completed:Record<string,number[]>};
   gate_receipts?: Record<string,string>; case_approval?: {receipt:string; actor:string; approved_at:string; evidence_id:string};
 }
 export interface Capabilities { tools: {id:string;available:boolean;status:string;detail:string;detail_en?:string}[]; runtime: Record<string,unknown>; limitations: string[]; limitations_zh?: string[] }

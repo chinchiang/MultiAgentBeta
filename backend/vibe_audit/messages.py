@@ -6,6 +6,13 @@ message in Chinese. A message from elsewhere (an adapter, a runtime probe) has n
 import re
 
 ZH = {
+    'Threat model references a finding outside this run': '威脅模型參照了本次執行以外的發現',
+    'Finding mapping gaps need a reason and cannot also claim a threat mapping': '發現的對應缺口需要原因，且不能同時宣告已對應威脅',
+    'No explicit finding-to-threat mapping was supplied': '尚未提供明確的發現與威脅對應',
+    'Selected findings lack threat traceability; map them in a new assessment before a retest': '所選發現缺少威脅追溯；請先在新評估中建立對應，再進行複測',
+    'Refuting a finding requires cited passing evidence for every related case, repetition and threat': '排除發現需要引用涵蓋所有相關案例、重複次數與威脅的通過證據',
+    'Model batch limit is too small for source metadata': '模型批次上限不足以容納原始碼中繼資料',
+
     # api.py
     "Local session required": "需要本機 session",
     "Invalid runtime profile ID": "執行環境設定檔 ID 無效",
@@ -314,8 +321,6 @@ ZH.update({
     "Model endpoint redirects are disabled": "模型端點的轉址已停用",
     "Compressed model responses are disabled to bound memory use": "為限制記憶體用量，已停用壓縮的模型回應",
     "Model response exceeded the byte limit": "模型回應超過位元組上限",
-    "Model endpoint IP must be global or explicit loopback": "模型端點 IP 必須是全域位址或明確的 loopback",
-    "Model DNS resolved outside globally routable addresses": "模型的 DNS 解析到非全域可路由的位址",
     "Provider did not return verifiable token usage": "provider 沒有回傳可驗證的 token 用量",
     "Invalid local response schema": "本機回應格式無效",
     "Only document-local schema references are permitted": "只允許文件內部的 schema 參照",
@@ -383,6 +388,13 @@ ZH.update({
 
 # Verdict and tool statuses and workflow stage names that appear inside messages, worded as in the console and the report.
 STATUS_ZH = {
+    'Threat model references a finding outside this run': '威脅模型參照了本次執行以外的發現',
+    'Finding mapping gaps need a reason and cannot also claim a threat mapping': '發現的對應缺口需要原因，且不能同時宣告已對應威脅',
+    'No explicit finding-to-threat mapping was supplied': '尚未提供明確的發現與威脅對應',
+    'Selected findings lack threat traceability; map them in a new assessment before a retest': '所選發現缺少威脅追溯；請先在新評估中建立對應，再進行複測',
+    'Refuting a finding requires cited passing evidence for every related case, repetition and threat': '排除發現需要引用涵蓋所有相關案例、重複次數與威脅的通過證據',
+    'Model batch limit is too small for source metadata': '模型批次上限不足以容納原始碼中繼資料',
+
     "pass": "未觀測到違規", "fail": "觀測到違規", "inconclusive": "證據不足", "blocked": "受阻",
     "execution_error": "執行錯誤", "outcome_unknown": "結果不明", "completed": "完成", "failed": "失敗",
     "intake": "接收", "preflight": "預檢", "whitebox": "白箱審查", "adjudication": "證據仲裁", "threat_model": "威脅建模",
@@ -446,6 +458,12 @@ ZH.update({
 })
 
 PATTERNS = [
+    (r"Finding lacks threat traceability: (.+)", "發現缺少威脅追溯：{0}"),
+    (r"(\w+) entries must be https://host\[:port\] origins", "{0} 的項目必須是 https://host[:port] origin"),
+    (r"(\w+) must name a readable PEM CA file", "{0} 必須指定可讀取的 PEM CA 檔案"),
+    (r"Model endpoint IP must be global, explicit loopback, or private under an origin listed in (\w+)", "模型端點 IP 必須是全域位址、明確的 loopback，或 {0} 所列 origin 的私有位址"),
+    (r"Model DNS resolved outside globally routable addresses; list a private-network model origin in (\w+)", "模型 DNS 解析到非全域可路由的位址；請在 {0} 列出私有網路模型 origin"),
+
     (r"Challenger: dropped (\d+) challenge\(s\) naming a finding that does not exist", "反證審查員：捨棄 {0} 項指向不存在發現的反證"),
     (r"Model request failed \(([A-Za-z0-9_ <-]+)\); response and error body withheld; billed usage may be unknown", "模型請求失敗（{0}）；回應與錯誤內容不予顯示；計費用量可能不明"),
     (r"Model endpoint answered HTTP (\d+); the request was not served and is treated as unbilled", "模型端點回應 HTTP {0}；請求沒有被處理，視為未計費"),

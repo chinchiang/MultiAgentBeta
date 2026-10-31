@@ -1,4 +1,5 @@
 """Real localhost HTTP tests of synthetic fixtures, never real LLMs or targets."""
+from collections import deque
 import http.client
 import json
 import os
@@ -102,8 +103,9 @@ def node_runtime():
 
 class RunningFixture:
     """Own exactly one authored fixture process and always reap it on exit."""
-    def __init__(self, argv):
+    def __init__(self, argv, *, startup_timeout=30):
         self.argv = argv
+        self.startup_timeout = startup_timeout
         self.process = None
         self.origin = None
         self.server_pid = None
@@ -114,11 +116,18 @@ class RunningFixture:
         self.process = subprocess.Popen(self.argv, cwd=str(FIXTURES), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                         stdin=subprocess.DEVNULL, text=True,
                                         creationflags=0x08000000 if os.name == "nt" else 0)
+        stderr_tail = deque(maxlen=8)
+        process = self.process
+        def drain_stderr():
+            while chunk := process.stderr.read(1024):
+                stderr_tail.append(chunk)
+        stderr_reader = threading.Thread(target=drain_stderr, daemon=True)
+        stderr_reader.start()
         ready = queue.Queue()
         reader = threading.Thread(target=lambda: ready.put(self.process.stdout.readline()), daemon=True)
         reader.start()
         try:
-            line = ready.get(timeout=8)
+            line = ready.get(timeout=self.startup_timeout)
             data = json.loads(line)
             assert data["synthetic"] is True
             self.origin = data["origin"]
@@ -129,6 +138,15 @@ class RunningFixture:
                 # both the actual interpreter and optional venv redirector.
                 self.job = WindowsFixtureJob([self.server_pid, self.process.pid])
             return self
+        except (queue.Empty, json.JSONDecodeError, AssertionError, KeyError) as exc:
+            exit_before_cleanup = self.process.poll()
+            self.stop()
+            reader.join(timeout=1)
+            stderr_reader.join(timeout=1)
+            detail = (f"timed out after {self.startup_timeout}s" if isinstance(exc, queue.Empty)
+                      else "returned an invalid ready message")
+            raise RuntimeError(f"Fixture startup {detail}; exit before cleanup={exit_before_cleanup}; "
+                               f"stderr tail: {''.join(stderr_tail)[-2048:]}") from exc
         except BaseException:
             self.stop()
             raise
@@ -300,6 +318,49 @@ class SyntheticFixtureHTTPTests(unittest.TestCase):
                 self.assertEqual(fixture.request("GET", "/documents/doc-a", token="fixture-ai-a", headers={"Host": "untrusted.invalid"})[0], 403)
                 self.assertEqual(fixture.request("POST", "/__fixture/shutdown", payload={})[0], 403)
             self.assertTrue(fixture.graceful_shutdown, "AI fixture did not use its graceful shutdown path")
+
+
+class FixtureStartupTests(unittest.TestCase):
+    def python_fixture(self, prelude):
+        # Delay/output precedes the real authored fixture's ready protocol.
+        code = "import sys, time, runpy; " + prelude + "; runpy.run_path(sys.argv.pop(1), run_name='__main__')"
+        return [sys.executable, "-c", code, str(FIXTURES / "ai-agent/server.py"),
+                "--mode", "fixed", "--port", "0"]
+
+    def test_slow_startup_can_report_ready_after_the_old_eight_second_limit(self):
+        fixture = RunningFixture(self.python_fixture("time.sleep(8.25)"))
+        with fixture:
+            self.assertEqual(fixture.request("GET", "/")[0], 200)
+        self.assertTrue(fixture.graceful_shutdown)
+        self.assertIsNotNone(fixture.process.poll())
+
+    def test_startup_drains_stderr_before_ready(self):
+        fixture = RunningFixture(self.python_fixture("sys.stderr.write('x' * (1024 * 1024)); sys.stderr.flush()"))
+        with fixture:
+            self.assertEqual(fixture.request("GET", "/")[0], 200)
+        self.assertTrue(fixture.graceful_shutdown)
+        self.assertIsNotNone(fixture.process.poll())
+
+    def test_early_exit_reports_bounded_stderr_and_reaps_the_child(self):
+        code = "import sys; sys.stderr.write('discarded-prefix' + 'x' * 20000 + 'synthetic startup failure'); sys.exit(17)"
+        fixture = RunningFixture([sys.executable, "-c", code])
+        with self.assertRaisesRegex(RuntimeError, "invalid ready message") as failure:
+            fixture.__enter__()
+        message = str(failure.exception)
+        self.assertIn("synthetic startup failure", message)
+        self.assertNotIn("discarded-prefix", message)
+        self.assertLess(len(message), 2300)
+        self.assertEqual(fixture.process.returncode, 17)
+        self.assertTrue(fixture.process.stdout.closed)
+        self.assertTrue(fixture.process.stderr.closed)
+
+    def test_startup_timeout_reports_the_deadline_and_reaps_the_child(self):
+        fixture = RunningFixture([sys.executable, "-c", "import time; time.sleep(60)"], startup_timeout=0.1)
+        with self.assertRaisesRegex(RuntimeError, "timed out after 0.1s"):
+            fixture.__enter__()
+        self.assertIsNotNone(fixture.process.poll())
+        self.assertTrue(fixture.process.stdout.closed)
+        self.assertTrue(fixture.process.stderr.closed)
 
 
 if __name__ == "__main__":

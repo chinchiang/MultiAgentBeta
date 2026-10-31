@@ -16,7 +16,7 @@ python -m ruff check backend tests scripts                        # lint：未�
 sh scripts/contract-smoke.sh                                      # 對真實 loopback 後端跑控制台的 SSR／API 契約 smoke（CI 會跑）
 cd frontend && npm ci && npm run typecheck && npm test && npm run check:i18n && npm run check:messages && npm run build   # dist/ 有提交進版控；npm test 跑 tests/ 的 vitest 單元與元件測試；check:i18n 找出沒有英文對照的介面中文；check:messages 比對前後端讀訊息對照表的結果
 git add -N frontend/dist && git diff --exit-code -- frontend/dist # CI：dist 必須與原始碼建置結果一致
-python -m pip install --require-hashes -r requirements.mutation.lock.txt && python scripts/mutation-test.py   # 突變測試（Linux）：閘門與解析模組的每個突變都要被測試抓到
+python -m pip install --require-hashes -r requirements.mutation.lock.txt && python scripts/mutation-test.py   # 突變測試（Linux）：閘門與解析模組的逃脫數不得超過已記錄基準
 ```
 
 ## 規則
@@ -32,7 +32,7 @@ python -m pip install --require-hashes -r requirements.mutation.lock.txt && pyth
 - JUnit 收據放進 docs/ 前先跑 `python scripts/redact-receipts.py`，再跑 `python scripts/summarize-validation.py`。
 - `.claude/` 與本檔由 `scripts/package-release.py` 排除在發佈檔之外。
 - `docs/sample-report.md` 由 `python scripts/render-sample-report.py` 依 `docs/sample-report.json` 產生（中文報告、`---`、英文報告），不可手改；報告產生器改了就重產。
-- 改到 `pyproject.toml` 的 `[tool.mutmut]` 所列模組或它們的測試時，跑 `scripts/mutation-test.py`（只看改動的函式：`--changed origin/main`）；CI 的突變 workflow 預設關閉（repository variable `VIBEAUDIT_MUTATION=true` 才自動跑，手動 dispatch 一律跑），所以本機跑是唯一的把關；存活的突變要補測試，真的到不了的程式才標 `# pragma: no mutate`。兩份鎖定檔都用 `scripts/hash-lock.py` 重產（第二份加 `--lock requirements.mutation.lock.txt`）。
+- 改到 `pyproject.toml` 的 `[tool.mutmut]` 所列模組或它們的測試時，跑 `scripts/mutation-test.py`（只看改動的函式：`--changed origin/main`）；CI 的突變 workflow 預設啟用（`VIBEAUDIT_MUTATION=false` 才停用自動執行，手動 dispatch 一律執行），本機仍須核對改動函式的結果；存活的突變要補測試，真的到不了的程式才標 `# pragma: no mutate`。兩份鎖定檔都用 `scripts/hash-lock.py` 重產（第二份加 `--lock requirements.mutation.lock.txt`）。
 
 ## 整合測試開關
 
@@ -44,6 +44,19 @@ python -m pip install --require-hashes -r requirements.mutation.lock.txt && pyth
 | `VIBEAUDIT_TEST_NODE` | TypeScript Web fixture（需要 Node 24） |
 | `VIBEAUDIT_TEST_WORKER_IMAGE`、`VIBEAUDIT_INTEGRATION_IMAGE`、`VIBEAUDIT_FIXTURE_IMAGE`、`VIBEAUDIT_TEST_RUNTIME_CONFIG` | Docker worker、掃描器、工具與 fixture 整合（見 docs/DOCKER_INTEGRATION_TESTING.md） |
 | `VIBEAUDIT_JUNIT_XML` | `scripts/verify-linux.sh` 寫出 JUnit 收據 |
+
+## Agent skills
+
+### Issue tracker
+處理工作項目時，使用 chinchiang/MultiAgentBeta 的 GitHub Issues；
+操作規則見 `docs/agents/issue-tracker.md`。
+
+### Triage labels
+分類工作項目時，依 `docs/agents/triage-labels.md` 使用五種角色標籤。
+
+### Domain docs
+探索領域概念或架構決策前，依 `docs/agents/domain.md`
+讀取 single-context 文件。
 
 ---
 # CLAUDE.md
@@ -64,7 +77,7 @@ python -m ruff check backend tests scripts                        # lint: unused
 sh scripts/contract-smoke.sh                                      # the console's SSR/API contract smoke against a real loopback backend (CI runs it)
 cd frontend && npm ci && npm run typecheck && npm test && npm run check:i18n && npm run check:messages && npm run build   # dist/ is committed; npm test runs the vitest unit and component tests in tests/; check:i18n finds interface Chinese with no English counterpart; check:messages compares how the console and backend read the message table
 git add -N frontend/dist && git diff --exit-code -- frontend/dist # CI: dist must match the sources
-python -m pip install --require-hashes -r requirements.mutation.lock.txt && python scripts/mutation-test.py   # mutation testing (Linux): every mutant of the gate and parser modules must be caught
+python -m pip install --require-hashes -r requirements.mutation.lock.txt && python scripts/mutation-test.py   # mutation testing (Linux): escaped mutants of the gates and parsers must stay within the recorded baseline
 ```
 
 ## Rules
@@ -80,7 +93,7 @@ python -m pip install --require-hashes -r requirements.mutation.lock.txt && pyth
 - Run `python scripts/redact-receipts.py` before adding a JUnit receipt to docs/, then `python scripts/summarize-validation.py`.
 - `.claude/` and this file are excluded from releases by `scripts/package-release.py`.
 - `docs/sample-report.md` is rendered from `docs/sample-report.json` by `python scripts/render-sample-report.py` (Chinese report, `---`, English report). Never edit it by hand; re-render it when the report generator changes.
-- After changing a module listed under `[tool.mutmut]` in `pyproject.toml`, or its tests, run `scripts/mutation-test.py` (`--changed origin/main` for the changed functions only); the mutation workflows in CI are off by default (they run on their own only with the repository variable `VIBEAUDIT_MUTATION=true`; a manual dispatch always runs), so the local run is the only gate; a surviving mutant needs a test, and only genuinely unreachable code gets `# pragma: no mutate`. Regenerate either lock file with `scripts/hash-lock.py` (`--lock requirements.mutation.lock.txt` for the second).
+- After changing a module listed under `[tool.mutmut]` in `pyproject.toml`, or its tests, run `scripts/mutation-test.py` (`--changed origin/main` for the changed functions only); the mutation workflows run by default (`VIBEAUDIT_MUTATION=false` disables automatic runs; manual dispatch always runs), and changed functions must still be checked locally; a surviving mutant needs a test, and only genuinely unreachable code gets `# pragma: no mutate`. Regenerate either lock file with `scripts/hash-lock.py` (`--lock requirements.mutation.lock.txt` for the second).
 
 ## Integration test switches
 
@@ -92,3 +105,17 @@ Unset means the matching tests skip with a stated reason.
 | `VIBEAUDIT_TEST_NODE` | TypeScript Web fixture (needs Node 24) |
 | `VIBEAUDIT_TEST_WORKER_IMAGE`, `VIBEAUDIT_INTEGRATION_IMAGE`, `VIBEAUDIT_FIXTURE_IMAGE`, `VIBEAUDIT_TEST_RUNTIME_CONFIG` | Docker worker, scanner, tool and fixture integrations (see docs/DOCKER_INTEGRATION_TESTING.md) |
 | `VIBEAUDIT_JUNIT_XML` | `scripts/verify-linux.sh` writes a JUnit receipt |
+
+## Agent skills
+
+### Issue tracker
+For tickets, use GitHub Issues in chinchiang/MultiAgentBeta.
+See `docs/agents/issue-tracker.md` for operations.
+
+### Triage labels
+For ticket classification, use the five role labels in
+`docs/agents/triage-labels.md`.
+
+### Domain docs
+Before exploring domain concepts or architecture decisions, read the
+single-context documents specified in `docs/agents/domain.md`.

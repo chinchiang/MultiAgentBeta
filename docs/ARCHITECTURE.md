@@ -56,7 +56,7 @@ flowchart TB
 | React 控制台 | `frontend/src`（建置到 `frontend/dist`，由 FastAPI 提供） |
 | FastAPI：session／CSRF／scope | `api.py`、`workspace_api.py` |
 | 指揮與 LangGraph 階段 | `service.py`（`STAGES`，每個階段一個圖節點） |
-| 模型閘道・每個代理的 profile | `providers.py`（LiteLLM，無隱性 fallback；操作者設定的備援在 `service.py`） |
+| 模型閘道・每個代理的 profile | `providers.py`（LiteLLM，無隱性 fallback；回答、預留、結算、答案快取與操作者設定的備援在 `model_calls.py`） |
 | 確定性閘門 | `policy.py`（manifest、whitebox、threat、case 閘門與 `authorize`）、`contracts.py`、`domain.py` |
 | 獨立 supervisor ＋ 持久 lease | `worker_runtime.py`、`lease.py`；IP 釘選傳輸與 oracle 在 `adapters.py` |
 | 獨立 effect collector | `effect_collector.py`，經 `fixture_protocol.py` 使用 |
@@ -100,6 +100,16 @@ ZAP 只執行經審查的 requestor/passive 計畫。Schemathesis 使用明確�
 ## 限制
 
 沒有完整的語意呼叫圖或窮盡的原始碼閱讀、沒有經證明的模型獨立性、不能以合成基準宣稱有效性、沒有遠端 fleet／SaaS、沒有任意的瀏覽器自動化、沒有正式環境的部署／修補。透過操作者提供的標頭進行的原始碼對部署比對，只證明該標頭相等，而非與原始碼的密碼學對應。主機管理員仍然受信任；檔案雜湊不是鑑識等級的不可變性。
+
+## 2026-10-31 審查修正的契約
+
+白箱模型與掃描器的發現透過 threats[].finding_ids 明確連結威脅；finding_gaps 保存無法對應的原因，缺少對應不得悄悄複測。歷史發現沒有威脅連結時，建立複測會被拒絕。排除發現需要引用所有相關案例、每次重複與每個威脅的通過證據；缺少、未引用、證據不足或失敗的執行均不能排除整筆發現。複測同樣不能略過原先相關案例。動態違規的證據狀態與嚴重度分開：採用操作者在案例指定的 severity，未指定則為 unrated（尚未評級），不再一律列為高風險。
+
+模型端點的 HTTP 狀態不作為未計費證明；已送出的失敗若沒有可驗證用量，保留預留額並阻擋付費恢復。案例設計輸入含完整 allowed_requests、model_body、model_headers 與 fixture_profile，不含憑證值，也不含不可供模型選用的身分。
+
+原始碼 intake 上限為 2,000 檔、每檔 256 KiB、總量 8 MiB，仍受 5,000 項目與深度上限限制。三位 reviewer 以有界批次閱讀所有已納入的文字，保留原始路徑與 line_start；每批答案依輸入雜湊快取。review_coverage 記錄納入檔數、字元數與每位 reviewer 完成的批次。超過 intake 上限、無法解析與跨檔案語意未知仍列為缺口；後續架構與威脅建模的情境裁切也保留缺口，不宣稱完整語意分析。
+
+模型呼叫 module 透過 ModelAnswer 同時回傳驗證後答案與實際回答者。預留與結算共用於回答及 preflight 探測；providers adapter 保留有界格式重試，探測不使用備援。取消會將自身預留轉為保守估計用量，未知用量則保留預留並阻擋後續付費呼叫。既有 run 與快取格式維持相容。
 
 ---
 # Architecture and methodology — 0.2.1
@@ -160,7 +170,7 @@ Each node above maps to code in `backend/vibe_audit/` (or the named directory). 
 | React console | `frontend/src` (built into `frontend/dist`, served by FastAPI) |
 | FastAPI: session / CSRF / scope | `api.py`, `workspace_api.py` |
 | Commander and LangGraph stages | `service.py` (`STAGES`, one graph node per stage) |
-| Model gateway · per-agent profiles | `providers.py` (LiteLLM, no implicit fallback; the operator's fallback is in `service.py`) |
+| Model gateway · per-agent profiles | `providers.py` (LiteLLM, no implicit fallback; answers, reservations, settlement, answer caching and operator fallback are in `model_calls.py`) |
 | Deterministic gates | `policy.py` (manifest, whitebox, threat and case gates and `authorize`), `contracts.py`, `domain.py` |
 | Independent supervisor + persistent lease | `worker_runtime.py`, `lease.py`; IP-pinned transport and oracles in `adapters.py` |
 | Independent effect collector | `effect_collector.py`, used through `fixture_protocol.py` |
@@ -204,3 +214,13 @@ Built-in TS Web and Python AI targets are synthetic and deterministic. AI trials
 ## Limits
 
 No complete semantic call graph or exhaustive source reading, no proven model independence, no effectiveness claim from synthetic benchmarks, no remote fleet/SaaS, no arbitrary browser automation, no production deployment/patching. Source-to-deployment matching via an operator-supplied header proves that header equality, not cryptographic correspondence to the source. Host administrators remain trusted; file hashes are not forensic immutability.
+
+## Contracts of the 2026-10-31 review repairs
+
+White-box model and scanner findings explicitly link to threats through threats[].finding_ids. finding_gaps records unmapped reasons; a missing mapping cannot silently create a retest. Retests of historical findings without threat links are refused. Refuting a finding requires cited passing evidence for every related case, repetition and threat; missing, uncited, inconclusive or failed executions cannot refute the whole finding. Retests likewise cannot omit originally related cases. Dynamic confirmation and impact severity are separate: the operator may specify case severity; otherwise the finding is unrated instead of automatically high.
+
+An HTTP status is not proof of unbilled usage. Sent failures without verifiable metering retain their reservations and block paid resume. Case-design input includes the complete allowed_requests, model_body, model_headers and fixture_profile; it contains no credential values or identities that the operator did not make model-selectable.
+
+Source intake is bounded at 2,000 files, 256 KiB per file and 8 MiB total, still subject to 5,000 entries and the depth limit. All three reviewers read every included character in bounded batches with original paths and line_start; each batch answer is cached against its input hash. review_coverage records included file/character counts and each reviewer's completed batches. Intake omissions, parsing failures and unknown cross-file semantics remain gaps; later architecture/threat context trimming also records gaps and makes no exhaustive semantic-analysis claim.
+
+The model-call module returns validated data and its actual author together in ModelAnswer. Answers and preflight probes share reservation and settlement; the providers adapter retains bounded format retries, and probes do not use fallback. Cancellation converts its own reservation to conservative estimated usage; unknown usage retains the reservation and blocks further paid calls. Existing run and cache formats remain compatible.

@@ -92,6 +92,10 @@ def workspace_router(store, engine, source_roots, *, session):
         cases = parent["cases"]
         selected = [f for f in parent["findings"] if f["id"] in set(data.finding_ids)]
         threats = {t for f in selected for t in f.get("threat_ids") or []}
+        if len(selected) != len(set(data.finding_ids)):
+            raise PolicyError("Retest references a finding outside the parent run")
+        if any(not f.get("threat_ids") for f in selected):
+            raise PolicyError("Selected findings lack threat traceability; map them in a new assessment before a retest")
         if threats:
             # A retest re-checks what was selected: only the cases that test those findings' threats.
             cases = [c for c in cases if threats & set(c.get("threat_ids", []))]
@@ -170,6 +174,10 @@ def workspace_router(store, engine, source_roots, *, session):
             raise PolicyError("Refuting a finding needs an execution in which the security property held")
         if data.decision == "refuted" and any(e["status"] == "fail" for e in run["executions"] if tests_threats(e)):
             raise PolicyError("A case testing these threats observed a violation in this run; the finding cannot be refuted")
+        if data.decision == "refuted":
+            from .contracts import threat_coverage_outcome
+            if threat_coverage_outcome(run, threats, evidence_ids=set(data.evidence_ids)) != "pass":
+                raise PolicyError("Refuting a finding requires cited passing evidence for every related case, repetition and threat")
         entry = {**data.model_dump(), "threat_ids": sorted(threats), "at": now(), "actor": actor, "previous_state": finding["state"]}
         finding.setdefault("decisions", []).append(entry)
         finding["state"] = data.decision
