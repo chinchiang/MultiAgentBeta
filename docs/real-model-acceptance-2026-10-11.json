@@ -2767,6 +2767,137 @@
    "unredacted_literals": 2,
    "fallback_limitations": [],
    "note": "The threat modeler did not refuse and passed on its first attempt, so its fallback was not used. reviewer-gemini did not refuse either, for the first time since #22, so the fallback was not called at all in this run. Ran end to end with no resume. After another host reboot the environment was rebuilt (database, fixture, offline OSV data, runtime profile, console), and the run input came from fixtures/web-api/live-run.example.json with the SSO profile filled in; LM Studio models were reloaded with Nemotron at a 71,936-token context and Qwen at 81,920 before the run."
+  },
+  {
+   "name": "真模型驗收 #28：Web API（vulnerable）＋操作者案例（BOLA、登出）＋不遮蔽的測試 session＋本地 Qwen 備援（審查員與威脅建模員）",
+   "run_id": "8b31c4bd-aa07-4013-b9a1-6ec3c4454f4c",
+   "created_at": "2026-11-03T05:00:59.537262+00:00",
+   "status": "incomplete",
+   "stage": "complete",
+   "error": null,
+   "target": "http://127.0.0.1:8913",
+   "source": "fixtures/web-api",
+   "static_tools": [
+    "semgrep",
+    "osv",
+    "gitleaks"
+   ],
+   "models": [
+    {
+     "id": "commander",
+     "role": "commander",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-opus-5-5",
+     "family": "claude"
+    },
+    {
+     "id": "reviewer-gemini",
+     "role": "reviewer",
+     "provider": "openai_compatible",
+     "model_id": "gemini-3.8-flash",
+     "family": "gemini"
+    },
+    {
+     "id": "reviewer-claude",
+     "role": "reviewer",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-sonnet-5-5",
+     "family": "claude-sonnet"
+    },
+    {
+     "id": "reviewer-nemotron",
+     "role": "reviewer",
+     "provider": "openai_compatible",
+     "model_id": "nvidia/nemotron-3-super",
+     "family": "nemotron",
+     "json_mode": "json_schema"
+    },
+    {
+     "id": "threat-modeler",
+     "role": "threat_modeler",
+     "provider": "bedrock",
+     "model_id": "global.anthropic.claude-sonnet-5-5",
+     "family": "claude-sonnet"
+    },
+    {
+     "id": "test-designer",
+     "role": "test_designer",
+     "provider": "openai_compatible",
+     "model_id": "gemini-3.8-flash",
+     "family": "gemini"
+    },
+    {
+     "id": "local-fallback",
+     "role": "fallback",
+     "provider": "openai_compatible",
+     "model_id": "qwen/qwen3.8-27b",
+     "family": "qwen",
+     "json_mode": "json_schema",
+     "fallback_for": [
+      "reviewer-gemini",
+      "threat-modeler"
+     ]
+    }
+   ],
+   "usage": {
+    "tokens": 218351,
+    "model_calls": 17,
+    "requests": 8,
+    "tokens_known": null
+   },
+   "reviews": [
+    {
+     "agent_id": "reviewer-claude",
+     "status": "completed",
+     "findings": 8
+    },
+    {
+     "agent_id": "reviewer-gemini",
+     "status": "completed",
+     "findings": 4
+    },
+    {
+     "agent_id": "reviewer-nemotron",
+     "status": "completed",
+     "findings": 2
+    }
+   ],
+   "scanners": [
+    {
+     "id": "semgrep",
+     "status": "completed",
+     "findings": 0
+    },
+    {
+     "id": "osv",
+     "status": "completed",
+     "findings": 0
+    },
+    {
+     "id": "gitleaks",
+     "status": "completed",
+     "findings": 0
+    }
+   ],
+   "executions": [
+    {
+     "case_id": "C-BOLA",
+     "status": "fail",
+     "reason": "A forbidden test canary was observed in the response."
+    },
+    {
+     "case_id": "C-LOGOUT",
+     "status": "fail",
+     "reason": "Synthetic session revocation sequence"
+    }
+   ],
+   "findings_by_state": {
+    "hypothesis": 14,
+    "validated_dynamic": 2
+   },
+   "unredacted_literals": 2,
+   "fallback_limitations": [],
+   "note": "The threat modeler did not refuse and wrote the threat model itself, so its fallback was not used. reviewer-gemini did not refuse either, as in #27. In adjudication the challenge round, which falls to the commander when no challenger is configured, was refused once by the commander (claude-opus-5-5); the fallback's fallback_for lists only reviewer-gemini and threat-modeler, so the run failed at adjudication and one resume ran it to the end. 17 model calls against #27's 15: one is the refused challenge; the other is a schema retry the record does not attribute to a stage. Same environment and run input as #27."
   }
  ]
 }
