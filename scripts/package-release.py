@@ -18,7 +18,7 @@ MANIFEST = "source-manifest.sha256"
 PRIVATE = (".env", "local-secrets.", ".data")
 # Claude Code configuration for cloud sessions is committed but is not part of the product.
 AGENT_STATE = (".claude",)
-AGENT_NOTES = ("CLAUDE.md",)
+AGENT_NOTES = ("CLAUDE.md", "AGENTS.md")
 
 
 def deliverables(root=ROOT):

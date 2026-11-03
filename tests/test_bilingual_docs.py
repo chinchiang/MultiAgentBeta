@@ -14,7 +14,8 @@ CJK = re.compile(r"[一-鿿]")
 def documents():
     tracked = subprocess.run(["git", "ls-files", "*.md"], cwd=ROOT, capture_output=True, text=True, check=True).stdout.split()
     # Upstream source snapshots are not project documentation.
-    names = [name for name in tracked if not name.startswith("catalogs/sources/")]
+    # CLAUDE.md is only the line @AGENTS.md; AGENTS.md carries the bilingual project notes.
+    names = [name for name in tracked if not name.startswith("catalogs/sources/") and name != "CLAUDE.md"]
     return sorted(names + ["NOTICE"])
 
 
