@@ -6,7 +6,7 @@
 
 ## 2026-10-11 備援模型與不遮蔽測試字面值的驗收
 
-PR #44 加入兩項功能：操作者設定的備援模型（`fallback`），以及不遮蔽的合成測試憑證（`unredacted_literals`）。接著以真模型跑了 #18～#27。模型、環境與限制都和上一節相同；每次 run 的資料也已補進 real-model-acceptance-2026-10-11.json。這 10 次共約 189 萬 tokens，27 次合計約 400 萬 tokens。
+PR #44 加入兩項功能：操作者設定的備援模型（`fallback`），以及不遮蔽的合成測試憑證（`unredacted_literals`）。接著以真模型跑了 #18～#28。模型、環境與限制都和上一節相同；每次 run 的資料也已補進 real-model-acceptance-2026-10-11.json。這 11 次共約 211 萬 tokens，28 次合計約 422 萬 tokens。
 
 | run | 靶場與設定 | 結果 |
 |---|---|---|
@@ -20,16 +20,18 @@ PR #44 加入兩項功能：操作者設定的備援模型（`fallback`），以
 | #25 | 同 #24 | 同 #24：Gemini 拒答、Qwen 代答，威脅建模員沒有拒答。Nemotron 截斷一次，恢復後跑完全程，BOLA 與登出都 fail |
 | #26 | 同 #24 | 同 #24：Gemini 拒答、Qwen 代答，威脅建模員沒有拒答。沒有恢復就跑完全程，BOLA 與登出都 fail |
 | #27 | 同 #24，2026-11-03 在主機再次重開後重建的環境，run 設定取自 `fixtures/web-api/live-run.example.json` | Gemini 這次沒有拒答（#22 以來第一次），威脅建模員也沒有拒答，第一次就通過，所以備援完全沒有被呼叫。沒有恢復就跑完全程，BOLA 與登出都 fail |
+| #28 | 同 #27 | Gemini 仍沒有拒答。裁決階段的挑戰回合由指揮官（Opus 5.5）負責，它拒答一次；備援沒有列它，run 停在裁決，恢復後通過。威脅建模員沒有拒答，自己寫完威脅模型，備援仍未被呼叫。恢復一次後跑完全程，BOLA 與登出都 fail |
 
 - **#18 找到的問題（PR #44 已修正）**：
   - 原本備援還沒回答就先記成「已代答」，所以 #18 的能力限制那一行是錯的。現在改成先記「改問備援」，等備援真的回答後才記為代答。
   - 備援也失敗時，錯誤現在寫明是哪個備援失敗。
 - **備援代答已驗證（#22）**：Gemini 拒答，本地 Qwen 回答整份審查，能力限制記下這次代答，家族閘門檢查的是 Qwen。兩個本地模型同時回答、共用硬體時，每個約每秒 10 tokens，白箱用了約 25 分鐘。
-- **威脅建模員的備援尚未用上**：#23～#27 這 5 次都為威脅建模員設了備援，但它都沒有拒答，每次都第一次就通過，所以「威脅建模員拒答時由備援寫完威脅模型」還沒在真模型上看到。這條路徑目前只有單元測試涵蓋。
-- **#24～#27 的環境**：主機重開後，資料庫、靶場、離線 OSV 資料、runtime 設定與控制台都重新建立，run 設定依 #23 的紀錄與靶場 README 重寫。登出案例 C-LOGOUT、兩條操作者需求，以及指揮官與威脅建模員的輸出上限（16,000）可能和 #23 不同。
+- **威脅建模員的備援尚未用上**：#23～#28 這 6 次都為威脅建模員設了備援，但它都沒有拒答，每次都第一次就通過，所以「威脅建模員拒答時由備援寫完威脅模型」還沒在真模型上看到。這條路徑目前只有單元測試涵蓋。
+- **指揮官也會拒答（#28）**：沒有另設 challenger 時，裁決階段的挑戰回合由指揮官負責。#28 的指揮官拒答一次，因為備援的 `fallback_for` 只列了 Gemini 審查員與威脅建模員，run 停在裁決，要靠恢復處理。要讓備援接手，`fallback_for` 也要列出指揮官。#28 的模型呼叫比 #27 多 2 次：一次是被拒答的挑戰回合，另一次是 schema 重試，紀錄沒有記下是哪個階段。
+- **#24～#28 的環境**：主機重開後，資料庫、靶場、離線 OSV 資料、runtime 設定與控制台都重新建立，run 設定依 #23 的紀錄與靶場 README 重寫。登出案例 C-LOGOUT、兩條操作者需求，以及指揮官與威脅建模員的輸出上限（16,000）可能和 #23 不同。
   - LM Studio 重開後，Nemotron 在收到請求時才自動載入，上下文只有 8,192，所以 #24 第一次恢復時又被截斷；以 71,936 重新載入後才通過。本地模型的上下文要在跑之前確認。
   - #24 第一次嘗試時 LM Studio 還連不上，在預檢就失敗；那筆資料隨舊資料庫清掉，沒有列入。
-  - #27（2026-11-03）之前主機又重開一次，環境再次重建。run 設定改用 repo 的 `fixtures/web-api/live-run.example.json`（就是 #24～#26 的設定，只填入 SSO profile）；跑之前先以 71,936（Nemotron）與 81,920（Qwen）的上下文重新載入本地模型。
+  - #27、#28（2026-11-03）之前主機又重開一次，環境再次重建。run 設定改用 repo 的 `fixtures/web-api/live-run.example.json`（就是 #24～#26 的設定，只填入 SSO profile）；跑之前先以 71,936（Nemotron）與 81,920（Qwen）的上下文重新載入本地模型。
 - **威脅模型的資料流規則**：#17、#21、#22 都在同一條規則上失敗：資料流指向沒有宣告的資產，因為契約沒有說呼叫者和攻擊者也要列成資產。現在 schema 說明、威脅建模指示與重試提示都寫明這一點，#22 在這份程式碼上恢復後通過。中間有一次是威脅建模員（Sonnet）拒答；#22 只為 Gemini 審查員設了備援，所以那次靠恢復處理。
 
 ## 2026-10-10～11 真模型驗收
@@ -104,7 +106,7 @@ PR #44 加入兩項功能：操作者設定的備援模型（`fallback`），以
 
 | 驗收 | 實際結果 | 證據 |
 |---|---|---|
-| 備援模型與不遮蔽測試字面值（2026-10-11） | 10 次 run；#19、#21～#27 跑完全程，vulnerable 靶場都 fail；宣告的測試 session 在快照中未遮蔽；#22～#26 由備援完整代答審查，家族閘門通過；#27 的 Gemini 沒有拒答；威脅建模員 5 次都沒有拒答，它的備援尚未用上 | real-model-acceptance-2026-10-11.json |
+| 備援模型與不遮蔽測試字面值（2026-10-11） | 11 次 run；#19、#21～#28 跑完全程，vulnerable 靶場都 fail；宣告的測試 session 在快照中未遮蔽；#22～#26 由備援完整代答審查，家族閘門通過；#27、#28 的 Gemini 沒有拒答；#28 的指揮官拒答一次，恢復後跑完；威脅建模員 6 次都沒有拒答，它的備援尚未用上 | real-model-acceptance-2026-10-11.json |
 | 真模型完整流程（2026-10-10～11） | 17 次 run；5 次跑完全程，vulnerable 靶場都 fail（BOLA、登出、AI agent 未授權匯出），fixed 靶場 pass | real-model-acceptance-2026-10-11.json |
 | Linux 全套回歸（2026-10-10，本輪修正後） | 1254 passed、22 skipped、4 subtests passed；PostgreSQL 18.6 與 Node 24 實際執行 | linux-regression-2026-10-10.xml |
 | 真 Docker 隔離測試（2026-10-10，本輪修正後） | 88 passed、1 skipped、4 subtests passed；Docker 29.1.3 | docker-isolation-2026-10-10.xml |
@@ -208,7 +210,7 @@ This round actually used the Windows console, WSL2/Linux, Docker 29.1.3, Postgre
 
 ## 2026-10-11 Fallback Model and Unredacted Test Literal Acceptance
 
-PR #44 added two features: an operator-configured fallback model (`fallback`) and unredacted synthetic test credentials (`unredacted_literals`). Runs #18–#27 then used real models. Models, environment and limits are as in the next section; each run's data is also in real-model-acceptance-2026-10-11.json. These ten runs took about 1.89 million tokens, and the 27 runs about 4.00 million in all.
+PR #44 added two features: an operator-configured fallback model (`fallback`) and unredacted synthetic test credentials (`unredacted_literals`). Runs #18–#28 then used real models. Models, environment and limits are as in the next section; each run's data is also in real-model-acceptance-2026-10-11.json. These eleven runs took about 2.11 million tokens, and the 28 runs about 4.22 million in all.
 
 | Run | Fixture and settings | Result |
 |---|---|---|
@@ -222,16 +224,18 @@ PR #44 added two features: an operator-configured fallback model (`fallback`) an
 | #25 | As #24 | As #24: Gemini refused, Qwen answered, and the threat modeler did not refuse. Nemotron was truncated once; after one resume the run went end to end, and BOLA and logout both failed |
 | #26 | As #24 | As #24: Gemini refused, Qwen answered, and the threat modeler did not refuse. The run went end to end with no resume; BOLA and logout both failed |
 | #27 | As #24, in an environment rebuilt on 2026-11-03 after another host reboot, with the run input taken from `fixtures/web-api/live-run.example.json` | Gemini did not refuse this time, the first time since #22, and the threat modeler did not refuse either and passed on its first attempt, so the fallback was never called. The run went end to end with no resume; BOLA and logout both failed |
+| #28 | As #27 | Gemini again did not refuse. In adjudication the challenge round falls to the commander (Opus 5.5), which refused once; the fallback did not list it, so the run stopped at adjudication and passed on resume. The threat modeler did not refuse and wrote the threat model itself, so the fallback was still never called. After one resume the run went end to end; BOLA and logout both failed |
 
 - **Problems #18 found (fixed in PR #44)**:
   - The fallback was recorded as having answered before it did, so #18's capability limit line is wrong. It now records "asking its fallback" first, and records the answer only once the fallback has given it.
   - When the fallback fails too, the error now names which fallback failed.
 - **Fallback answer verified (#22)**: Gemini refused, the local Qwen answered the whole review, the capability limits record the answer, and the family gate checked Qwen. With both local models answering at once on shared hardware, each ran at about 10 tokens per second and whitebox took about 25 minutes.
-- **The threat modeler's fallback not yet used**: #23–#27, five runs, all gave the threat modeler a fallback, but it never refused and passed on its first attempt each time, so a fallback writing the threat model after a refusal has not yet been seen with real models. Only unit tests cover that path so far.
-- **The environment of #24–#27**: after a host reboot the database, fixture, offline OSV data, runtime profile and console were rebuilt, and the run input was rewritten from the #23 record and the fixture's README. The logout case C-LOGOUT, the two operator requirements, and the commander and threat modeler output limits (16,000) may differ from #23's.
+- **The threat modeler's fallback not yet used**: #23–#28, six runs, all gave the threat modeler a fallback, but it never refused and passed on its first attempt each time, so a fallback writing the threat model after a refusal has not yet been seen with real models. Only unit tests cover that path so far.
+- **The commander can refuse too (#28)**: with no challenger configured, the commander takes the challenge round in adjudication. In #28 the commander refused once; the fallback's `fallback_for` listed only the Gemini reviewer and the threat modeler, so the run stopped at adjudication and needed a resume. For the fallback to take over, `fallback_for` must list the commander as well. #28 made two more model calls than #27: one was the refused challenge round, the other a schema retry whose stage the record does not name.
+- **The environment of #24–#28**: after a host reboot the database, fixture, offline OSV data, runtime profile and console were rebuilt, and the run input was rewritten from the #23 record and the fixture's README. The logout case C-LOGOUT, the two operator requirements, and the commander and threat modeler output limits (16,000) may differ from #23's.
   - After LM Studio restarted, it loaded Nemotron on first request with only an 8,192-token context, so #24's first resume was truncated again; it passed after Nemotron was reloaded with 71,936. Check local models' context before a run.
   - #24's first attempt failed at preflight while LM Studio was not yet reachable; that record went with the old database and is not listed.
-  - Before #27 (2026-11-03) the host rebooted again and the environment was rebuilt again. The run input was the repository's `fixtures/web-api/live-run.example.json` (the #24–#26 input with only the SSO profile filled in), and the local models were reloaded beforehand with a 71,936-token context (Nemotron) and 81,920 (Qwen).
+  - Before #27 and #28 (2026-11-03) the host rebooted again and the environment was rebuilt again. The run input was the repository's `fixtures/web-api/live-run.example.json` (the #24–#26 input with only the SSO profile filled in), and the local models were reloaded beforehand with a 71,936-token context (Nemotron) and 81,920 (Qwen).
 - **The threat model's dataflow rule**: #17, #21 and #22 all failed on one rule, a dataflow naming an undeclared asset, because the contract never said that callers and attackers are assets too. The schema descriptions, the threat-modeling instruction and the retry hint now say so, and #22 passed on resume on that code. Once in between the threat modeler (Sonnet) refused; #22 had a fallback only for the Gemini reviewer, so a resume handled it.
 
 ## 2026-10-10–11 Real-Model Acceptance
@@ -306,7 +310,7 @@ The test groups overlap one another; **do not add the rows together and treat th
 
 | Acceptance | Actual result | Evidence |
 |---|---|---|
-| Fallback model and unredacted test literals (2026-10-11) | 10 runs; #19 and #21–#27 end to end, the vulnerable fixtures failing; the declared test sessions stayed unredacted in the snapshot; in #22–#26 the fallback answered a review in full and the family gate passed; in #27 Gemini did not refuse; the threat modeler did not refuse in five runs, so its fallback not yet used | real-model-acceptance-2026-10-11.json |
+| Fallback model and unredacted test literals (2026-10-11) | 11 runs; #19 and #21–#28 end to end, the vulnerable fixtures failing; the declared test sessions stayed unredacted in the snapshot; in #22–#26 the fallback answered a review in full and the family gate passed; in #27 and #28 Gemini did not refuse; in #28 the commander refused once and the run finished after a resume; the threat modeler did not refuse in six runs, so its fallback not yet used | real-model-acceptance-2026-10-11.json |
 | Full workflow with real models (2026-10-10–11) | 17 runs; 5 end to end, the vulnerable fixtures failing (BOLA, logout, AI agent unauthorized export) and the fixed one passing | real-model-acceptance-2026-10-11.json |
 | Full Linux regression (2026-10-10, after this round) | 1254 passed, 22 skipped, 4 subtests passed; PostgreSQL 18.6 and Node 24 actually ran | linux-regression-2026-10-10.xml |
 | Isolation tests on real Docker (2026-10-10, after this round) | 88 passed, 1 skipped, 4 subtests passed; Docker 29.1.3 | docker-isolation-2026-10-10.xml |
