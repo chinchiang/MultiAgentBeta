@@ -51,3 +51,19 @@ def answer_with(data, tokens=1):
 def asked(messages):
     """What a send asked: its system text and its payload."""
     return messages[0]["content"], json.loads(messages[1]["content"])
+
+
+def reservations_at_stage_ends(store):
+    """Watch a store's saves: each stage a run finishes, with the reservation the run held when it finished.
+
+    No answer is in flight between stages, so every reservation recorded here is one the model seam left unsettled."""
+    ended = []
+    save = store.save
+
+    def watched(run):
+        done = run.get("completed_stages", [])
+        seen = sum(1 for run_id, _stage, _held in ended if run_id == run["id"])
+        ended.extend((run["id"], stage, run.get("reserved_tokens", 0)) for stage in done[seen:])
+        save(run)
+    store.save = watched
+    return ended

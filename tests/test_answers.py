@@ -249,6 +249,49 @@ async def test_unknown_usage_keeps_the_reservation_and_stops_every_later_answer_
     assert run["reserved_tokens"] == held
 
 
+async def in_flight_together(run, store, outcomes):
+    """Two answers of one run sent at once, each settled by its outcome after both are in flight; returns what each held."""
+    gates = [asyncio.Event(), asyncio.Event()]
+
+    async def answer(profile, messages, schema):
+        index = len(port.calls) - 1
+        await gates[index].wait()
+        if isinstance(outcomes[index], BaseException):
+            raise outcomes[index]
+        return outcomes[index]
+    port = FakePort(answer=answer)
+    model = answers(run, store, port)
+    profiles = run["manifest"]["models"][:2]
+    tasks = []
+    held = []
+    for index, profile in enumerate(profiles):
+        before = run["reserved_tokens"] if tasks else 0
+        # Payloads of different sizes, so the two answers hold different amounts.
+        tasks.append(asyncio.create_task(model.ask(profile, "Review", {"source": "x" * (100 * (index + 1))}, contract=Ok)))
+        while len(port.calls) <= index:
+            await asyncio.sleep(0)
+        held.append(run["reserved_tokens"] - before)
+    assert run["reserved_tokens"] == sum(held) and held[0] != held[1]
+    for gate in gates:
+        gate.set()
+    return held, await asyncio.gather(*tasks, return_exceptions=True)
+
+
+async def test_answers_in_flight_together_each_settle_their_own_reservation(run, store):
+    _, results = await in_flight_together(run, store, [reply(tokens=15), reply(tokens=20)])
+    assert [result.data for result in results] == [{"ok": True}, {"ok": True}]
+    assert run["reserved_tokens"] == 0
+    assert run["usage"]["tokens"] == 35
+
+
+async def test_an_answer_whose_usage_is_unknown_keeps_only_its_own_reservation_beside_one_that_settles(run, store):
+    unknown = ProviderError("Synthetic lost response", code="provider_request_failed", usage={"model_calls": 1, "tokens": 0, "tokens_known": False})
+    held, results = await in_flight_together(run, store, [reply(tokens=15), unknown])
+    assert results[0].data == {"ok": True} and results[1] is unknown
+    assert run["reserved_tokens"] == held[1]
+    assert run["usage_unknown"] is True
+
+
 async def test_a_resumed_stage_reuses_an_answer_it_already_paid_for_when_it_asks_the_same_question(run, store):
     primary = with_fallback(run)
     port = FakePort([refused(tokens=7), reply(tokens=15)])
