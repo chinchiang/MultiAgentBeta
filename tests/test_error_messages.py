@@ -19,7 +19,7 @@ RAISERS = {"PolicyError", "HTTPException", "problem", "AdapterBlocked", "Respons
            "CatalogError", "LeaseError"}
 # Calls whose message argument is shown to the operator: activity events, snapshot gaps, run gaps and the reason of an
 # adapter execution result.
-REPORTERS = {"event": 1, "gap": 0, "_result": 1}
+REPORTERS = {"event": 1, "record_event": 0, "gap": 0, "_result": 1}
 # The separate benchmark tool and the table itself report nothing to the console.
 SKIPPED_MODULES = {"benchmark.py", "benchmark_matching.py", "messages.py"}
 def sample(node, top=True):
