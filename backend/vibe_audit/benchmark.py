@@ -18,6 +18,8 @@ from .schemas import BENCHMARK_DATASET_SCHEMA, BENCHMARK_OBSERVATION_SCHEMA
 
 ARMS = ("traditional", "single_a", "single_b", "single_c", "same_model_repeat", "heterogeneous_independent", "debate")
 DEFAULT_BUDGET = {"max_tokens": 12000, "max_seconds": 60, "max_requests": 12, "max_model_calls": 6}
+# The live default's tokens for each model step of the longest arm (see _live_budget).
+LIVE_STEP_TOKENS = 15000
 DEFAULT_DATASET = Path(__file__).resolve().parents[2] / "benchmarks" / "synthetic-v1.json"
 
 
@@ -245,13 +247,13 @@ def summarize(records):
 
 
 def run_benchmark(dataset_path=DEFAULT_DATASET, output_dir=None, *, mode="synthetic", repetitions=3, seed=731, split="test", budget=None,
-                  profiles=None, model_policy=None, tool_runner=None, model_runner=None):
+                  profiles=None, model_policy=None, tool_runner=None, model_runner=None, model_port=None):
     if mode not in {"synthetic", "local_tools", "live"}:
         raise BenchmarkError("Unknown benchmark mode")
     if mode == "live":
         return asyncio.run(run_live_benchmark(dataset_path, output_dir, repetitions=repetitions, seed=seed, split=split,
                                              budget=budget, profiles=profiles, model_policy=model_policy,
-                                             tool_runner=tool_runner, model_runner=model_runner))
+                                             tool_runner=tool_runner, model_runner=model_runner, model_port=model_port))
     budget = dict(DEFAULT_BUDGET if budget is None else budget)
     if set(budget) != set(DEFAULT_BUDGET) or any(not isinstance(v, int) or v <= 0 for v in budget.values()):
         raise BenchmarkError("All four positive integer budget limits are required")
@@ -283,12 +285,37 @@ MODEL_FINDINGS_SCHEMA = {"type": "object", "additionalProperties": False, "requi
                                         "rationale": {"type": "string", "maxLength": 30000}}}
 
 
+class _StepUnsent(Exception):
+    """A step no arm could ask with room for its retries, stopped before anything is sent."""
+
+
+def answers_runner(port):
+    """The default live model runner: each step is one model answer, metered against that step's caps alone."""
+    from .answers import ModelAnswers
+    from .providers import ProviderError
+
+    async def runner(profile, system, payload, policy):
+        caps = {"max_tokens": policy["max_tokens"], "max_model_calls": policy["max_model_calls"], "max_seconds": policy["timeout_seconds"]}
+        model = ModelAnswers.unowned(caps, {"data_policy": policy["data_policy"], "allowed_model_origins": policy.get("allowed_model_origins", [])},
+                                     port, timeout=policy["timeout_seconds"])
+        try:
+            answer = await model.ask(profile, system, payload, schema=policy["response_schema"])
+        except ProviderError as exc:
+            # What every attempt of this step cost, not only the last one's.
+            exc.usage = model.spent()
+            raise
+        return {"data": answer.data, "usage": answer.usage}
+    return runner
+
+
 def _live_budget(budget):
     """The run budget, complete and able to give every model step its schema-repair attempts."""
     from .providers import MAX_ATTEMPTS
     # Every model step gets the same schema-repair attempts; an even split of six calls would leave debate's four steps one try each.
     longest = max(len(arm_steps(arm)) for arm in ARMS if arm != "traditional")
-    budget = dict(DEFAULT_BUDGET | {"max_model_calls": MAX_ATTEMPTS * longest} if budget is None else budget)
+    # A step holds a reservation for each attempt: its request, the fixed margin and its output limit. On the bundled dataset
+    # that is under 7000 tokens for a 3000-token output, so 15000 a step leaves room for the retry.
+    budget = dict(DEFAULT_BUDGET | {"max_tokens": LIVE_STEP_TOKENS * longest, "max_model_calls": MAX_ATTEMPTS * longest} if budget is None else budget)
     if set(budget) != set(DEFAULT_BUDGET) or any(type(v) is not int or v <= 0 for v in budget.values()):
         raise BenchmarkError("All four positive integer budget limits are required")
     if budget["max_model_calls"] < MAX_ATTEMPTS * longest:
@@ -327,6 +354,7 @@ async def _tool_context(tool_runner, sample, budget):
 
 async def _run_live_job(job, sample, context, budget, profiles, model_policy, model_runner):
     """One scheduled arm on one sample: the model steps after the shared tool context, scored against the gold when eligible."""
+    from .answers import reservation
     from .providers import MAX_ATTEMPTS, ProviderError
     start = time.perf_counter()
     usage = {key: context[key] for key in ["tokens", "requests", "model_calls", "latency_seconds"]}
@@ -339,6 +367,8 @@ async def _run_live_job(job, sample, context, budget, profiles, model_policy, mo
     unique_families = {p["family"].casefold() for p in profiles.values()}
     if job["arm"] in {"heterogeneous_independent", "debate"} and (len(unique_profiles) != 3 or len(unique_families) != 3):
         issues.append("Heterogeneous strategies require three distinct exact model configurations and declared families")
+    longest = max(len(arm_steps(arm)) for arm in ARMS if arm != "traditional")
+    fair_step_tokens = max(0, budget["max_tokens"] - context["tokens"]) // longest
     for index, (alias, phase) in enumerate(steps):
         profile = profiles.get("a" if alias == "debate" else alias)
         caps = {"max_tokens": max(0, (budget["max_tokens"] - context["tokens"]) // len(steps)),
@@ -355,11 +385,16 @@ async def _run_live_job(job, sample, context, budget, profiles, model_policy, mo
         if can_call:
             policy = model_policy | {"max_tokens": caps["max_tokens"], "max_model_calls": caps["max_model_calls"],
                                       "timeout_seconds": caps["max_seconds"], "response_schema": MODEL_FINDINGS_SCHEMA}
-            exact = profile | {"max_output_tokens": min(profile["max_output_tokens"], caps["max_tokens"])}
             prompt = ("Audit the provided code and common tool evidence for security issues. Use stable issue locators from the input's issue_id_convention, "
                       "or rule:file:line when none is supplied. Preserve uncertainty in rationale. Never claim to execute tools or reproduce vulnerabilities. "
                       "Do not infer gold labels. " + ("Adjudicate the sealed anonymized candidate reviews against source evidence; votes alone are not proof." if phase == "debate" else "Review independently without peer opinions."))
+            # Every arm asks with the output limit the longest arm's step leaves room for, retry included, so a one-step
+            # arm's larger share buys no longer answers and no extra schema repair.
+            fair = fair_step_tokens // MAX_ATTEMPTS - reservation(prompt, payload, MODEL_FINDINGS_SCHEMA, 0)
+            exact = profile | {"max_output_tokens": min(profile["max_output_tokens"], fair)}
             try:
+                if fair < 1:
+                    raise _StepUnsent
                 result = await asyncio.wait_for(model_runner(exact, prompt, payload, policy), timeout=caps["max_seconds"])
                 data = result["data"]
                 validate(data, MODEL_FINDINGS_SCHEMA)
@@ -374,6 +409,10 @@ async def _run_live_job(job, sample, context, budget, profiles, model_policy, mo
                 response = _blocked("Provider blocked or failed: " + str(getattr(exc, "code", "provider_error")))
                 response.update(tokens=actual.get("tokens", caps["max_tokens"]) if actual.get("tokens_known", True) else caps["max_tokens"], model_calls=actual.get("model_calls", caps["max_model_calls"]),
                                 latency_seconds=time.perf_counter() - step_start)
+            except _StepUnsent:
+                # Nothing was sent, so nothing is charged; the same rule blocks this question in every arm.
+                response = _blocked(f"Not sent: the longest arm's step cannot hold {MAX_ATTEMPTS} attempts of this request")
+                response.update(latency_seconds=time.perf_counter() - step_start)
             except Exception:
                 response = _blocked("Model call timed out or returned an invalid contract; reserved usage retained, no retry")
                 response.update(tokens=caps["max_tokens"], model_calls=caps["max_model_calls"], latency_seconds=time.perf_counter() - step_start)
@@ -441,18 +480,20 @@ def _write_outputs(output_dir, report, records):
 
 
 async def run_live_benchmark(dataset_path=DEFAULT_DATASET, output_dir=None, *, repetitions=3, seed=731, split="test", budget=None,
-                             profiles=None, model_policy=None, tool_runner=None, model_runner=None):
+                             profiles=None, model_policy=None, tool_runner=None, model_runner=None, model_port=None):
     """Execute authorized real model strategies with injected, trusted async tool/model runners.
 
     tool_runner(input_data, budget) -> BENCHMARK_OBSERVATION_SCHEMA.
-    model_runner(profile, system, payload, policy) -> providers.generate_json result.
+    model_runner(profile, system, payload, policy) -> {"data", "usage"}; by default each step is one model answer sent
+    through model_port (LiteLLMPort unless given).
     Callbacks are host configuration, never imported from data or model output.
     """
     budget = _live_budget(budget)
     profiles = _live_profiles(profiles)
     model_policy = dict(model_policy or {})
-    from .providers import generate_json
-    model_runner = model_runner or generate_json
+    if model_runner is None:
+        from .providers import LiteLLMPort
+        model_runner = answers_runner(model_port or LiteLLMPort())
     async def builtin_runner(input_data, _budget):
         return traditional_ast(input_data)
     tool_runner = tool_runner or builtin_runner
