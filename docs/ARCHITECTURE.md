@@ -9,7 +9,7 @@ flowchart TB
     UI["React 控制台<br/>frontend/src"]
     API["FastAPI：session／CSRF／scope<br/>api.py・workspace_api.py"]
     C["指揮與 LangGraph 階段<br/>service.py"]
-    MG["模型閘道・每個代理的 profile<br/>providers.py"]
+    MG["模型閘道・每個代理的 profile<br/>answers.py · providers.py"]
     G["確定性閘門<br/>policy.py・contracts.py・domain.py"]
     SUP["獨立 supervisor ＋ 持久 lease<br/>worker_runtime.py・lease.py<br/>持有目標憑證・IP 釘選傳輸 adapters.py"]
     EC["獨立 effect collector<br/>effect_collector.py"]
@@ -56,7 +56,7 @@ flowchart TB
 | React 控制台 | `frontend/src`（建置到 `frontend/dist`，由 FastAPI 提供） |
 | FastAPI：session／CSRF／scope | `api.py`、`workspace_api.py` |
 | 指揮與 LangGraph 階段 | `service.py`（`STAGES`，每個階段一個圖節點） |
-| 模型閘道・每個代理的 profile | `providers.py`（LiteLLM，無隱性 fallback；操作者設定的備援在 `service.py`） |
+| 模型閘道・每個代理的 profile | `answers.py`（`ModelAnswers`：保留額度、計量、驗證與有界重試、操作者設定的備援、快取）、`providers.py`（`LiteLLMPort`：經 LiteLLM 送出一次，無隱性 fallback） |
 | 確定性閘門 | `policy.py`（manifest、whitebox、threat、case 閘門與 `authorize`）、`contracts.py`、`domain.py` |
 | 獨立 supervisor ＋ 持久 lease | `worker_runtime.py`、`lease.py`；IP 釘選傳輸與 oracle 在 `adapters.py` |
 | 獨立 effect collector | `effect_collector.py`，經 `fixture_protocol.py` 使用 |
@@ -97,6 +97,8 @@ ZAP 只執行經審查的 requestor/passive 計畫。Schemathesis 使用明確�
 
 內建的 TS Web 與 Python AI 目標是合成且確定性的。AI 試驗會重置 session／fixture 五次。Collector 事件區分 proposed → denied/allowed → invoked → committed；mock sink 收執只證明合成的 sink 效果。通用目標 profile 需要操作者宣告的生命週期步驟，以及另外註冊的受信任 collector 綁定。目標回傳的文字無法註冊綁定，也無法偽造受信任的來源證明。
 
+每個階段向模型要的都是一次模型回答，由 `answers.py` 的 `ModelAnswers` 處理：送出前預扣保留額度，經「送出一次」的 port 送出，在本機驗證，不合格時再問一次；每位 Agent 作答結束時結清它的用量與保留額度。成功或已計量的失敗就釋放保留額度；取消時把整筆計為已用；用量不明時保留下來並停止之後的付費呼叫，控制器重啟時也看得到。每次重試在活動紀錄留一筆 warning，只記 Agent、階段、第幾次與驗證位置；位置只用 schema 宣告過的欄位名稱，模型寫的文字不會進紀錄。各階段不自己計量，也不自己歸零保留額度。
+
 ## 限制
 
 沒有完整的語意呼叫圖或窮盡的原始碼閱讀、沒有經證明的模型獨立性、不能以合成基準宣稱有效性、沒有遠端 fleet／SaaS、沒有任意的瀏覽器自動化、沒有正式環境的部署／修補。透過操作者提供的標頭進行的原始碼對部署比對，只證明該標頭相等，而非與原始碼的密碼學對應。主機管理員仍然受信任；檔案雜湊不是鑑識等級的不可變性。
@@ -113,7 +115,7 @@ flowchart TB
     UI["React console<br/>frontend/src"]
     API["FastAPI: session / CSRF / scope<br/>api.py · workspace_api.py"]
     C["Commander and LangGraph stages<br/>service.py"]
-    MG["Model gateway · per-agent profiles<br/>providers.py"]
+    MG["Model gateway · per-agent profiles<br/>answers.py · providers.py"]
     G["Deterministic gates<br/>policy.py · contracts.py · domain.py"]
     SUP["Independent supervisor + persistent lease<br/>worker_runtime.py · lease.py<br/>holds target credentials · IP-pinned transport adapters.py"]
     EC["Independent effect collector<br/>effect_collector.py"]
@@ -160,7 +162,7 @@ Each node above maps to code in `backend/vibe_audit/` (or the named directory). 
 | React console | `frontend/src` (built into `frontend/dist`, served by FastAPI) |
 | FastAPI: session / CSRF / scope | `api.py`, `workspace_api.py` |
 | Commander and LangGraph stages | `service.py` (`STAGES`, one graph node per stage) |
-| Model gateway · per-agent profiles | `providers.py` (LiteLLM, no implicit fallback; the operator's fallback is in `service.py`) |
+| Model gateway · per-agent profiles | `answers.py` (`ModelAnswers`: reservation, metering, validation and the bounded retry, the operator's fallback, the cache), `providers.py` (`LiteLLMPort`: one send through LiteLLM, no implicit fallback) |
 | Deterministic gates | `policy.py` (manifest, whitebox, threat and case gates and `authorize`), `contracts.py`, `domain.py` |
 | Independent supervisor + persistent lease | `worker_runtime.py`, `lease.py`; IP-pinned transport and oracles in `adapters.py` |
 | Independent effect collector | `effect_collector.py`, used through `fixture_protocol.py` |
@@ -200,6 +202,8 @@ PostgreSQL stores job and lease records and the LangGraph checkpoints. Resume do
 ZAP executes only the reviewed requestor/passive plan. Schemathesis uses an explicit schema example. Playwright uses its API client. promptfoo uses local custom provider/eval assertions; PyRIT uses a controlled target. Tools do not independently expand targets or generate arbitrary programs. Their artifacts are auxiliary: security oracles rely on supervisor observations and independent receipts.
 
 Built-in TS Web and Python AI targets are synthetic and deterministic. AI trials reset session/fixtures five times. Collector events distinguish proposed → denied/allowed → invoked → committed; a mock sink receipt proves only the synthetic sink effect. Generic target profiles require operator-declared lifecycle steps and a separately registered trusted collector binding. Text returned by the target cannot register a binding or forge trusted provenance.
+
+What every stage asks a model for is one model answer, handled by `ModelAnswers` in `answers.py`: it holds a reservation before sending, sends through a send-once port, validates locally, asks again once if the answer is invalid, and settles each Agent's usage and reservation when its attempt ends. A success or a metered failure releases the reservation; a cancellation charges all of it as used; unknown usage keeps it and stops further paid calls, which a controller restart also sees. Each retry leaves one warning in the activity log naming only the Agent, stage, attempt and validation site; the site names only fields the schema declares, so nothing the model wrote reaches the record. No stage meters usage or clears the reservation itself.
 
 ## Limits
 
