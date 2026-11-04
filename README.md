@@ -111,6 +111,7 @@ MultiAgentBeta/
 │   ├── workspace_api.py           #   專案、模型範本、標準目錄、追溯、複測、裁決、清理確認
 │   ├── service.py                 #   LangGraph 七個階段、閘門呼叫、Markdown／SARIF 報告
 │   ├── answers.py                 #   一次付費的模型回答：保留額度、計量、驗證與重試、備援代答、續跑快取、模型探測
+│   ├── stage_answers.py           #   階段答案：每個角色由誰回答，答案通過階段檢查才保留、續跑沿用
 │   ├── providers.py               #   送出一次的 LiteLLM port、憑證 origin 綁定、無隱性 fallback
 │   ├── messages.py                #   錯誤訊息的正體中文對照（API 的 detail_zh、run 的 error_zh）
 │   ├── diagnostics.py             #   本機診斷記錄：被固定文字取代的失敗只記例外類型與位置（vibe-audit.log）
@@ -136,7 +137,7 @@ MultiAgentBeta/
 │   ├── tests/                     #   vitest 單元與元件測試（happy-dom 模擬瀏覽器，不需後端）
 │   ├── scripts/                   #   contract-smoke、browser-smoke、check-i18n、check-messages
 │   └── dist/                      #   已建置的介面，由 FastAPI 同 origin 提供
-├── tests/                         # pytest（29 個檔案，含 test_bilingual_docs.py 文件雙語檢查與 test_properties.py 的 Hypothesis 性質測試）
+├── tests/                         # pytest（30 個檔案，含 test_bilingual_docs.py 文件雙語檢查與 test_properties.py 的 Hypothesis 性質測試）
 ├── catalogs/                      # ASVS 5.0.0、WSTG 4.2、LLM 2026、Agentic 2026 標準 JSON 與 manifest
 │   └── sources/                   #   原始標準內容與授權
 ├── fixtures/                      # 掃描器規則與設定（Semgrep、Gitleaks、OSV）
@@ -315,6 +316,7 @@ MultiAgentBeta/
 │   ├── workspace_api.py           #   projects, model templates, standards catalog, trace, retest, decisions, cleanup attestation
 │   ├── service.py                 #   the seven LangGraph stages, gate calls, Markdown/SARIF reports
 │   ├── answers.py                 #   One paid model answer: reservation, metering, validation and retry, fallback answers, resume cache, model probes
+│   ├── stage_answers.py           #   Stage answers: who answers each role, kept only after the stage's checks pass and reused on resume
 │   ├── providers.py               #   The send-once LiteLLM port, credential origin binding, no implicit fallback
 │   ├── messages.py                #   Traditional Chinese wording of error messages (detail_zh, error_zh)
 │   ├── diagnostics.py             #   local diagnostics: failures reported in fixed words log their type and location (vibe-audit.log)
@@ -340,7 +342,7 @@ MultiAgentBeta/
 │   ├── tests/                     #   vitest unit and component tests (happy-dom simulated browser, no backend)
 │   ├── scripts/                   #   contract-smoke, browser-smoke, check-i18n, check-messages
 │   └── dist/                      #   built UI, served by FastAPI on the same origin
-├── tests/                         # pytest (29 files, including test_bilingual_docs.py for bilingual docs and the Hypothesis property tests in test_properties.py)
+├── tests/                         # pytest (30 files, including test_bilingual_docs.py for bilingual docs and the Hypothesis property tests in test_properties.py)
 ├── catalogs/                      # ASVS 5.0.0, WSTG 4.2, LLM 2026, Agentic 2026 standard JSON and manifest
 │   └── sources/                   #   original standard content and licenses
 ├── fixtures/                      # scanner rules and settings (Semgrep, Gitleaks, OSV)
