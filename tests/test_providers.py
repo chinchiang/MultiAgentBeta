@@ -25,6 +25,13 @@ def response(content='{"ok":true}', *, finish="stop", refusal=None, usage=True):
     return {"model": "test-model", "choices": [{"finish_reason": finish, "message": {"content": content, "refusal": refusal}}], "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15} if usage else None}
 
 
+async def send(profile, policy):
+    """One request through the production port, as ModelAnswers sends it: the port judges sending, cost and finish."""
+    messages = [{"role": "system", "content": "Review"}, {"role": "user", "content": "{}"}]
+    return await providers.LiteLLMPort().send(profile, messages, schema=policy.get("response_schema", {"type": "object"}),
+                                              output_limit=profile.get("max_output_tokens", 3000), timeout=float(policy.get("timeout_seconds", 30)), policy=policy)
+
+
 @pytest.fixture
 def fake_provider(monkeypatch):
     calls = []
@@ -43,11 +50,10 @@ def fake_provider(monkeypatch):
 @pytest.mark.asyncio
 async def test_generation_uses_explicit_agent_and_metering(profile, policy, fake_provider):
     calls, _ = fake_provider
-    result = await providers.generate_json(profile, "Review", {"source": "x"}, policy)
-    assert result["data"] == {"ok": True}
-    assert result["model_id"] == "test-model"
-    assert result["usage"]["tokens"] == 15
-    assert result["cost_usd"] is None
+    result = await send(profile, policy)
+    assert json.loads(result.content) == {"ok": True}
+    assert result.response_model_id == "test-model"
+    assert result.usage["tokens"] == 15
     assert len(calls) == 1
     assert calls[0][1]["id"] == "reviewer-a"
     assert calls[0][7] == 30
@@ -59,7 +65,7 @@ async def test_local_only_denies_nonliteral_loopback(profile, policy, fake_provi
     profile["endpoint"] = endpoint
     policy["allowed_model_origins"] = allow
     with pytest.raises(providers.ProviderError, match="literal loopback"):
-        await providers.generate_json(profile, "Review", {}, policy)
+        await send(profile, policy)
     assert not fake_provider[0]
 
 
@@ -70,7 +76,7 @@ async def test_local_only_denies_nonliteral_loopback(profile, policy, fake_provi
 async def test_endpoint_ambiguity_rejected(profile, policy, fake_provider, endpoint):
     profile["endpoint"] = endpoint
     with pytest.raises(providers.ProviderError):
-        await providers.generate_json(profile, "Review", {}, policy)
+        await send(profile, policy)
     assert not fake_provider[0]
 
 
@@ -78,23 +84,23 @@ async def test_endpoint_ambiguity_rejected(profile, policy, fake_provider, endpo
 async def test_explicit_origin_and_credential_references(profile, policy, fake_provider, monkeypatch):
     policy["allowed_model_origins"] = ["http://127.0.0.1:9999"]
     with pytest.raises(providers.ProviderError) as err:
-        await providers.generate_json(profile, "Review", {}, policy)
+        await send(profile, policy)
     assert err.value.code == "origin_denied"
     policy["data_policy"] = "cloud_allowed"
     policy["allowed_model_origins"] = []
     with pytest.raises(providers.ProviderError) as err:
-        await providers.generate_json(profile, "Review", {}, policy)
+        await send(profile, policy)
     assert err.value.code == "origin_denied"
     policy["data_policy"] = "local_only"
     policy["allowed_model_origins"] = ["http://127.0.0.1:11434"]
     profile["credential_env"] = "OPENAI_API_KEY"
     with pytest.raises(providers.ProviderError) as err:
-        await providers.generate_json(profile, "Review", {}, policy)
+        await send(profile, policy)
     assert err.value.code == "invalid_credential_reference"
     profile["credential_env"] = "VIBEAUDIT_TEST_KEY"
     monkeypatch.setenv("VIBEAUDIT_TEST_KEY", "synthetic-test-key")
     monkeypatch.setenv("VIBEAUDIT_MODEL_CREDENTIAL_ORIGINS", "VIBEAUDIT_TEST_KEY=http://127.0.0.1:11434")
-    await providers.generate_json(profile, "Review", {}, policy)
+    await send(profile, policy)
     assert fake_provider[0][0][4] == "synthetic-test-key"
 
 
@@ -108,17 +114,17 @@ async def test_model_key_goes_only_to_the_origin_the_operator_bound(profile, pol
         if binding:
             monkeypatch.setenv("VIBEAUDIT_MODEL_CREDENTIAL_ORIGINS", binding)
         with pytest.raises(providers.ProviderError) as err:
-            await providers.generate_json(profile, "Review", {}, policy)
+            await send(profile, policy)
         assert err.value.code == "credential_origin_denied" and "synthetic-test-key" not in str(err.value)
         assert err.value.usage["model_calls"] == 0
     assert fake_provider[0] == []
     monkeypatch.setenv("VIBEAUDIT_MODEL_CREDENTIAL_ORIGINS", "VIBEAUDIT_OTHER_KEY=https://api.example.com, VIBEAUDIT_TEST_KEY=http://127.0.0.1:11434/")
-    await providers.generate_json(profile, "Review", {}, policy)
+    await send(profile, policy)
     assert fake_provider[0][0][4] == "synthetic-test-key"
     # A key-less local endpoint needs no binding.
     profile["credential_env"] = ""
     monkeypatch.delenv("VIBEAUDIT_MODEL_CREDENTIAL_ORIGINS")
-    await providers.generate_json(profile, "Review", {}, policy)
+    await send(profile, policy)
     assert len(fake_provider[0]) == 2
 
 
@@ -159,7 +165,7 @@ async def test_credentials_never_name_the_tools_own_settings(profile, policy, fa
     policy["allowed_model_origins"] = ["http://127.0.0.1:11434"]
     profile["credential_env"] = name
     with pytest.raises(providers.ProviderError) as err:
-        await providers.generate_json(profile, "Review", {}, policy)
+        await send(profile, policy)
     assert err.value.code == "invalid_credential_reference"
     assert fake_provider[0] == []
 
@@ -171,13 +177,13 @@ async def test_failures_before_dispatch_cost_nothing_and_keep_usage_known(policy
                "endpoint": "http://127.0.0.1:9/v1", "credential_env": "", "max_output_tokens": 256, "temperature": 0}
     policy.update(allowed_model_origins=[], max_model_calls=1)
     with pytest.raises(providers.ProviderError) as err:
-        await providers.generate_json(profile, "Review", {}, policy)
+        await send(profile, policy)
     assert err.value.code == "unsupported_parameter" and err.value.usage["tokens_known"] is True
     assert "temperature" in str(err.value) and "no request was sent" in str(err.value)
     # Leaving temperature empty uses the model default and gets as far as the (closed) endpoint.
     profile["temperature"] = None
     with pytest.raises(providers.ProviderError) as err:
-        await providers.generate_json(profile, "Review", {}, policy)
+        await send(profile, policy)
     assert err.value.code == "endpoint_unavailable" and err.value.usage["tokens_known"] is True
     # A policy denial of the resolved address is not a billed attempt either.
     monkeypatch.setenv("VIBEAUDIT_TEST_KEY", "synthetic-test-key")
@@ -185,7 +191,7 @@ async def test_failures_before_dispatch_cost_nothing_and_keep_usage_known(policy
     profile.update(endpoint="https://10.0.0.5/v1", temperature=0.2, credential_env="VIBEAUDIT_TEST_KEY")
     policy.update(data_policy="cloud_allowed", allowed_model_origins=["https://10.0.0.5"])
     with pytest.raises(providers.ProviderError) as err:
-        await providers.generate_json(profile, "Review", {}, policy)
+        await send(profile, policy)
     assert err.value.code == "origin_denied" and err.value.usage["tokens_known"] is True
 
 
@@ -211,7 +217,7 @@ async def test_local_only_loopback_needs_no_origin_list(profile, policy, fake_pr
     # The workbench disables the origins field under local_only and sends [].
     profile["endpoint"] = endpoint
     policy["allowed_model_origins"] = []
-    await providers.generate_json(profile, "Review", {}, policy)
+    await send(profile, policy)
     assert fake_provider[0]
 
 
@@ -221,7 +227,7 @@ async def test_missing_data_policy_is_denied(profile, policy, fake_provider, all
     del policy["data_policy"]
     policy["allowed_model_origins"] = allow
     with pytest.raises(providers.ProviderError) as err:
-        await providers.generate_json(profile, "Review", {}, policy)
+        await send(profile, policy)
     assert err.value.code == "data_policy_denied"
     assert not fake_provider[0]
 
@@ -258,7 +264,7 @@ async def test_refusal_truncation_usage_fail_closed(profile, policy, fake_provid
     calls, answers = fake_provider
     answers[:] = [answer]
     with pytest.raises(providers.ProviderError) as err:
-        await providers.generate_json(profile, "Review", {}, policy)
+        await send(profile, policy)
     assert err.value.code == code
     assert len(calls) == 1
 
@@ -268,7 +274,7 @@ async def test_network_error_not_retried_and_secret_error_not_exposed(profile, p
     calls, answers = fake_provider
     answers[:] = [RuntimeError("authorization=synthetic-private-secret body=source-code")]
     with pytest.raises(providers.ProviderError) as err:
-        await providers.generate_json(profile, "Review", {}, policy)
+        await send(profile, policy)
     assert "synthetic-private-secret" not in str(err.value)
     assert not err.value.usage["tokens_known"]
     assert len(calls) == 1
@@ -429,12 +435,12 @@ async def test_installed_litellm_sdk_uses_guarded_http_transport(profile, policy
     profile["provider"] = provider
     profile["model_id"] = model
     if response_status == 200:
-        result = await providers.generate_json(profile, "Return JSON.", {}, policy)
-        assert result["data"] == {"ok": True}
-        assert result["usage"]["tokens"] == 15
+        result = await send(profile, policy)
+        assert json.loads(result.content) == {"ok": True}
+        assert result.usage["tokens"] == 15
     else:
         with pytest.raises(providers.ProviderError) as error:
-            await providers.generate_json(profile, "Return JSON.", {}, policy)
+            await send(profile, policy)
         # Operator policy: a received 429 or 5xx was not served and counts as unbilled; a redirect stays unknown.
         assert error.value.usage["tokens_known"] is (response_status != 302)
     assert len(captured) == 1
@@ -470,7 +476,7 @@ async def test_unreachable_endpoint_is_known_zero_usage(profile, policy, monkeyp
         policy.update(data_policy="cloud_allowed", allowed_model_origins=["https://model.example.invalid"])
     profile["provider"] = provider
     with pytest.raises(providers.ProviderError) as error:
-        await providers.generate_json(profile, "Return JSON.", {}, policy)
+        await send(profile, policy)
     assert error.value.code == "endpoint_unavailable"
     assert error.value.usage["tokens_known"] is True and error.value.usage["tokens"] == 0
 
@@ -484,7 +490,7 @@ async def test_failure_after_dispatch_keeps_usage_unknown(profile, policy, monke
         transport.inner = httpx.MockTransport(handler)
     monkeypatch.setattr(providers._OriginTransport, "__init__", init)
     with pytest.raises(providers.ProviderError) as error:
-        await providers.generate_json(profile, "Return JSON.", {}, policy)
+        await send(profile, policy)
     assert error.value.usage["tokens_known"] is False
 
 
@@ -722,8 +728,8 @@ async def test_bedrock_converse_through_the_guarded_transport(monkeypatch):
         transport.origin, transport.pinned_ip, transport.dispatched, transport.status, transport.body = origin, pinned_ip, False, None, b""
         transport.inner = httpx.MockTransport(handler)
     monkeypatch.setattr(providers._OriginTransport, "__init__", init)
-    result = await providers.generate_json(bedrock_profile(), "Return JSON.", {}, bedrock_policy())
-    assert result["data"] == {"ok": True} and result["usage"]["tokens"] == 15
+    result = await send(bedrock_profile(), bedrock_policy())
+    assert json.loads(result.content) == {"ok": True} and result.usage["tokens"] == 15
     assert len(captured) == 1
     request = captured[0]
     assert request.url.host == "52.0.0.1" and request.headers["host"] == "bedrock-runtime.ap-southeast-1.amazonaws.com"
@@ -745,7 +751,7 @@ async def test_bedrock_without_a_login_sends_nothing_and_costs_nothing(monkeypat
         return "52.0.0.1"
     monkeypatch.setattr(providers, "_resolve_model_ip", resolved)
     with pytest.raises(providers.ProviderError) as error:
-        await providers.generate_json(bedrock_profile(), "Return JSON.", {}, bedrock_policy())
+        await send(bedrock_profile(), bedrock_policy())
     assert error.value.code == "missing_credential" and error.value.usage["tokens_known"] is True and "aws sso login" in str(error.value)
 
 
@@ -761,8 +767,8 @@ async def test_json_mode_asks_for_the_schema_where_a_server_accepts_only_that(pr
         transport.origin, transport.pinned_ip, transport.dispatched, transport.status, transport.body = origin, pinned_ip, False, None, b""
         transport.inner = httpx.MockTransport(handler)
     monkeypatch.setattr(providers._OriginTransport, "__init__", init)
-    result = await providers.generate_json({**profile, "json_mode": json_mode}, "Return JSON.", {}, policy)
-    assert result["data"] == {"ok": True}
+    result = await send({**profile, "json_mode": json_mode}, policy)
+    assert json.loads(result.content) == {"ok": True}
     sent = captured[0]["response_format"]
     if expected == "schema":
         assert sent["type"] == "json_schema" and sent["json_schema"]["schema"] == policy["response_schema"]
@@ -781,7 +787,7 @@ async def test_a_failed_model_call_names_its_status_but_never_its_body(profile, 
         vibeaudit_http_status = failure
     answers[:] = [asyncio.TimeoutError() if failure == "timeout" else StatusError("secret body text")]
     with pytest.raises(providers.ProviderError) as error:
-        await providers.generate_json(profile, "Review", {}, policy)
+        await send(profile, policy)
     assert error.value.code == code and "secret body" not in str(error.value)
     if not known:
         # The exception class names the kind of failure without anything it carried.
@@ -827,7 +833,7 @@ async def test_a_content_filtered_reply_is_a_metered_refusal_not_an_unknown_fail
         transport.inner = httpx.MockTransport(handler)
     monkeypatch.setattr(providers._OriginTransport, "__init__", init)
     with pytest.raises(providers.ProviderError) as error:
-        await providers.generate_json(profile, "Return JSON.", {}, policy)
+        await send(profile, policy)
     assert error.value.code == "refusal" and error.value.usage["tokens_known"] is True and error.value.usage["tokens"] == 12
 
 
@@ -860,3 +866,17 @@ async def test_a_retry_names_the_unknown_ids_but_the_run_error_stays_fixed(profi
     flow = ThreatModelProposal.model_json_schema()["$defs"]["Dataflow"]["properties"]["source"]
     assert "id of an entry in assets" in flow["description"]
     assert str(error.value) == "Model output failed local JSON/schema validation ((root): Dataflow references an unknown asset)"
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_metered_past_the_whole_budget_is_a_budget_stop(profile, policy, fake_provider):
+    # Until the probe moves to ModelAnswers it sends through generate_json, which checks the budget before the finish.
+    calls, answers = fake_provider
+    over = response(refusal="Cannot comply")
+    over["usage"] = {"prompt_tokens": 900, "completion_tokens": 200, "total_tokens": 1100}
+    answers[:] = [over]
+    with pytest.raises(providers.ProviderError) as err:
+        await providers.generate_json(profile, "Review", {}, policy)
+    assert err.value.code == "budget_exhausted"
+    assert err.value.usage["tokens"] == 1100
+    assert len(calls) == 1

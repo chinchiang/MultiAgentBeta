@@ -12,6 +12,7 @@ from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 import pytest
 from jsonschema import validate
 
+from fakes import FakePort, answer_with, asked
 from vibe_audit.domain import RunInput
 from vibe_audit.service import Engine
 from vibe_audit.store import Store
@@ -47,9 +48,7 @@ async def test_full_pipeline_with_synthetic_models_and_real_isolated_http(tmp_pa
             self.send_header('Content-Length',str(len(raw)));self.end_headers();self.wfile.write(raw)
     server=ThreadingHTTPServer(('127.0.0.1',0),Target)
     thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
-    async def contract_model(profile,system,payload,policy):
-        await policy['request_hook']()
-        calls.append(profile['id'])
+    def respond(system,payload,schema):
         if payload.get('request')=='probe':data={'probe':'vibeaudit','ok':True}
         elif 'reviewers' in payload:data={'reviewer_order':payload['reviewers'],'focus':[],'rationale':'Synthetic protocol test'}
         elif 'core_questions' in payload:
@@ -59,9 +58,17 @@ async def test_full_pipeline_with_synthetic_models_and_real_isolated_http(tmp_pa
         elif 'Map actors' in system:data={'assets':assets,'dataflows':flows,'roles':[],'gaps':[]}
         elif 'Build a complete' in system:data={'id':'TM1','version':1,'assets':assets,'dataflows':flows,'threats':[threat],'requirements':[requirement],'standards':[]}
         else:raise AssertionError('Unexpected model operation in local contract test')
-        validate(data,policy.get('response_schema',{'type':'object'}))
-        return {'data':data,'usage':{'tokens':1,'tokens_known':True},'synthetic_contract':True}
-    monkeypatch.setattr(providers,'generate_json',contract_model)
+        validate(data,schema)
+        return data
+    async def contract_probe(profile,system,payload,policy):
+        # The capability probe still sends through generate_json until it moves to ModelAnswers.
+        await policy['request_hook']()
+        calls.append(profile['id'])
+        return {'data':respond(system,payload,policy.get('response_schema',{'type':'object'})),'usage':{'tokens':1,'tokens_known':True},'synthetic_contract':True}
+    monkeypatch.setattr(providers,'generate_json',contract_probe)
+    def contract_answer(profile,messages,schema):
+        calls.append(profile['id'])
+        return answer_with(respond(*asked(messages),schema),tokens=1)
     profiles=[{'id':key,'role':'commander' if key=='commander' else 'reviewer','provider':'openai_compatible',
                'model_id':'synthetic-contract-'+key,'family':'fixture-'+key,'endpoint':'http://127.0.0.1:9/v1'}
               for key in ('commander','a','b','c')]
@@ -71,7 +78,7 @@ async def test_full_pipeline_with_synthetic_models_and_real_isolated_http(tmp_pa
           'preconditions':[{'name':'fixture','method':'GET','path':'/fixture','expected_status':200,'required_text':['LOCAL_PIPELINE_CANARY']}],
           'oracle':{'kind':'deny_sensitive','forbidden_text':['LOCAL_PIPELINE_CANARY'],'allowed_statuses':[403],'required_observations':['http_response']}}
     store=Store(tmp_path/'data',url)
-    engine=Engine(store,url)
+    engine=Engine(store,url,model_port=FakePort(answer=contract_answer))
     try:
         run=engine.create(RunInput(name='SYNTHETIC MODEL CONTRACT — REAL DOCKER HTTP',mode='live',models=profiles,
             source_path=str(source),target_url=f'http://127.0.0.1:{server.server_port}',allowed_target_ips=['127.0.0.1'],

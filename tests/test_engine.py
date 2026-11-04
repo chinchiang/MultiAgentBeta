@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from fakes import FakePort, answer_with, asked, reply
 from vibe_audit.api import create_app
 from vibe_audit.catalog import default_catalog_root
 from vibe_audit.domain import RunInput, digest
@@ -306,16 +307,13 @@ async def test_reviewer_payload_drops_the_largest_uncited_files_first(engine,mon
     assert len(json.dumps({"core_questions":[],"source":fitted},ensure_ascii=False).encode())<=2500
 
 
-async def test_a_budget_refusal_reaches_the_run_as_itself(engine,monkeypatch):
-    from vibe_audit import providers
+async def test_a_budget_refusal_reaches_the_run_as_itself(engine):
     run=await finished_demo(engine)
     engine.cancel_flags[run["id"]]=asyncio.Event();engine.locks[run["id"]]=asyncio.Lock()
     run["manifest"]["budget"]["max_tokens"]=10
     profile=next(p for p in run["manifest"]["models"] if p["role"]=="reviewer")
-    async def denied_generate(profile,system,payload,policy):
-        try: await policy["request_hook"]()
-        except Exception: raise providers.ProviderError("Model request denied by the policy reservation hook",code="request_denied",usage={"tokens":0}) from None
-    monkeypatch.setattr(providers,"generate_json",denied_generate)
+    # The reservation refuses before anything is sent, so the port has nothing to answer.
+    engine.model_port=FakePort([])
     with pytest.raises(PolicyError,match="Insufficient token budget"):
         await engine.model(run,profile,"x",{"y":1})
 
@@ -429,19 +427,18 @@ async def test_time_budget_counts_active_time_across_resume_and_restart(engine,t
 
 
 @pytest.mark.parametrize("outcome",["success","known_failure","unknown_failure"])
-async def test_model_call_returns_its_reservation_once_usage_is_counted(engine,monkeypatch,outcome):
+async def test_model_call_returns_its_reservation_once_usage_is_counted(engine,outcome):
     from vibe_audit.providers import ProviderError
     run=engine.create(RunInput(name="Reservation"))
     run["status"]="running"
     engine.cancel_flags[run["id"]]=asyncio.Event()
     engine.locks[run["id"]]=asyncio.Lock()
-    async def generate_json(profile,system,payload,policy):
-        await policy["request_hook"]()
+    def answer(profile,messages,schema):
         assert run["reserved_tokens"]>0
         if outcome=="success":
-            return {"data":{"ok":True},"usage":{"tokens":7}}
+            return answer_with({"ok":True},tokens=7)
         raise ProviderError("synthetic",code="endpoint_unavailable",usage={"model_calls":1,"tokens":0,"tokens_known":outcome=="known_failure"})
-    monkeypatch.setattr("vibe_audit.providers.generate_json",generate_json)
+    engine.model_port=FakePort(answer=answer)
     profile=run["manifest"]["models"][0]
     if outcome=="success":
         assert await engine.model(run,profile,"Return JSON.",{})=={"ok":True}
@@ -899,17 +896,14 @@ def test_finish_job_commits_journal_and_execution_together(engine):
         reader.close()
 
 
-async def test_unknown_provider_usage_persists_and_blocks_resume_after_restart(engine,monkeypatch):
+async def test_unknown_provider_usage_persists_and_blocks_resume_after_restart(engine):
     from vibe_audit import providers
     run=engine.create(RunInput())
     run["status"]="running"
     engine.cancel_flags[run["id"]]=asyncio.Event()
     engine.locks[run["id"]]=asyncio.Lock()
-    async def unknown_usage(profile,system,payload,policy):
-        await policy["request_hook"]()
-        raise providers.ProviderError("Synthetic lost response",usage={
-            "model_calls":1,"tokens":7,"tokens_known":False})
-    monkeypatch.setattr(providers,"generate_json",unknown_usage)
+    engine.model_port=FakePort([providers.ProviderError("Synthetic lost response",usage={
+        "model_calls":1,"tokens":7,"tokens_known":False})])
     with pytest.raises(providers.ProviderError):
         await engine.model(run,run["manifest"]["models"][0],"Synthetic metering exercise",{})
     reader=Store(engine.store.root)
@@ -1690,16 +1684,15 @@ async def test_declining_model_cases_sends_nothing_and_can_be_revisited(engine):
     assert declined["status"]=="cancelled" and "declined" in declined["events"][-1]["message"]
 
 
-async def test_a_resumed_stage_reuses_the_model_answer_it_already_paid_for(engine,monkeypatch):
-    from vibe_audit import providers
+async def test_a_resumed_stage_reuses_the_model_answer_it_already_paid_for(engine):
     run=await finished_demo(engine)
     engine.cancel_flags[run["id"]]=asyncio.Event();engine.locks[run["id"]]=asyncio.Lock()
     profile=next(p for p in run["manifest"]["models"] if p["role"]=="reviewer")
     calls=[]
-    async def generate(profile,system,payload,policy):
-        calls.append(payload)
-        return {"data":{"value":len(calls)},"usage":{"tokens":1}}
-    monkeypatch.setattr(providers,"generate_json",generate)
+    def answer(profile,messages,schema):
+        calls.append(asked(messages)[1])
+        return answer_with({"value":len(calls)},tokens=1)
+    engine.model_port=FakePort(answer=answer)
     assert await engine.model(run,profile,"x",{"q":1},cache="step")=={"value":1}
     assert await engine.model(run,profile,"x",{"q":1},cache="step")=={"value":1} and len(calls)==1
     # A different question is a new call.
@@ -1715,17 +1708,16 @@ def test_markdown_defangs_bare_urls_and_shows_challenges():
     assert "Challenger counterevidence: guarded upstream" in text
 
 
-async def test_a_cancel_between_attempts_stays_a_cancel_and_charges_what_was_reserved(engine,monkeypatch):
-    from vibe_audit import providers
+async def test_a_cancel_between_attempts_stays_a_cancel_and_charges_what_was_reserved(engine):
     run=await finished_demo(engine)
     engine.cancel_flags[run["id"]]=asyncio.Event();engine.locks[run["id"]]=asyncio.Lock()
     profile=next(p for p in run["manifest"]["models"] if p["role"]=="reviewer")
     before=run["usage"]["tokens"]
-    async def generate(profile,system,payload,policy):
-        await policy["request_hook"]()  # attempt 1 is reserved and billed
+    def answer(profile,messages,schema):
+        # Attempt 1 is reserved and answered invalidly; the run stops before attempt 2 is reserved.
         engine.cancel_flags[run["id"]].set()
-        await policy["request_hook"]()  # the run stops before attempt 2
-    monkeypatch.setattr(providers,"generate_json",generate)
+        return reply("not json")
+    engine.model_port=FakePort(answer=answer)
     with pytest.raises(asyncio.CancelledError):
         await engine.model(run,profile,"x",{"y":1})
     assert run["usage"]["tokens"]>before and run["usage"]["tokens_estimated"] is True and run.get("reserved_tokens",0)==0
@@ -1804,27 +1796,25 @@ def test_a_fallback_is_configured_explicitly_and_keeps_reviewer_families_apart()
         live_with([{**m,"fallback_for":["reviewer-b"]} if m["id"]=="reviewer-a" else m for m in fallback_models()])
 
 
-async def model_with_fallback(engine,monkeypatch,failure):
-    from vibe_audit import providers
+async def model_with_fallback(engine,failure):
     from vibe_audit.providers import ProviderError
     run=await finished_demo(engine)
     engine.cancel_flags[run["id"]]=asyncio.Event();engine.locks[run["id"]]=asyncio.Lock()
     primary=next(p for p in run["manifest"]["models"] if p["id"]=="reviewer-a")
     run["manifest"]["models"].append({**primary,"id":"local","role":"fallback","model_id":"local-model","family":"local","fallback_for":["reviewer-a"]})
     calls=[]
-    async def generate(profile,system,payload,policy):
-        await policy["request_hook"]()
+    def answer(profile,messages,schema):
         calls.append(profile["id"])
         if profile["id"]!="local" or failure.get("fallback"):
             raise ProviderError("Model refused the request",code=failure["code"],usage={"model_calls":1,"tokens":7,"tokens_known":True})
-        return {"data":{"by":profile["id"]},"usage":{"tokens":3}}
-    monkeypatch.setattr(providers,"generate_json",generate)
+        return answer_with({"by":profile["id"]},tokens=3)
+    engine.model_port=FakePort(answer=answer)
     return run,primary,calls
 
 
 @pytest.mark.parametrize("code,what",[("refusal","refused"),("truncated","was truncated")])
-async def test_the_operators_fallback_answers_a_refusal_or_truncation_and_says_so(engine,monkeypatch,code,what):
-    run,primary,calls=await model_with_fallback(engine,monkeypatch,{"code":code})
+async def test_the_operators_fallback_answers_a_refusal_or_truncation_and_says_so(engine,code,what):
+    run,primary,calls=await model_with_fallback(engine,{"code":code})
     before=dict(run["usage"]);answered=[]
     assert await engine.model(run,primary,"x",{"q":1},cache="step",answered=answered)=={"by":"local"}
     assert calls==["reviewer-a","local"] and answered==["local"]
@@ -1840,9 +1830,9 @@ async def test_the_operators_fallback_answers_a_refusal_or_truncation_and_says_s
 
 
 @pytest.mark.parametrize("failure",[{"code":"schema_validation"},{"code":"refusal","fallback":True}])
-async def test_other_failures_and_a_failing_fallback_still_stop_the_call(engine,monkeypatch,failure):
+async def test_other_failures_and_a_failing_fallback_still_stop_the_call(engine,failure):
     from vibe_audit.providers import ProviderError
-    run,primary,calls=await model_with_fallback(engine,monkeypatch,failure)
+    run,primary,calls=await model_with_fallback(engine,failure)
     before=run["usage"]["tokens"]
     with pytest.raises(ProviderError) as err:
         await engine.model(run,primary,"x",{"q":1})
@@ -1862,16 +1852,14 @@ async def test_other_failures_and_a_failing_fallback_still_stop_the_call(engine,
 
 @pytest.mark.parametrize("family,gate",[("local",None),("beta","Model family diversity incomplete")])
 async def test_a_review_written_by_a_fallback_names_it_and_the_family_gate_checks_it(engine,monkeypatch,family,gate):
-    run,primary,calls=await model_with_fallback(engine,monkeypatch,{"code":"refusal"})
-    async def generate(profile,system,payload,policy):
+    run,primary,calls=await model_with_fallback(engine,{"code":"refusal"})
+    def answer(profile,messages,schema):
         from vibe_audit.providers import ProviderError
-        await policy["request_hook"]()
         calls.append(profile["id"])
         if profile["id"]=="reviewer-a":
             raise ProviderError("Model refused the request",code="refusal",usage={"model_calls":1,"tokens":1,"tokens_known":True})
-        return {"data":{"findings":[],"gaps":[]},"usage":{"tokens":1}}
-    from vibe_audit import providers
-    monkeypatch.setattr(providers,"generate_json",generate)
+        return answer_with({"findings":[],"gaps":[]},tokens=1)
+    engine.model_port=FakePort(answer=answer)
     async def no_scan(run): return None
     monkeypatch.setattr(engine,"_scan_source",no_scan)
     run["manifest"]["models"][-1]["family"]=family
