@@ -465,13 +465,29 @@ def _rule_hint(exc: BaseException) -> str:
     return ""
 
 
-def _validation_site(exc: BaseException) -> str:
+def _declared_names(schema) -> set:
+    """Every property name a schema declares, its definitions included."""
+    names: set = set()
+    if isinstance(schema, dict):
+        if isinstance(schema.get("properties"), dict):
+            names.update(schema["properties"])
+        for value in schema.values():
+            names |= _declared_names(value)
+    elif isinstance(schema, list):
+        for value in schema:
+            names |= _declared_names(value)
+    return names
+
+
+def _validation_site(exc: BaseException, schema) -> str:
     """Where an answer failed validation: the schema path and rule, never the model's own text."""
     from jsonschema.exceptions import ValidationError as SchemaViolation
     from pydantic import ValidationError as ContractViolation
+    declared = _declared_names(schema)
     def path(parts):
-        text = ".".join(str(part) for part in parts)
-        return re.sub(r"[^A-Za-z0-9_.\-\[\]]", "", text)[:120] or "(root)"
+        # A key the schema does not declare is one the model wrote, under a free-form object: it shows as *.
+        text = ".".join(str(part) if isinstance(part, int) or part in declared else "*" for part in parts)
+        return re.sub(r"[^A-Za-z0-9_.*\-\[\]]", "", text)[:120] or "(root)"
     if isinstance(exc, SchemaViolation):
         return f"{path(exc.absolute_path)}: {exc.validator}"
     if isinstance(exc, ContractViolation):
@@ -671,7 +687,7 @@ async def generate_json(profile: dict, system: str, payload: dict, policy: dict)
             if check := policy.get("contract_check"):
                 check(data)
         except Exception as exc:
-            where = _validation_site(exc)
+            where = _validation_site(exc, schema)
             if attempt + 1 < max_attempts:
                 hint = _rule_hint(exc)
                 messages.append({"role": "user", "content": f"The previous response did not validate ({where}{'; ' + hint if hint else ''}). Return a JSON object satisfying the supplied schema. Do not add prose or code fences."})

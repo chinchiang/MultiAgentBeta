@@ -453,6 +453,7 @@ PATTERNS = [
     (r"(.+) was truncated; asking its fallback (.+) \((.+)\)", "{0} 的輸出被截斷；改問它的備援 {1}（{2}）"),
     (r"Fallback (.+) \((.+)\) answered for (.+) at stage (\w+) after it refused", "{2} 在{3}階段拒答，改由備援 {0}（{1}）回答"),
     (r"Fallback (.+) \((.+)\) answered for (.+) at stage (\w+) after it was truncated", "{2} 在{3}階段的輸出被截斷，改由備援 {0}（{1}）回答"),
+    (r"(.+)'s answer at stage (\w+) did not validate \((.+)\); asking again, attempt (\d+) of (\d+)", "{0} 在{1}階段的回答未通過驗證（{2}）；重新詢問，第 {3} 次，共 {4} 次"),
     (r"Operator-declared test literals left unredacted: (\d+) of (\d+) appear in the snapshot", "操作者宣告的測試字面值未遮蔽：{1} 個中有 {0} 個出現在快照裡"),
     (r"Model output failed local JSON/schema validation \((.+)\)", "模型輸出未通過本機 JSON／格式驗證（{0}）"),
     (r"AWS profile (.+) is not allowed; list it in (\w+)", "AWS profile {0} 未獲允許；請把它列在 {1}"),

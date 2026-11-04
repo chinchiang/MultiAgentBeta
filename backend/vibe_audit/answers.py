@@ -67,6 +67,8 @@ class ModelAnswers:
         self.check_active = check_active
         # A send timeout that replaces the profile's; None keeps the profile's own.
         self.timeout = timeout
+        # False for an account with no event log: what its answer met goes back to its caller, not into a run.
+        self.events = True
 
     @classmethod
     def for_probe(cls, profile, budget, policy, port):
@@ -76,7 +78,9 @@ class ModelAnswers:
         # Only what a probe reads: it has no fallback, records no event and holds nothing before it starts.
         account = {"manifest": {"budget": budget, "data_policy": policy["data_policy"], "allowed_model_origins": policy["allowed_model_origins"]},
                    "usage": {"model_calls": 0, "tokens": 0}}
-        return cls(account, store=Unsaved(), port=port, lock=asyncio.Lock(), check_active=nothing_to_stop, timeout=min(30, budget["max_seconds"]))
+        answers = cls(account, store=Unsaved(), port=port, lock=asyncio.Lock(), check_active=nothing_to_stop, timeout=min(30, budget["max_seconds"]))
+        answers.events = False  # pragma: no mutate (None is as false as False)
+        return answers
 
     async def ask(self, profile, instruction, payload, contract=None, cache=None):
         """One answer for this Agent, or its operator-configured fallback's after a refusal or truncation.
@@ -199,11 +203,15 @@ class ModelAnswers:
                     if contract:
                         data = contract.model_validate(data).model_dump()
                 except Exception as exc:
+                    site = _validation_site(exc, schema)
                     if attempt + 1 < MAX_ATTEMPTS:
+                        # The hint may quote IDs the model wrote, so it goes to the model only; the run records the site.
                         hint = _rule_hint(exc)
-                        messages.append({"role": "user", "content": f"The previous response did not validate ({_validation_site(exc)}{'; ' + hint if hint else ''}). Return a JSON object satisfying the supplied schema. Do not add prose or code fences."})
+                        messages.append({"role": "user", "content": f"The previous response did not validate ({site}{'; ' + hint if hint else ''}). Return a JSON object satisfying the supplied schema. Do not add prose or code fences."})
+                        if self.events:
+                            self.record_event(f"{profile['id']}'s answer at stage {self.run['stage']} did not validate ({site}); asking again, attempt {attempt + 2} of {MAX_ATTEMPTS}", "warning", profile["id"])
                         continue
-                    raise ProviderError(f"Model output failed local JSON/schema validation ({_validation_site(exc)})", code="schema_validation") from None
+                    raise ProviderError(f"Model output failed local JSON/schema validation ({site})", code="schema_validation") from None
                 return data, attempt + 1
             # Unreachable: every attempt returns or raises; kept so the loop can never fall through silently.
             raise ProviderError("No model result", code="provider_error")  # pragma: no mutate
