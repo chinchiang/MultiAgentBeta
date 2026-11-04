@@ -21,7 +21,6 @@ from vibe_audit.store import Store
 @pytest.mark.skipif(not os.getenv("VIBEAUDIT_TEST_RUNTIME_CONFIG"),reason="Real Docker/PostgreSQL runtime required")
 @pytest.mark.parametrize("static_tools", [[], ["semgrep", "gitleaks", "osv"]])
 async def test_full_pipeline_with_synthetic_models_and_real_isolated_http(tmp_path,monkeypatch,static_tools):
-    from vibe_audit import providers
     config=json.loads(Path(os.environ["VIBEAUDIT_TEST_RUNTIME_CONFIG"]).read_text())
     url=os.environ[config["profiles"]["default"]["database_url_env"]]
     monkeypatch.setenv("VIBEAUDIT_RUNTIME_CONFIG",os.environ["VIBEAUDIT_TEST_RUNTIME_CONFIG"])
@@ -60,12 +59,6 @@ async def test_full_pipeline_with_synthetic_models_and_real_isolated_http(tmp_pa
         else:raise AssertionError('Unexpected model operation in local contract test')
         validate(data,schema)
         return data
-    async def contract_probe(profile,system,payload,policy):
-        # The capability probe still sends through generate_json until it moves to ModelAnswers.
-        await policy['request_hook']()
-        calls.append(profile['id'])
-        return {'data':respond(system,payload,policy.get('response_schema',{'type':'object'})),'usage':{'tokens':1,'tokens_known':True},'synthetic_contract':True}
-    monkeypatch.setattr(providers,'generate_json',contract_probe)
     def contract_answer(profile,messages,schema):
         calls.append(profile['id'])
         return answer_with(respond(*asked(messages),schema),tokens=1)

@@ -376,11 +376,12 @@ def _run_routes(api,console):
         return run
 
 
-def _probe_route(api):
-    """A model endpoint probe under an explicit budget."""
+def _probe_route(api,console):
+    """A model endpoint probe under an explicit budget, metered by the same rules as a run's answers."""
     @api.post("/models/probe")
     async def model_probe(request:Request):
-        from .providers import probe_model,ProviderError
+        from .answers import ModelAnswers,ProbeDenied
+        from .providers import ProviderError
         try:
             body=await request.json()
             if not isinstance(body,dict):
@@ -389,17 +390,13 @@ def _probe_route(api):
             budget=Budget.model_validate(body["budget"]).model_dump()
         except (KeyError,TypeError,ValueError):
             raise HTTPException(422,"A valid profile and explicit probe budget are required") from None
-        calls=0
-        async def request_hook():
-            nonlocal calls
-            calls+=1
-            if calls>budget["max_model_calls"]:
-                raise PolicyError("Probe call budget exhausted")
-        policy={"data_policy":body.get("data_policy"),"allowed_model_origins":body.get("allowed_model_origins",[]),"max_tokens":budget["max_tokens"],"timeout_seconds":min(30,budget["max_seconds"]),"request_hook":request_hook}
+        policy={"data_policy":body.get("data_policy"),"allowed_model_origins":body.get("allowed_model_origins",[])}
         try:
-            return await probe_model(profile,policy)
+            return await ModelAnswers.for_probe(profile,budget,policy,console.engine.model_port).probe(profile)
         except ProviderError as exc:
             return JSONResponse({"available":False,"status":"blocked","code":exc.code,"detail":str(exc),"usage":exc.usage},status_code=409)
+        except ProbeDenied as exc:
+            return JSONResponse({"available":False,"status":"blocked","code":"request_denied","detail":str(exc),"usage":exc.usage},status_code=409)
 
 
 def _frontend_route(app):
@@ -453,7 +450,7 @@ def create_app(data_dir=None, database_url=None, testing=False, session_token=No
     _session_routes(app,api,console)
     _meta_routes(app,api,console)
     _run_routes(api,console)
-    _probe_route(api)
+    _probe_route(api,console)
     app.include_router(api)
     _frontend_route(app)
     return app

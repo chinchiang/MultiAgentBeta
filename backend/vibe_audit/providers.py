@@ -595,6 +595,7 @@ class LiteLLMPort:
 
 
 async def generate_json(profile: dict, system: str, payload: dict, policy: dict) -> dict:
+    """The live benchmark's model runner, with its own bounded retry; a run's answers and probes go through ModelAnswers."""
     endpoint, origin, credential = _validate_profile(profile, policy)
     schema = policy.get("response_schema", {"type": "object"})
     try:
@@ -644,7 +645,7 @@ async def generate_json(profile: dict, system: str, payload: dict, policy: dict)
                 raise ProviderError("Model request denied by the policy reservation hook", code="request_denied", usage=usage.copy()) from None
         usage["model_calls"] += 1
         try:
-            # Kept for the capability probe until it moves to ModelAnswers; the send itself is the port's.
+            # Kept for the live benchmark until it moves to ModelAnswers; the send itself is the port's.
             reply = await LiteLLMPort().send(profile, messages, schema=schema, output_limit=min(output_limit, remaining), timeout=timeout, policy=policy)
         except ProviderError as exc:
             for field in ("tokens", "prompt_tokens", "completion_tokens"):
@@ -678,13 +679,3 @@ async def generate_json(profile: dict, system: str, payload: dict, policy: dict)
             raise ProviderError(f"Model output failed local JSON/schema validation ({where})", code="schema_validation", usage=usage.copy()) from None
         return {"data": data, "usage": usage, "model_id": profile["model_id"], "provider": profile["provider"], "response_model_id": response_model_id, "cost_usd": None, "cost_note": "Token usage is provider reported; monetary cost is not calculated or claimed.", "budget_note": "Output is capped; total input/output usage is checked after each response. Provider billing cannot be guaranteed in advance."}
     raise ProviderError("No model result", code="provider_error", usage=usage.copy())
-
-
-async def probe_model(profile: dict, policy: dict) -> dict:
-    probe_policy = dict(policy)
-    probe_policy["response_schema"] = {"type": "object", "properties": {"probe": {"const": "vibeaudit"}, "ok": {"const": True}}, "required": ["probe", "ok"], "additionalProperties": False}
-    probe_profile = dict(profile)
-    # Reasoning models spend output tokens thinking first; 128 truncated a probe at random. 1024 still bounds its cost.
-    probe_profile["max_output_tokens"] = min(profile.get("max_output_tokens", 3000), 1024)
-    result = await generate_json(probe_profile, "This is a harmless connectivity and JSON capability probe. Return {\"probe\":\"vibeaudit\",\"ok\":true}.", {"request": "probe"}, probe_policy)
-    return {"id": profile.get("id"), "provider": profile["provider"], "model_id": profile["model_id"], "status": "verified", "available": True, "simulated": False, "capabilities": {"connectivity": "verified", "json_object": "verified", "local_schema_validation": "verified", "tool_calling": "not_tested", "parallel_tool_calling": "not_tested", "native_json_schema": "not_tested"}, "usage": result["usage"], "limitations": ["One successful probe does not establish security-review accuracy.", "Provider-native strict schema/tool calling were not tested.", "A local endpoint may itself forward data; operate it within a trusted egress boundary.", "No monetary cost claim; token accounting is provider reported."]}

@@ -7,6 +7,7 @@ import sys
 import pytest
 
 from vibe_audit import adapters
+from vibe_audit.answers import Answer
 from vibe_audit.domain import RunInput
 from vibe_audit.policy import PolicyError
 from vibe_audit.service import Engine, report_markdown
@@ -123,13 +124,13 @@ async def test_optional_reporter_can_order_but_cannot_invent_findings(tmp_path):
     run["manifest"]["models"].append({"id":"reporter","role":"reporter"})
     original = copy.deepcopy(run["findings"])
     async def valid(*args):
-        return {"finding_ids":[f["id"] for f in reversed(original)]}
+        return Answer({"finding_ids":[f["id"] for f in reversed(original)]})
     engine.model = valid
     await engine._report(run)
     assert run["findings"] == list(reversed(original))
     run.pop("report_order")
     async def invalid(*args):
-        return {"finding_ids":["fabricated"]}
+        return Answer({"finding_ids":["fabricated"]})
     engine.model = invalid
     with pytest.raises(PolicyError):
         await engine._report(run)
