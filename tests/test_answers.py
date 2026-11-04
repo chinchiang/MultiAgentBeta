@@ -474,6 +474,13 @@ async def test_an_answer_reserves_its_request_bytes_system_bytes_output_limit_an
     assert seen == [5390]
 
 
+def test_the_reservation_of_a_question_can_be_known_before_it_is_asked():
+    from vibe_audit.answers import reservation
+    # The same question and output limit as the answer above: 65 + 277 + 3000 + 2048.
+    assert reservation("Review", {}, None, 3000) == 5390
+    assert reservation("Review", {}, None, 0) == 2390
+
+
 async def test_a_reservation_adds_to_one_already_held_and_both_count_against_the_budget(run, store):
     run["reserved_tokens"] = 100
     seen, answer = holding(run)
@@ -854,3 +861,58 @@ async def test_a_failures_usage_without_a_prompt_and_completion_split_adds_none_
     port = FakePort([refused(tokens=7), reply(tokens=15)])
     answer = await answers(run, store, port).ask(primary, "Review", {}, contract=Ok)
     assert answer.usage == {"model_calls": 2, "tokens": 22, "prompt_tokens": 10, "completion_tokens": 5, "tokens_known": True}
+
+
+FINDINGS = {"type": "object", "additionalProperties": False, "required": ["finding_ids"],
+            "properties": {"finding_ids": {"type": "array", "items": {"type": "string"}}}}
+
+
+def unowned(port, **budget):
+    return ModelAnswers.unowned({"max_seconds": 600, "max_model_calls": 4, "max_tokens": 50000, **budget}, CONSOLE_POLICY, port, timeout=45)
+
+
+async def test_an_answer_outside_any_run_is_held_to_the_given_schema_and_metered_in_memory(run):
+    profile = run["manifest"]["models"][0]
+    port = FakePort([reply('{"finding_ids":["x"],"extra":1}', tokens=12), reply('{"finding_ids":["x"]}', tokens=15)])
+    model = unowned(port)
+    answer = await model.ask(profile, "Audit", {"input": "code"}, schema=FINDINGS)
+    assert answer.data == {"finding_ids": ["x"]}
+    assert answer.usage == {"model_calls": 2, "tokens": 27, "prompt_tokens": 20, "completion_tokens": 7, "tokens_known": True}
+    assert model.run["usage"] == {"model_calls": 2, "tokens": 27}
+    assert model.run["reserved_tokens"] == 0
+    assert [call["schema"] for call in port.calls] == [FINDINGS, FINDINGS]
+    assert [call["policy"] for call in port.calls] == [CONSOLE_POLICY, CONSOLE_POLICY]
+    assert [call["timeout"] for call in port.calls] == [45, 45]
+
+
+async def test_a_fallback_answers_under_the_same_schema_it_was_asked_with(run, store):
+    primary = with_fallback(run)
+    port = FakePort([refused(), reply('{"finding_ids":[]}')])
+    answer = await answers(run, store, port).ask(primary, "Audit", {}, schema=FINDINGS)
+    assert answer.answered_by == "local"
+    assert [call["schema"] for call in port.calls] == [FINDINGS, FINDINGS]
+
+
+async def test_an_answer_outside_any_run_that_is_refused_fails_as_a_refusal_with_no_fallback_to_ask(run):
+    port = FakePort([refused()])
+    with pytest.raises(ProviderError) as error:
+        await unowned(port).ask(run["manifest"]["models"][0], "Audit", {}, schema=FINDINGS)
+    assert error.value.code == "refusal"
+    assert len(port.calls) == 1
+
+
+async def test_a_cached_question_is_held_to_the_schema_it_was_asked_with(run, store):
+    port = FakePort([reply('{"finding_ids":["x"],"extra":1}'), reply('{"finding_ids":["x"]}')])
+    answer = await answers(run, store, port).ask(run["manifest"]["models"][0], "Audit", {}, cache="audit", schema=FINDINGS)
+    assert answer.data == {"finding_ids": ["x"]}
+    assert [call["schema"] for call in port.calls] == [FINDINGS, FINDINGS]
+
+
+@pytest.mark.parametrize("known", [True, False])
+async def test_what_an_account_has_spent_counts_every_attempt_and_says_when_usage_is_unknown(run, known):
+    port = FakePort([reply("not json", tokens=12), ProviderError("Lost", code="provider_request_failed", usage={"model_calls": 1, "tokens": 5, "tokens_known": known})])
+    model = unowned(port)
+    assert model.spent() == {"model_calls": 0, "tokens": 0, "tokens_known": True}
+    with pytest.raises(ProviderError):
+        await model.ask(run["manifest"]["models"][0], "Audit", {}, schema=FINDINGS)
+    assert model.spent() == {"model_calls": 2, "tokens": 17, "tokens_known": known}

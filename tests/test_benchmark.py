@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from vibe_audit.benchmark import ARMS, DEFAULT_DATASET, BenchmarkError, compute_metrics, load_dataset, run_benchmark, schedule, traditional_ast
+from vibe_audit.benchmark import ARMS, DEFAULT_DATASET, LIVE_STEP_TOKENS, BenchmarkError, compute_metrics, load_dataset, run_benchmark, schedule, traditional_ast
 
 
 def test_synthetic_experiment_has_paired_equal_caps_and_no_efficacy_claim(tmp_path):
@@ -107,7 +107,8 @@ def test_live_runner_executes_injected_strategies_with_equal_sealed_tool_context
         return traditional_ast(input_data)
     async def models(profile, system, payload, policy):
         assert "gold" not in payload
-        assert policy["max_tokens"] <= 12000
+        # A step's share is at most the whole live default: debate's four steps at LIVE_STEP_TOKENS each.
+        assert policy["max_tokens"] <= LIVE_STEP_TOKENS * 4
         assert "response_schema" in policy
         calls.append((profile, payload))
         return {"data": {"finding_ids": ["ast:eval:app.py:2"], "rationale": "Deterministic injected adapter test, not a real model result"},
@@ -123,6 +124,82 @@ def test_live_runner_executes_injected_strategies_with_equal_sealed_tool_context
     independent = next(r for r in report["records"] if r["arm"] == "heterogeneous_independent")
     assert len({o["input_hash"] for o in independent["observations"]}) == 1
     assert all(r["usage"]["tokens"] <= r["budget"]["max_tokens"] for r in report["records"])
+
+
+LOCAL = {"data_policy": "local_only", "allowed_model_origins": []}
+ROOMY = {"max_tokens": 400000, "max_seconds": 60, "max_requests": 12, "max_model_calls": 8}
+
+
+def findings(*ids, tokens=10):
+    from fakes import answer_with
+    return answer_with({"finding_ids": list(ids), "rationale": "Fake port answer, not a real model result"}, tokens=tokens)
+
+
+def test_the_default_live_runner_asks_through_the_model_port_and_charges_what_it_reports():
+    from fakes import FakePort
+    from vibe_audit.benchmark import MODEL_FINDINGS_SCHEMA
+    port = FakePort(answer=lambda profile, messages, schema: findings("ast:eval:app.py:2"))
+    report = run_benchmark(mode="live", repetitions=1, profiles=_profiles(), model_policy=LOCAL, budget=ROOMY, model_port=port)
+    assert report["status"] == "completed", [r["issues"] for r in report["records"]]
+    assert len(port.calls) == 26
+    assert all(call["schema"] == MODEL_FINDINGS_SCHEMA and call["policy"] == LOCAL for call in port.calls)
+    steps = [o["response"] for r in report["records"] for o in r["observations"] if o["model_alias"] != "traditional"]
+    assert len(steps) == 26 and all((step["tokens"], step["model_calls"]) == (10, 1) for step in steps)
+
+
+def test_a_question_the_longest_arms_step_cannot_hold_twice_is_blocked_unsent_in_every_arm():
+    from fakes import FakePort
+    port = FakePort(answer=lambda profile, messages, schema: findings())
+    report = run_benchmark(mode="live", repetitions=1, profiles=_profiles(), model_policy=LOCAL, budget=ROOMY | {"max_tokens": 4000}, model_port=port)
+    assert port.calls == []
+    steps = [o["response"] for r in report["records"] for o in r["observations"] if o["model_alias"] != "traditional"]
+    assert steps and all(step["status"] == "blocked" and (step["tokens"], step["model_calls"]) == (0, 0) for step in steps)
+    assert steps[0]["reason"] == "Not sent: the longest arm's step cannot hold 2 attempts of this request"
+
+
+@pytest.mark.parametrize("known", [True, False])
+def test_a_step_the_model_fails_is_charged_every_attempt_or_its_whole_caps_when_usage_is_unknown(known):
+    from fakes import FakePort, reply
+    from vibe_audit.providers import ProviderError
+    def answer(profile, messages, schema):
+        if len(messages) == 2:
+            return reply("not json", tokens=12)
+        raise ProviderError("Model refused the request", code="refusal", usage={"model_calls": 1, "tokens": 5, "tokens_known": known})
+    report = run_benchmark(mode="live", repetitions=1, profiles=_profiles(), model_policy=LOCAL, budget=ROOMY, model_port=FakePort(answer=answer))
+    single = next(r for r in report["records"] if r["arm"] == "single_a")
+    [step] = single["observations"]
+    assert step["response"]["status"] == "blocked" and step["response"]["reason"] == "Provider blocked or failed: refusal"
+    assert (step["response"]["tokens"], step["response"]["model_calls"]) == ((17, 2) if known else (step["allocation"]["max_tokens"], 2))
+
+
+def test_under_the_default_live_budget_every_model_step_can_hold_a_retry():
+    from fakes import FakePort, reply
+    def answer(profile, messages, schema):
+        # Every step's first answer is invalid, so each one needs its second reservation too.
+        return reply("not json") if len(messages) == 2 else findings("ast:eval:app.py:2")
+    port = FakePort(answer=answer)
+    report = run_benchmark(mode="live", repetitions=1, profiles=_profiles() | {"a": _profiles()["a"] | {"max_output_tokens": 3000}},
+                           model_policy=LOCAL, model_port=port)
+    assert report["status"] == "completed", [r["issues"] for r in report["records"]]
+    steps = sum(1 for r in report["records"] for o in r["observations"] if o["model_alias"] != "traditional")
+    # Two attempts at every model step.
+    assert len(port.calls) == 2 * steps
+
+
+def test_every_arm_asks_the_same_question_with_the_same_output_limit_and_room_to_retry():
+    import json as jsonlib
+    from fakes import FakePort, asked, reply
+    def answer(profile, messages, schema):
+        return reply("not json") if len(messages) == 2 else findings("ast:eval:app.py:2")
+    port = FakePort(answer=answer)
+    wide = {alias: profile | {"max_output_tokens": 8000} for alias, profile in _profiles().items()}
+    report = run_benchmark(mode="live", repetitions=1, profiles=wide, model_policy=LOCAL, model_port=port)
+    assert report["status"] == "completed", [r["issues"] for r in report["records"]]
+    limits = {}
+    for call in port.calls:
+        limits.setdefault(jsonlib.dumps(asked(call["messages"])[1], sort_keys=True), set()).add(call["output_limit"])
+    # A single-model arm's one step has the whole budget, a debate step a quarter: both still get the same limit.
+    assert all(len(seen) == 1 and max(seen) < 8000 for seen in limits.values())
 
 
 def test_live_missing_profiles_block_without_dispatch():

@@ -32,6 +32,12 @@ def nothing_to_stop():
     """A console probe belongs to no run, so nothing can cancel it but its own request."""
 
 
+def reservation(instruction, payload, response_schema, output_limit):
+    """What one attempt at this question holds before it is sent: a conservative UTF-8 byte bound of the request and
+    SYSTEM, the output limit and a fixed margin. Whatever the attempt does not use is released when the answer settles."""
+    return len(json.dumps({"instruction": instruction, "payload": payload, "response_schema": response_schema}, ensure_ascii=False).encode()) + len(SYSTEM.encode()) + output_limit + 2048
+
+
 def unspent():
     return {"model_calls": 0, "tokens": 0, "prompt_tokens": 0, "completion_tokens": 0, "tokens_known": True}
 
@@ -71,37 +77,44 @@ class ModelAnswers:
         self.events = True
 
     @classmethod
-    def for_probe(cls, profile, budget, policy, port):
-        """Answers for a console probe that has no run: the same rules, metered against an account kept only in memory.
+    def unowned(cls, budget, policy, port, *, timeout):
+        """Answers that belong to no run: the same rules, metered against an account kept only in memory.
 
-        Only probe() may be asked of it: the account has no models to fall back on and no event log."""
-        # Only what a probe reads: it has no fallback, records no event and holds nothing before it starts.
-        account = {"manifest": {"budget": budget, "data_policy": policy["data_policy"], "allowed_model_origins": policy["allowed_model_origins"]},
+        The account has no models to fall back on and no event log; what an answer cost stays readable in its usage."""
+        # Only what an answer reads: no fallback, no event, nothing held before it starts.
+        account = {"manifest": {"budget": budget, "models": [], "data_policy": policy["data_policy"], "allowed_model_origins": policy["allowed_model_origins"]},
                    "usage": {"model_calls": 0, "tokens": 0}}
-        answers = cls(account, store=Unsaved(), port=port, lock=asyncio.Lock(), check_active=nothing_to_stop, timeout=min(30, budget["max_seconds"]))
+        answers = cls(account, store=Unsaved(), port=port, lock=asyncio.Lock(), check_active=nothing_to_stop, timeout=timeout)
         answers.events = False  # pragma: no mutate (None is as false as False)
         return answers
 
-    async def ask(self, profile, instruction, payload, contract=None, cache=None):
+    @classmethod
+    def for_probe(cls, profile, budget, policy, port):
+        """Answers for a console probe that has no run; only probe() is asked of them."""
+        return cls.unowned(budget, policy, port, timeout=min(30, budget["max_seconds"]))
+
+    async def ask(self, profile, instruction, payload, contract=None, cache=None, schema=None):
         """One answer for this Agent, or its operator-configured fallback's after a refusal or truncation.
 
-        With a cache name, a resumed stage reuses the answer it already paid for, as long as it asks the same question."""
+        With a cache name, a resumed stage reuses the answer it already paid for, as long as it asks the same question.
+        A contract (a pydantic model) gives the schema and the rules a schema cannot state; without one, the answer is held
+        to the given JSON schema, or else to any JSON object."""
         self.check_active()
         if not cache:
-            return await self.answer_or_fallback(profile, instruction, payload, contract)
+            return await self.answer_or_fallback(profile, instruction, payload, contract, schema)
         binding = digest({"profile": profile["id"], "instruction": instruction, "payload": payload})
         kept = self.run.setdefault("model_outputs", {}).get(cache)
         if kept and kept["binding"] == binding:
             return Answer(copy.deepcopy(kept["data"]), answered_by=(kept.get("answered_by") or [None])[0], attempts=0)
-        answer = await self.answer_or_fallback(profile, instruction, payload, contract)
+        answer = await self.answer_or_fallback(profile, instruction, payload, contract, schema)
         self.run["model_outputs"][cache] = {"binding": binding, "data": copy.deepcopy(answer.data), "answered_by": [answer.answered_by] if answer.answered_by else []}
         self.store.save(self.run)
         return answer
 
-    async def answer_or_fallback(self, profile, instruction, payload, contract):
+    async def answer_or_fallback(self, profile, instruction, payload, contract, schema=None):
         cost = unspent()
         try:
-            data, attempts = await self.validated_answer(profile, instruction, payload, contract, cost)
+            data, attempts = await self.validated_answer(profile, instruction, payload, contract, cost, schema=schema)
             return Answer(data, attempts=attempts, usage=cost)
         except ProviderError as exc:
             fallback = next((p for p in self.run["manifest"]["models"] if profile["id"] in p.get("fallback_for", [])), None)
@@ -111,7 +124,7 @@ class ModelAnswers:
             self.record_event(f"{profile['id']} refused; asking its fallback {fallback['id']} ({fallback['model_id']})" if refused
                        else f"{profile['id']} was truncated; asking its fallback {fallback['id']} ({fallback['model_id']})", "warning", profile["id"])
             try:
-                data, attempts = await self.validated_answer(fallback, instruction, payload, contract, cost)
+                data, attempts = await self.validated_answer(fallback, instruction, payload, contract, cost, schema=schema)
             except ProviderError as second:
                 # Its usage is already counted; the new error only says whose failure it is.
                 raise ProviderError(f"Its fallback {fallback['id']} failed too: {second}", code=second.code, usage=second.usage) from second
@@ -154,8 +167,7 @@ class ModelAnswers:
         schema = response_schema or {"type": "object"}
         validator = checked_validator(schema)
         system = SYSTEM + "\n" + instruction
-        # Conservative UTF-8 byte upper bound plus output budget; unused reservation is released.
-        amount = len(json.dumps({"instruction": instruction, "payload": payload, "response_schema": response_schema}, ensure_ascii=False).encode()) + len(SYSTEM.encode()) + profile["max_output_tokens"] + 2048
+        amount = reservation(instruction, payload, response_schema, profile["max_output_tokens"])
         # None for either flag is the same as False, so those two mutants cannot be told apart.
         payload_json = json.dumps(payload, ensure_ascii=False, allow_nan=False)  # pragma: no mutate
         if len(payload_json.encode()) > MAX_PAYLOAD_BYTES or len(system.encode()) > 64 * 1024:
@@ -228,6 +240,11 @@ class ModelAnswers:
             if not keep:
                 self.run["reserved_tokens"] = max(0, self.run.get("reserved_tokens", 0) - sum(held))
             self.store.save(self.run)
+
+    def spent(self):
+        """What this account's answers have cost so far, every attempt included, and whether that is all of it."""
+        usage = self.run["usage"]
+        return {"model_calls": usage["model_calls"], "tokens": usage["tokens"], "tokens_known": not self.run.get("usage_unknown")}
 
     def record_event(self, message, level, agent_id):
         self.run["events"].append(dict(seq=len(self.run["events"]) + 1, at=now(), stage=self.run["stage"], message=message, level=level, agent_id=agent_id))

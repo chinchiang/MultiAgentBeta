@@ -232,32 +232,6 @@ async def test_missing_data_policy_is_denied(profile, policy, fake_provider, all
     assert not fake_provider[0]
 
 
-@pytest.mark.asyncio
-async def test_schema_retry_is_bounded_and_each_attempt_reserved(profile, policy, fake_provider):
-    calls, answers = fake_provider
-    answers[:] = [response('{"wrong":true}'), response('{"ok":true}')]
-    reservations = []
-    async def reserve():
-        reservations.append(1)
-    policy["request_hook"] = reserve
-    result = await providers.generate_json(profile, "Review", {}, policy)
-    assert len(calls) == len(reservations) == 2
-    assert result["usage"]["tokens"] == 30
-    assert all(call[1]["model_id"] == "test-model" for call in calls)
-
-
-@pytest.mark.parametrize("content", ['{"ok":1}', '{"ok":true,"ok":false}', '{"ok":NaN}', '```json\n{"ok":true}\n```', '[]'])
-@pytest.mark.asyncio
-async def test_invalid_json_never_accepted(profile, policy, fake_provider, content):
-    calls, answers = fake_provider
-    answers[:] = [response(content)]
-    with pytest.raises(providers.ProviderError) as err:
-        await providers.generate_json(profile, "Review", {}, policy)
-    assert err.value.code == "schema_validation"
-    assert err.value.usage["model_calls"] == 2
-    assert len(calls) == 2
-
-
 @pytest.mark.parametrize("answer,code", [(response(finish="length"), "truncated"), (response(refusal="Cannot comply"), "refusal"), (response(finish="tool_calls"), "unexpected_output"), (response(usage=False), "usage_unavailable")])
 @pytest.mark.asyncio
 async def test_refusal_truncation_usage_fail_closed(profile, policy, fake_provider, answer, code):
@@ -278,21 +252,6 @@ async def test_network_error_not_retried_and_secret_error_not_exposed(profile, p
     assert "synthetic-private-secret" not in str(err.value)
     assert not err.value.usage["tokens_known"]
     assert len(calls) == 1
-
-
-@pytest.mark.asyncio
-async def test_budget_stop_and_remote_schema_ref_no_network(profile, policy, fake_provider):
-    policy["max_tokens"] = 14
-    with pytest.raises(providers.ProviderError) as err:
-        await providers.generate_json(profile, "Review", {}, policy)
-    assert err.value.code == "budget_exhausted"
-    assert err.value.usage["tokens"] == 15
-    assert len(fake_provider[0]) == 1
-    policy["response_schema"] = {"$ref": "https://evil.example/schema"}
-    with pytest.raises(providers.ProviderError) as err:
-        await providers.generate_json(profile, "Review", {}, policy)
-    assert err.value.code == "invalid_schema"
-    assert len(fake_provider[0]) == 1
 
 
 @pytest.mark.asyncio
@@ -485,24 +444,6 @@ async def test_failure_after_dispatch_keeps_usage_unknown(profile, policy, monke
     assert error.value.usage["tokens_known"] is False
 
 
-@pytest.mark.asyncio
-async def test_retry_policy_denial_retains_previous_billed_usage(profile, policy, fake_provider):
-    calls, answers = fake_provider
-    answers[:] = [response('{"wrong":true}')]
-    count = 0
-    async def reserve():
-        nonlocal count
-        count += 1
-        if count == 2:
-            raise ValueError("Budget exhausted")
-    policy["request_hook"] = reserve
-    with pytest.raises(providers.ProviderError) as error:
-        await providers.generate_json(profile, "Review", {}, policy)
-    assert error.value.code == "request_denied"
-    assert error.value.usage["tokens"] == 15
-    assert error.value.usage["model_calls"] == len(calls) == 1
-
-
 # Explicit ids keep test receipts (JUnit names) from spelling out a synthetic credential;
 # the same applies to every parametrize below and in test_engine.py whose values look like credentials.
 SECRET_FORMATS = [
@@ -642,20 +583,6 @@ def test_snapshot_refuses_symlinked_ancestors_and_skips_linked_directories(tmp_p
         snapshot_source("")
 
 
-@pytest.mark.asyncio
-async def test_contract_rules_beyond_the_schema_get_the_same_bounded_retry(profile, policy, fake_provider):
-    calls, answers = fake_provider
-    answers[:] = [response('{"ok":true}'), response('{"ok":true}')]
-    seen = []
-    def check(data):
-        seen.append(data)
-        if len(seen) == 1:
-            raise ValueError("A challenge needs counterevidence or missing evidence")
-    policy["contract_check"] = check
-    result = await providers.generate_json(profile, "Review", {}, policy)
-    assert len(calls) == len(seen) == 2 and result["data"] == {"ok": True}
-
-
 def bedrock_profile():
     return {"id": "reviewer-c", "provider": "bedrock", "model_id": "global.anthropic.claude-haiku-5-5", "family": "claude",
             "endpoint": "https://bedrock-runtime.ap-southeast-1.amazonaws.com", "credential_env": "", "aws_profile": "synthetic-sso",
@@ -788,29 +715,6 @@ async def test_a_failed_model_call_names_its_status_but_never_its_body(profile, 
 
 
 @pytest.mark.asyncio
-async def test_a_failed_validation_names_the_field_and_rule_but_not_the_answer(profile, policy, fake_provider):
-    calls, answers = fake_provider
-    answers[:] = [response('{"ok":"leaked model text"}')]
-    with pytest.raises(providers.ProviderError) as error:
-        await providers.generate_json(profile, "Review", {}, policy)
-    assert error.value.code == "schema_validation" and "ok: type" in str(error.value) and "leaked" not in str(error.value)
-    # The retry tells the model the same location, so it can fix that field.
-    assert "(ok: type)" in calls[1][5][-1]["content"]
-
-
-@pytest.mark.asyncio
-async def test_a_broken_contract_rule_is_named_in_its_own_fixed_words(profile, policy, fake_provider):
-    from vibe_audit.contracts import ChallengeProposal
-    calls, answers = fake_provider
-    answers[:] = [response('{"challenges":[{"finding_id":"f1","counterevidence":"","missing_evidence":""}]}')]
-    policy["response_schema"] = ChallengeProposal.model_json_schema()
-    policy["contract_check"] = ChallengeProposal.model_validate
-    with pytest.raises(providers.ProviderError) as error:
-        await providers.generate_json(profile, "Review", {}, policy)
-    assert "A challenge needs counterevidence or missing evidence" in str(error.value)
-
-
-@pytest.mark.asyncio
 async def test_a_content_filtered_reply_is_a_metered_refusal_not_an_unknown_failure(profile, policy, monkeypatch):
     """Gemini's 'content_filter: OTHER' with no message breaks the SDK conversion; its usage still counts."""
     def handler(request):
@@ -834,40 +738,3 @@ def test_the_schema_sent_to_an_endpoint_drops_only_maxitems():
     sent = providers._schema_for_endpoint(schema)
     assert "maxItems" not in json.dumps(sent) and "maxItems" in json.dumps(schema)
     assert json.dumps(sent).count("maxLength") == json.dumps(schema).count("maxLength")
-
-
-@pytest.mark.asyncio
-async def test_a_retry_names_the_unknown_ids_but_the_run_error_stays_fixed(profile, policy, fake_provider):
-    from vibe_audit.contracts import ThreatModelProposal
-    calls, answers = fake_provider
-    ref = {"file": "app.py", "line": 1, "quote": "def private():"}
-    bad = {"id": "TM", "assets": [{"id": "orders", "name": "Orders", "kind": "data", "source_refs": [ref]}],
-           "dataflows": [{"id": "F1", "source": "caller", "target": "orders", "boundary": "auth", "source_refs": [ref]}],
-           "threats": [{"id": "T1", "title": "t", "asset_ids": ["orders"], "category": "c", "invariant": "i", "impact": "x",
-                        "requirement_id": "R1", "dataflow_ids": ["F1"], "testability": "automated", "control_evidence": []}],
-           "requirements": [], "standards": []}
-    answers[:] = [response(json.dumps(bad)), response(json.dumps(bad))]
-    policy["response_schema"] = ThreatModelProposal.model_json_schema()
-    policy["contract_check"] = ThreatModelProposal.model_validate
-    with pytest.raises(providers.ProviderError) as error:
-        await providers.generate_json(profile, "Model", {}, policy)
-    retry = calls[1][5][-1]["content"]
-    assert "dataflow F1 names caller; declared assets are orders. Add each missing one to assets (an actor or external system is an asset too)" in retry
-    # The schema the model reads says the same before any retry.
-    flow = ThreatModelProposal.model_json_schema()["$defs"]["Dataflow"]["properties"]["source"]
-    assert "id of an entry in assets" in flow["description"]
-    assert str(error.value) == "Model output failed local JSON/schema validation ((root): Dataflow references an unknown asset)"
-
-
-@pytest.mark.asyncio
-async def test_a_refusal_metered_past_the_whole_budget_is_a_budget_stop(profile, policy, fake_provider):
-    # Until the probe moves to ModelAnswers it sends through generate_json, which checks the budget before the finish.
-    calls, answers = fake_provider
-    over = response(refusal="Cannot comply")
-    over["usage"] = {"prompt_tokens": 900, "completion_tokens": 200, "total_tokens": 1100}
-    answers[:] = [over]
-    with pytest.raises(providers.ProviderError) as err:
-        await providers.generate_json(profile, "Review", {}, policy)
-    assert err.value.code == "budget_exhausted"
-    assert err.value.usage["tokens"] == 1100
-    assert len(calls) == 1
