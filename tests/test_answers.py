@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict
 from fakes import FakePort, asked, reply
 from vibe_audit.answers import ModelAnswers
 from vibe_audit.domain import RunInput, new_run
+from vibe_audit.messages import zh
 from vibe_audit.policy import PolicyError
 from vibe_audit.providers import ProviderError
 from vibe_audit.store import Store
@@ -101,6 +102,49 @@ async def test_a_retry_names_the_unknown_ids_but_the_run_error_stays_fixed(run, 
     retry = port.calls[1]["messages"][-1]["content"]
     assert retry.startswith("The previous response did not validate ((root): Dataflow references an unknown asset; dataflow F1 names caller; declared assets are orders. Add each missing one to assets (an actor or external system is an asset too)")
     assert str(error.value) == "Model output failed local JSON/schema validation ((root): Dataflow references an unknown asset)"
+
+
+async def test_a_retry_is_one_warning_event_naming_the_stage_agent_attempt_and_site_but_not_the_hint(run, store):
+    from vibe_audit.contracts import ThreatModelProposal
+    asset = {"id": "orders", "name": "Orders", "kind": "data"}
+    bad = {"id": "TM", "version": 1, "assets": [asset], "dataflows": [{"id": "F1", "source": "intruder", "target": "orders", "boundary": "auth"}],
+           "threats": [{"id": "T1", "title": "t", "asset_ids": ["orders"], "category": "c", "invariant": "i", "impact": "x",
+                        "requirement_id": "R1", "testability": "blocked", "blocked_reason": "No fixture", "control_evidence": []}],
+           "requirements": [], "standards": []}
+    good = {**bad, "assets": [asset, {"id": "intruder", "name": "Intruder", "kind": "actor"}]}
+    run["stage"] = "threat_model"
+    port = FakePort([reply(json.dumps(bad)), reply(json.dumps(good))])
+    profile = run["manifest"]["models"][0]
+    await answers(run, store, port).ask(profile, "Model", {}, contract=ThreatModelProposal)
+    assert [{k: e[k] for k in ("stage", "level", "agent_id", "message")} for e in run["events"]] == [
+        {"stage": "threat_model", "level": "warning", "agent_id": profile["id"],
+         "message": f"{profile['id']}'s answer at stage threat_model did not validate ((root): Dataflow references an unknown asset); asking again, attempt 2 of 2"}]
+    # The hint the model was sent names the model's own IDs; only the retry message carries it.
+    hint = "Add each missing one to assets"
+    assert "intruder" in port.calls[1]["messages"][-1]["content"] and hint in port.calls[1]["messages"][-1]["content"]
+    recorded = json.dumps(store.get(run["id"]))
+    assert "intruder" not in recorded and hint not in recorded
+    assert zh(run["events"][0]["message"]) == f"{profile['id']} 在威脅建模階段的回答未通過驗證（(root)：資料流引用了不存在的資產）；重新詢問，第 2 次，共 2 次"
+
+
+class Headers(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    headers: dict[str, str]
+
+
+async def test_a_site_under_a_key_the_model_named_shows_a_wildcard_instead_of_that_key(run, store):
+    bad = reply('{"headers":{"Xsecretleakkey":1}}')
+    port = FakePort([bad, bad])
+    with pytest.raises(ProviderError) as error:
+        await answers(run, store, port).ask(run["manifest"]["models"][0], "Design", {}, contract=Headers)
+    assert str(error.value) == "Model output failed local JSON/schema validation (headers.*: type)"
+    assert "(headers.*: type)" in run["events"][0]["message"]
+    assert "Xsecretleakkey" not in json.dumps(store.get(run["id"]))
+
+
+async def test_an_answer_valid_the_first_time_records_no_retry_event(run, store):
+    await answers(run, store, FakePort([reply()])).ask(run["manifest"]["models"][0], "Review", {}, contract=Ok)
+    assert run["events"] == []
 
 
 async def test_a_contract_rule_beyond_the_schema_gets_the_same_bounded_retry(run, store):
@@ -733,6 +777,14 @@ async def test_a_console_probe_the_token_budget_cannot_bound_is_refused_unsent(r
     with pytest.raises(PolicyError, match="^Insufficient token budget for bounded model request$"):
         await console_probe(profile, port, max_tokens=3000).probe(profile)
     assert port.calls == []
+
+
+async def test_a_console_probe_answered_off_schema_once_is_verified_on_its_retry_and_reports_both_attempts(run):
+    profile = run["manifest"]["models"][0]
+    port = FakePort([reply('{"probe":"other","ok":true}', tokens=12), reply(PROBED, tokens=15)])
+    result = await console_probe(profile, port).probe(profile)
+    assert result["status"] == "verified"
+    assert result["usage"] == {"model_calls": 2, "tokens": 27, "prompt_tokens": 20, "completion_tokens": 7, "tokens_known": True}
 
 
 async def test_a_console_probe_retry_past_the_call_budget_is_refused_unsent(run):
