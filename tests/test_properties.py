@@ -5,7 +5,7 @@ import re
 from urllib.parse import quote
 
 import pytest
-from hypothesis import given, settings, strategies as st
+from hypothesis import example, given, settings, strategies as st
 
 from vibe_audit import adapters, snapshot
 from vibe_audit.adapters import AdapterBlocked, _one_of, _origin, _pinned_address, _unmapped, case_headers_allowed, format_origin, parse_origin, secret_forms, target_ip_refused
@@ -51,13 +51,27 @@ def test_one_of_matches_whole_options_only(options, other):
     assert (pattern.fullmatch(other) is not None) == (other in options)
 
 
+def same_json(a, b):
+    """The same JSON value: Python's == also holds for False and 0 or True and 1, which JSON writes differently."""
+    if type(a) is not type(b):
+        return False
+    if isinstance(a, dict):
+        return a.keys() == b.keys() and all(same_json(a[k], b[k]) for k in a)
+    if isinstance(a, list):
+        return len(a) == len(b) and all(same_json(x, y) for x, y in zip(a, b))
+    return a == b
+
+
 @given(st.dictionaries(st.text(max_size=8), json_values, max_size=6), st.text(max_size=8), json_values)
+# Python counts False == 0 and True == 1; JSON does not, so neither may the hash.
+@example(mapping={"": False}, key="", value=0)
+@example(mapping={"a": [True]}, key="a", value=[1])
 def test_canonical_hashes_ignore_key_order_and_notice_every_change(mapping, key, value):
     reordered = dict(reversed(list(mapping.items())))
     assert canonical_hash(mapping) == canonical_hash(reordered)
     assert sealed({**mapping, "hash": "ignored"}) == sealed(mapping)
     changed = {**mapping, key: value}
-    assert (canonical_hash(changed) == canonical_hash(mapping)) == (mapping.get(key, object()) == value and key in mapping)
+    assert (canonical_hash(changed) == canonical_hash(mapping)) == (key in mapping and same_json(mapping[key], value))
 
 
 @given(st.ip_addresses())
