@@ -110,8 +110,8 @@ MultiAgentBeta/
 │   ├── api.py                     #   FastAPI：session／CSRF／Host-Origin、runs、approve-cases、SSE、證據、報告、靜態介面
 │   ├── workspace_api.py           #   專案、模型範本、標準目錄、追溯、複測、裁決、清理確認
 │   ├── service.py                 #   LangGraph 七個階段、閘門呼叫、Markdown／SARIF 報告
-│   ├── answers.py                 #   一次付費的模型回答：保留額度、計量、驗證與重試、備援代答、續跑快取
-│   ├── providers.py               #   送出一次的 LiteLLM port 與模型探測、憑證 origin 綁定、無隱性 fallback
+│   ├── answers.py                 #   一次付費的模型回答：保留額度、計量、驗證與重試、備援代答、續跑快取、模型探測
+│   ├── providers.py               #   送出一次的 LiteLLM port、憑證 origin 綁定、無隱性 fallback
 │   ├── messages.py                #   錯誤訊息的正體中文對照（API 的 detail_zh、run 的 error_zh）
 │   ├── diagnostics.py             #   本機診斷記錄：被固定文字取代的失敗只記例外類型與位置（vibe-audit.log）
 │   ├── settings.py                #   後端程序的 VIBEAUDIT_* 設定：一次讀取並檢查（權杖、資料目錄、資料庫、控制台 origins、來源根目錄、目錄與設定檔路徑）
@@ -313,8 +313,8 @@ MultiAgentBeta/
 │   ├── api.py                     #   FastAPI: session/CSRF/Host-Origin, runs, approve-cases, SSE, evidence, reports, static UI
 │   ├── workspace_api.py           #   projects, model templates, standards catalog, trace, retest, decisions, cleanup attestation
 │   ├── service.py                 #   the seven LangGraph stages, gate calls, Markdown/SARIF reports
-│   ├── answers.py                 #   One paid model answer: reservation, metering, validation and retry, fallback answers, resume cache
-│   ├── providers.py               #   The send-once LiteLLM port and model probes, credential origin binding, no implicit fallback
+│   ├── answers.py                 #   One paid model answer: reservation, metering, validation and retry, fallback answers, resume cache, model probes
+│   ├── providers.py               #   The send-once LiteLLM port, credential origin binding, no implicit fallback
 │   ├── messages.py                #   Traditional Chinese wording of error messages (detail_zh, error_zh)
 │   ├── diagnostics.py             #   local diagnostics: failures reported in fixed words log their type and location (vibe-audit.log)
 │   ├── settings.py                #   the backend process's VIBEAUDIT_* settings, read and checked once (token, data dir, database, console origins, source roots, catalog and config paths)

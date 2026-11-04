@@ -506,8 +506,8 @@ threats:
       發現標題可能源自模型或掃描器輸出；SARIF 檢視器會把純文字裡的 [文字](目標) 呈現為連結，控制字元與 bidi 標記可隱藏或重排
       文字，下游若以 Markdown／HTML 呈現還可能被注入內容。
     mitigation: >-
-      SARIF 的 message.text、logicalLocation 名稱與 suppression 理由都經 sarif_text（service.py:1066-1076）：依 SARIF 2.1.0 §3.11.6
-      以反斜線跳脫方括號、移除控制字元與 bidi／零寬字元、上限 1000 字。Markdown 匯出有跳脫，裸 URL 與 www. 也會解除連結（service.py:1004-1059）；React 工作台
+      SARIF 的 message.text、logicalLocation 名稱與 suppression 理由都經 sarif_text（service.py:993-1003）：依 SARIF 2.1.0 §3.11.6
+      以反斜線跳脫方括號、移除控制字元與 bidi／零寬字元、上限 1000 字。Markdown 匯出有跳脫，裸 URL 與 www. 也會解除連結（service.py:936-941）；React 工作台
       以 <pre> 呈現 JSON，沒有 dangerouslySetInnerHTML。殘留：不合規的檢視器若把純文字當 HTML 渲染，< > 仍原樣保留。
     status: mitigated
     gate: G3

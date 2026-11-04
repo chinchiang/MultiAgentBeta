@@ -16,7 +16,6 @@ ZH = {
     "Source directory is outside configured VIBEAUDIT_SOURCE_ROOTS": "原始碼目錄不在設定的 VIBEAUDIT_SOURCE_ROOTS 之內",
     "Evidence integrity check failed": "證據完整性檢查失敗",
     "A valid profile and explicit probe budget are required": "需要有效的設定檔與明確的探測預算",
-    "Probe call budget exhausted": "探測呼叫預算已用完",
     "Report blocked: evidence integrity failure": "報告已封鎖：證據完整性檢查失敗",
     "Run or artifact not found": "找不到該執行或產物",
     "Untrusted Host": "Host 不受信任",

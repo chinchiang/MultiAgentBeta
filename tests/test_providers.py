@@ -296,15 +296,6 @@ async def test_budget_stop_and_remote_schema_ref_no_network(profile, policy, fak
 
 
 @pytest.mark.asyncio
-async def test_probe_does_not_claim_tool_support(profile, policy, fake_provider):
-    fake_provider[1][:] = [response('{"probe":"vibeaudit","ok":true}')]
-    result = await providers.probe_model(profile, policy)
-    assert result["status"] == "verified"
-    assert result["capabilities"]["tool_calling"] == "not_tested"
-    assert result["simulated"] is False
-
-
-@pytest.mark.asyncio
 async def test_transport_pins_ip_preserves_host_and_blocks_redirect():
     captured = []
     def handler(request):

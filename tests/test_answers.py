@@ -6,7 +6,7 @@ import json
 import pytest
 from pydantic import BaseModel, ConfigDict
 
-from fakes import FakePort, reply
+from fakes import FakePort, asked, reply
 from vibe_audit.answers import ModelAnswers
 from vibe_audit.domain import RunInput, new_run
 from vibe_audit.policy import PolicyError
@@ -560,3 +560,202 @@ async def test_a_reply_exactly_at_the_response_bound_is_accepted(run, store):
     content += " " * (512 * 1024 - len(content))
     answer = await answers(run, store, FakePort([reply(content)])).ask(run["manifest"]["models"][0], "Review", {}, contract=Ok)
     assert answer.data == {"ok": True}
+
+
+async def test_an_answer_reports_what_it_cost(run, store):
+    port = FakePort([reply(tokens=15)])
+    answer = await answers(run, store, port).ask(run["manifest"]["models"][0], "Review", {"source": "x"}, contract=Ok)
+    assert answer.usage == {"model_calls": 1, "tokens": 15, "prompt_tokens": 10, "completion_tokens": 5, "tokens_known": True}
+
+
+async def test_an_answer_asked_again_reports_both_attempts_cost(run, store):
+    port = FakePort([reply("not json", tokens=12), reply(tokens=15)])
+    answer = await answers(run, store, port).ask(run["manifest"]["models"][0], "Review", {}, contract=Ok)
+    assert answer.usage == {"model_calls": 2, "tokens": 27, "prompt_tokens": 20, "completion_tokens": 7, "tokens_known": True}
+    assert answer.usage["tokens"] == run["usage"]["tokens"]
+
+
+async def test_a_fallbacks_answer_reports_the_refused_attempt_and_its_own(run, store):
+    primary = with_fallback(run)
+    refusal = ProviderError("Model refused the request", code="refusal", usage={"model_calls": 1, "tokens": 7, "prompt_tokens": 6, "completion_tokens": 1, "tokens_known": True})
+    port = FakePort([refusal, reply(tokens=15)])
+    answer = await answers(run, store, port).ask(primary, "Review", {}, contract=Ok)
+    assert answer.usage == {"model_calls": 2, "tokens": 22, "prompt_tokens": 16, "completion_tokens": 6, "tokens_known": True}
+    assert answer.usage["tokens"] == run["usage"]["tokens"]
+
+
+async def test_a_reused_answer_reports_that_it_cost_nothing(run, store):
+    port = FakePort([reply(tokens=15)])
+    profile = run["manifest"]["models"][0]
+    await answers(run, store, port).ask(profile, "Review", {}, contract=Ok, cache="reviewer")
+    again = await answers(run, store, port).ask(profile, "Review", {}, contract=Ok, cache="reviewer")
+    assert again.usage == {"model_calls": 0, "tokens": 0, "prompt_tokens": 0, "completion_tokens": 0, "tokens_known": True}
+
+
+PROBE_SCHEMA = {"type": "object", "properties": {"probe": {"const": "vibeaudit"}, "ok": {"const": True}}, "required": ["probe", "ok"], "additionalProperties": False}
+PROBED = '{"probe":"vibeaudit","ok":true}'
+
+
+async def test_a_probe_answered_as_asked_verifies_the_models_capabilities_and_reports_its_cost(run, store):
+    primary = with_fallback(run)
+    primary["max_output_tokens"] = 3000
+    port = FakePort([reply(PROBED, tokens=15)])
+    result = await answers(run, store, port).probe(primary)
+    assert result == {
+        "id": "commander", "provider": primary["provider"], "model_id": primary["model_id"], "status": "verified", "available": True, "simulated": False,
+        "capabilities": {"connectivity": "verified", "json_object": "verified", "local_schema_validation": "verified",
+                         "tool_calling": "not_tested", "parallel_tool_calling": "not_tested", "native_json_schema": "not_tested"},
+        "usage": {"model_calls": 1, "tokens": 15, "prompt_tokens": 10, "completion_tokens": 5, "tokens_known": True},
+        "limitations": ["One successful probe does not establish security-review accuracy.", "Provider-native strict schema/tool calling were not tested.",
+                        "A local endpoint may itself forward data; operate it within a trusted egress boundary.", "No monetary cost claim; token accounting is provider reported."]}
+    [call] = port.calls
+    system, payload = asked(call["messages"])
+    assert "This is a harmless connectivity and JSON capability probe. Return {\"probe\":\"vibeaudit\",\"ok\":true}." in system
+    assert payload == {"request": "probe"}
+    assert call["schema"] == PROBE_SCHEMA
+    assert call["output_limit"] == 1024
+    assert run["usage"]["tokens"] == 15
+    assert run["reserved_tokens"] == 0
+
+
+async def test_a_probe_of_a_model_with_a_small_output_limit_keeps_that_limit(run, store):
+    profile = run["manifest"]["models"][0]
+    profile["max_output_tokens"] = 200
+    port = FakePort([reply(PROBED)])
+    await answers(run, store, port).probe(profile)
+    assert port.calls[0]["output_limit"] == 200
+
+
+async def test_a_refused_probe_fails_without_asking_the_fallback(run, store):
+    primary = with_fallback(run)
+    port = FakePort([refused(tokens=7)])
+    with pytest.raises(ProviderError) as error:
+        await answers(run, store, port).probe(primary)
+    assert error.value.code == "refusal"
+    assert error.value.usage == {"model_calls": 1, "tokens": 7, "prompt_tokens": 0, "completion_tokens": 0, "tokens_known": True}
+    assert [call["agent_id"] for call in port.calls] == ["commander"]
+    assert run["usage"]["tokens"] == 7
+    assert "limitations" not in run or run["limitations"] == []
+
+
+async def test_a_probe_answered_off_schema_is_asked_again_once_and_counts_both_attempts(run, store):
+    port = FakePort([reply('{"probe":"other","ok":true}', tokens=12), reply(PROBED, tokens=15)])
+    result = await answers(run, store, port).probe(run["manifest"]["models"][0])
+    assert result["status"] == "verified"
+    assert result["usage"]["model_calls"] == 2
+    assert result["usage"]["tokens"] == 27
+    assert "did not validate" in port.calls[1]["messages"][-1]["content"]
+
+
+async def test_a_probe_answered_off_schema_twice_fails_schema_validation(run, store):
+    port = FakePort([reply('{"probe":"vibeaudit"}', tokens=12), reply("not json", tokens=15)])
+    with pytest.raises(ProviderError) as error:
+        await answers(run, store, port).probe(run["manifest"]["models"][0])
+    assert error.value.code == "schema_validation"
+    assert run["usage"]["model_calls"] == 2
+    assert run["usage"]["tokens"] == 27
+    assert run["reserved_tokens"] == 0
+
+
+CONSOLE_POLICY = {"data_policy": {"source_code": "allowed"}, "allowed_model_origins": ["https://models.example"]}
+
+
+def console_probe(profile, port, **budget):
+    return ModelAnswers.for_probe(profile, {"max_seconds": 600, "max_requests": 30, "max_model_calls": 20, "max_tokens": 50000, **budget}, CONSOLE_POLICY, port)
+
+
+async def test_a_console_probe_without_a_run_sends_under_the_requests_policy_and_reports_its_cost(run):
+    profile = run["manifest"]["models"][0]
+    port = FakePort([reply(PROBED, tokens=15)])
+    result = await console_probe(profile, port).probe(profile)
+    assert result["status"] == "verified"
+    assert result["usage"] == {"model_calls": 1, "tokens": 15, "prompt_tokens": 10, "completion_tokens": 5, "tokens_known": True}
+    assert port.checked == [{"agent_id": profile["id"], "policy": CONSOLE_POLICY}]
+    [call] = port.calls
+    assert call["policy"] == CONSOLE_POLICY
+    assert call["output_limit"] == min(profile["max_output_tokens"], 1024)
+
+
+@pytest.mark.parametrize("seconds,sent", [(600, 30), (12, 12)])
+async def test_a_console_probe_waits_at_most_thirty_seconds_or_the_budgets_time(run, seconds, sent):
+    profile = {**run["manifest"]["models"][0], "timeout_seconds": 900}
+    port = FakePort([reply(PROBED)])
+    await console_probe(profile, port, max_seconds=seconds).probe(profile)
+    assert port.calls[0]["timeout"] == sent
+
+
+async def test_a_console_probe_the_token_budget_cannot_bound_is_refused_unsent(run):
+    profile = run["manifest"]["models"][0]
+    port = FakePort([reply(PROBED)])
+    with pytest.raises(PolicyError, match="^Insufficient token budget for bounded model request$"):
+        await console_probe(profile, port, max_tokens=3000).probe(profile)
+    assert port.calls == []
+
+
+async def test_a_console_probe_retry_past_the_call_budget_is_refused_unsent(run):
+    profile = run["manifest"]["models"][0]
+    port = FakePort([reply('{"probe":"other","ok":true}', tokens=12), reply(PROBED)])
+    with pytest.raises(PolicyError, match="^Model call budget exhausted$") as error:
+        await console_probe(profile, port, max_model_calls=1).probe(profile)
+    assert len(port.calls) == 1
+    # What the first attempt cost is still reported.
+    assert error.value.usage == {"model_calls": 1, "tokens": 12, "prompt_tokens": 10, "completion_tokens": 2, "tokens_known": True}
+
+
+async def test_a_probe_reserves_its_request_bytes_system_bytes_bounded_output_and_a_fixed_margin(run, store):
+    from vibe_audit.answers import PROBE, SYSTEM
+    profile = {**run["manifest"]["models"][0], "max_output_tokens": 3000}
+    port = FakePort([asyncio.Event()])
+    task = asyncio.create_task(answers(run, store, port).probe(profile))
+    while not port.calls:
+        await asyncio.sleep(0)
+    request = json.dumps({"instruction": PROBE, "payload": {"request": "probe"}, "response_schema": PROBE_SCHEMA}, ensure_ascii=False).encode()
+    assert run["reserved_tokens"] == len(request) + len(SYSTEM.encode()) + 1024 + 2048
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+async def test_a_cancelled_probe_charges_its_whole_reservation_as_estimated_usage(run, store):
+    port = FakePort([asyncio.Event()])
+    task = asyncio.create_task(answers(run, store, port).probe(run["manifest"]["models"][0]))
+    while not port.calls:
+        await asyncio.sleep(0)
+    held = run["reserved_tokens"]
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert run["usage"]["tokens"] == held
+    assert run["usage"]["tokens_estimated"] is True
+    assert run["reserved_tokens"] == 0
+
+
+async def test_a_probe_whose_usage_is_unknown_latches_the_run_and_keeps_its_reservation(run, store):
+    unknown = ProviderError("Model request failed (ConnectError); billed usage may be unknown", code="provider_request_failed", usage={"model_calls": 1, "tokens": 0, "tokens_known": False})
+    port = FakePort([unknown])
+    with pytest.raises(ProviderError) as error:
+        await answers(run, store, port).probe(run["manifest"]["models"][0])
+    assert error.value.usage["tokens_known"] is False
+    assert run["usage_unknown"] is True
+    assert run["usage"]["tokens_known"] is False
+    assert run["reserved_tokens"] > 0
+    assert store.get(run["id"])["usage_unknown"] is True
+
+
+async def test_a_console_probe_whose_reservation_exactly_fills_its_budget_is_sent(run):
+    from vibe_audit.answers import PROBE, SYSTEM
+    profile = run["manifest"]["models"][0]
+    request = json.dumps({"instruction": PROBE, "payload": {"request": "probe"}, "response_schema": PROBE_SCHEMA}, ensure_ascii=False).encode()
+    exact = len(request) + len(SYSTEM.encode()) + min(profile["max_output_tokens"], 1024) + 2048
+    port = FakePort([reply(PROBED, tokens=1)])
+    result = await console_probe(profile, port, max_tokens=exact).probe(profile)
+    assert result["status"] == "verified"
+    with pytest.raises(PolicyError, match="^Insufficient token budget for bounded model request$"):
+        await console_probe(profile, FakePort([reply(PROBED)]), max_tokens=exact - 1).probe(profile)
+
+
+async def test_a_failures_usage_without_a_prompt_and_completion_split_adds_none_to_them(run, store):
+    primary = with_fallback(run)
+    port = FakePort([refused(tokens=7), reply(tokens=15)])
+    answer = await answers(run, store, port).ask(primary, "Review", {}, contract=Ok)
+    assert answer.usage == {"model_calls": 2, "tokens": 22, "prompt_tokens": 10, "completion_tokens": 5, "tokens_known": True}
