@@ -12,9 +12,9 @@ from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 import pytest
 from jsonschema import validate
 
-from fakes import FakePort, answer_with, asked
+from fakes import FakePort, answer_with, asked, reservations_at_stage_ends
 from vibe_audit.domain import RunInput
-from vibe_audit.service import Engine
+from vibe_audit.service import STAGES, Engine
 from vibe_audit.store import Store
 
 
@@ -72,6 +72,7 @@ async def test_full_pipeline_with_synthetic_models_and_real_isolated_http(tmp_pa
           'oracle':{'kind':'deny_sensitive','forbidden_text':['LOCAL_PIPELINE_CANARY'],'allowed_statuses':[403],'required_observations':['http_response']}}
     store=Store(tmp_path/'data',url)
     engine=Engine(store,url,model_port=FakePort(answer=contract_answer))
+    ended=reservations_at_stage_ends(store)
     try:
         run=engine.create(RunInput(name='SYNTHETIC MODEL CONTRACT — REAL DOCKER HTTP',mode='live',models=profiles,
             source_path=str(source),target_url=f'http://127.0.0.1:{server.server_port}',allowed_target_ips=['127.0.0.1'],
@@ -89,6 +90,9 @@ async def test_full_pipeline_with_synthetic_models_and_real_isolated_http(tmp_pa
         assert sent==['/fixture','/private']
         assert len(result['gate_receipts'])==3
         assert result['usage']['model_calls']==len(calls)
+        # Every answer settled its own reservation: none is held at the end of any stage.
+        assert [(stage,held) for _,stage,held in ended]==[(stage,0) for stage in STAGES]
+        assert result['reserved_tokens']==0
         assert result['usage']['requests']==2
         assert store.trace(run['id'])['links']
         if static_tools:
