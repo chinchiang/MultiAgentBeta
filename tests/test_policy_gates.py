@@ -283,10 +283,12 @@ def test_authorize_in_a_live_run_binds_requests_to_the_sealed_case(run):
     record["case_approval"] = {"receipt": record["gate_receipts"]["cases"]}
 
     policy.authorize(record, case, idle, identity="alice")
-    policy.authorize(record, case, idle, method="get", path="/orders/mine", identity="alice")
-    policy.authorize(record, case, idle, method="POST", path="/reset", identity="alice")
+    policy.authorize(record, case, idle, method="get", path="/orders/private", identity="alice")
     policy.authorize(record, case, idle, identity="bob")
-    assert record["usage"]["requests"] == 4
+    assert record["usage"]["requests"] == 3
+    # No executor sends a case's steps or reset fields, so listing a request there permits nothing.
+    refusal("Request is not a step in the sealed test case", method="GET", path="/orders/mine", identity="alice")
+    refusal("Request is not a step in the sealed test case", method="POST", path="/reset", identity="alice")
     refusal("Request method and exact path were not authorized in run scope", method="GET", path="/orders/private/1", identity="alice")
     refusal("Request method and exact path were not authorized in run scope", method="DELETE", path="/orders/private", identity="alice")
     refusal("Request is not a step in the sealed test case", method="GET", path="/admin", identity="alice")
@@ -414,19 +416,16 @@ def test_authorize_reads_each_step_and_identity_by_its_exact_name(run, monkeypat
     record.update(status="running", stage="blackbox")
     record["usage"]["requests"] = 0
     idle = threading.Event()
-    # The case's own method, its preconditions (a GET when they name no method), the steps of every phase and its
-    # allowed requests are read by name and compared case-insensitively; each path below is reachable through one of them only.
+    # The case's own method, its preconditions (a GET when they name no method) and its allowed requests are read by
+    # name; each path below is reachable through one of them only.
     policy.authorize(record, case, idle, identity="alice")
     policy.authorize(record, case, idle, method="POST", path="/reset", identity="dave")
     policy.authorize(record, case, idle, method="GET", path="/control-only", identity="alice")
-    policy.authorize(record, case, idle, method="GET", path="/orders/mine", identity="alice")
-    policy.authorize(record, case, idle, method="GET", path="/setup", identity="alice")
-    policy.authorize(record, case, idle, method="DELETE", path="/orders/private", identity="alice")
-    policy.authorize(record, case, idle, method="GET", path="/session", identity="alice")
-    policy.authorize(record, case, idle, method="GET", path="/cleanup", identity="alice")
     policy.authorize(record, case, idle, method="GET", path="/allowed-only", identity="frank")
-    assert record["usage"]["requests"] == 9
-    for method, path in (("GET", "/admin"), ("GET", "/orders/private")):
+    assert record["usage"]["requests"] == 4
+    # The steps, setup, reset, session_reset and cleanup fields are sent by no executor, so they permit nothing.
+    for method, path in (("GET", "/admin"), ("GET", "/orders/private"), ("GET", "/orders/mine"), ("GET", "/setup"),
+                         ("DELETE", "/orders/private"), ("GET", "/session"), ("GET", "/cleanup")):
         with pytest.raises(PolicyError, match="^Request is not a step in the sealed test case$"):
             policy.authorize(record, case, idle, method=method, path=path, identity="alice")
     with pytest.raises(PolicyError, match="^Identity is outside the sealed case scope$"):

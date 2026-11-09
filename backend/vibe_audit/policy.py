@@ -195,12 +195,8 @@ class Policy:
                 raise PolicyError("Request method and exact path were not authorized in run scope")
             permitted={(case.get("method","GET").upper(),case.get("path"))}
             permitted|={(p.get("method","GET").upper(),p.get("path")) for p in case.get("preconditions",[]) if isinstance(p,dict)}
-            for phase in ("steps","setup","reset","session_reset","cleanup"):
-                steps=case.get(phase,[])
-                if isinstance(steps,dict):
-                    steps=[steps]
-                if isinstance(steps,list):
-                    permitted|={(s.get("method","GET").upper(),s.get("path")) for s in steps if isinstance(s,dict) and s.get("path")}
+            # A fixture case's lifecycle steps are the allowed_requests the engine sealed into it. An operator case's own
+            # steps, setup, reset or cleanup fields are sent by no executor, so they permit nothing.
             permitted|={(s.get("method","GET").upper(),s.get("path")) for s in case.get("allowed_requests",[]) if isinstance(s,dict)}
             if requested not in permitted:
                 raise PolicyError("Request is not a step in the sealed test case")
