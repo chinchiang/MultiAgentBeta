@@ -119,13 +119,42 @@ async def test_a_changed_question_is_asked_again(run, store):
 
 
 async def test_an_answer_kept_before_stage_answers_existed_is_reused_by_a_resumed_stage(run, store):
-    earlier = FakePort([answer_with({"ids": ["F-1"]})])
-    models = ModelAnswers(run, store=store, port=earlier, lock=asyncio.Lock(), check_active=lambda: None)
-    await models.ask(run["manifest"]["models"][0], "Model", {"source": "x"}, Findings, cache="threat_modeler")
+    # The record an earlier engine wrote: the model's answer and the fallback that gave it, bound to the question.
+    run["model_outputs"] = {"threat_modeler": {"binding": digest({"profile": "commander", "instruction": "Model", "payload": {"source": "x"}}),
+                                               "data": {"ids": ["F-1"]}, "answered_by": ["local"]}}
     port = FakePort([])
     async with stage(run, store, port).answer("threat_modeler", "Model", {"source": "x"}, Findings) as answer:
-        assert answer.data == {"ids": ["F-1"]}
+        assert (answer.data, answer.answered_by) == ({"ids": ["F-1"]}, "local")
     assert port.calls == []
+
+
+async def test_a_reused_answer_costs_nothing(run, store):
+    port = FakePort([answer_with({"ids": ["F-1"]}, tokens=15)])
+    async with stage(run, store, port).answer("threat_modeler", "Model", {}, Findings):
+        pass
+    usage = dict(run["usage"])
+    async with stage(run, store, port).answer("threat_modeler", "Model", {}, Findings):
+        pass
+    assert run["usage"] == usage
+    assert run.get("reserved_tokens", 0) == 0
+
+
+async def test_a_reused_answer_is_the_stages_own_copy(run, store):
+    port = FakePort([answer_with({"ids": ["F-1"]})])
+    async with stage(run, store, port).answer("threat_modeler", "Model", {}, Findings):
+        pass
+    async with stage(run, store, port).answer("threat_modeler", "Model", {}, Findings) as answer:
+        answer.data["ids"].append("rewritten")
+    async with stage(run, store, port).answer("threat_modeler", "Model", {}, Findings) as answer:
+        assert answer.data == {"ids": ["F-1"]}
+
+
+async def test_an_answer_that_breaks_the_contract_every_time_keeps_nothing(run, store):
+    port = FakePort([reply('{"ids":"not a list"}'), reply('{"ids":"not a list"}')])
+    with pytest.raises(ProviderError):
+        async with stage(run, store, port).answer("threat_modeler", "Model", {}, Findings):
+            raise AssertionError("A stage must not check an answer that broke its contract")
+    assert "threat_modeler" not in run.get("model_outputs", {})
 
 
 async def test_a_refused_answer_is_given_by_the_answering_agents_fallback_and_says_so_when_reused(run, store):

@@ -338,10 +338,6 @@ class Engine:
             parent["events"].append(dict(seq=len(parent["events"])+1,at=now(),stage=parent["stage"],message=f"Linked retest {run['id']} recorded its outcome for {len(changed)} finding(s)",level="info",agent_id=None))
             self.store.save(parent)
 
-    async def model(self,run,profile,instruction,payload,response_contract=None,cache=None):
-        """One model answer for a stage: its data, who answered when the operator's fallback did, and what it cost."""
-        return await self.answers(run).ask(profile,instruction,payload,response_contract,cache=cache)
-
     def answers(self,run):
         """The paid model answers of this run's armed attempt."""
         from .answers import ModelAnswers
@@ -360,9 +356,6 @@ class Engine:
         """Who answers each role of this run's stages, and which of their answers a resumed stage reuses."""
         from .stage_answers import StageAnswers
         return StageAnswers(run,self.answers(run))
-
-    def profile(self,run,role):
-        return next((p for p in run["manifest"]["models"] if p["role"]==role),next(p for p in run["manifest"]["models"] if p["role"]=="commander"))
 
     def runtime(self,run):
         from .worker_runtime import WorkerRuntime,load_config

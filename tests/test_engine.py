@@ -16,6 +16,7 @@ from vibe_audit.catalog import default_catalog_root
 from vibe_audit.domain import RunInput, digest
 from vibe_audit.policy import PolicyError, sealed
 from vibe_audit.service import Engine, report_markdown, report_sarif
+from vibe_audit.stage_answers import Seat
 from vibe_audit.store import Store
 
 
@@ -316,7 +317,7 @@ async def test_a_budget_refusal_reaches_the_run_as_itself(engine):
     # The reservation refuses before anything is sent, so the port has nothing to answer.
     engine.model_port=FakePort([])
     with pytest.raises(PolicyError,match="Insufficient token budget"):
-        await engine.model(run,profile,"x",{"y":1})
+        await engine.answers(run).ask(profile,"x",{"y":1})
 
 
 async def test_provided_cases_leave_uncovered_threats_as_gaps(engine):
@@ -442,10 +443,10 @@ async def test_model_call_returns_its_reservation_once_usage_is_counted(engine,o
     engine.model_port=FakePort(answer=answer)
     profile=run["manifest"]["models"][0]
     if outcome=="success":
-        assert (await engine.model(run,profile,"Return JSON.",{})).data=={"ok":True}
+        assert (await engine.answers(run).ask(profile,"Return JSON.",{})).data=={"ok":True}
     else:
         with pytest.raises(ProviderError):
-            await engine.model(run,profile,"Return JSON.",{})
+            await engine.answers(run).ask(profile,"Return JSON.",{})
     stored=engine.store.get(run["id"])
     if outcome=="unknown_failure":
         # The provider may have billed the call, so its reservation stays and the latch stops further calls.
@@ -485,7 +486,7 @@ async def test_a_restart_while_an_answer_is_in_flight_latches_usage_unknown(engi
     run["status"]="running"
     arm_attempt(engine,run)
     engine.model_port=FakePort([asyncio.Event()])
-    task=asyncio.create_task(engine.model(run,run["manifest"]["models"][0],"Return JSON.",{}))
+    task=asyncio.create_task(engine.answers(run).ask(run["manifest"]["models"][0],"Return JSON.",{}))
     while not engine.model_port.calls:
         await asyncio.sleep(0)
     reader=Store(engine.store.root)
@@ -1035,7 +1036,7 @@ async def test_unknown_provider_usage_persists_and_blocks_resume_after_restart(e
     engine.model_port=FakePort([providers.ProviderError("Synthetic lost response",usage={
         "model_calls":1,"tokens":7,"tokens_known":False})])
     with pytest.raises(providers.ProviderError):
-        await engine.model(run,run["manifest"]["models"][0],"Synthetic metering exercise",{})
+        await engine.answers(run).ask(run["manifest"]["models"][0],"Synthetic metering exercise",{})
     reader=Store(engine.store.root)
     try:
         restarted=Engine(reader)
@@ -1901,6 +1902,12 @@ async def test_declining_model_cases_sends_nothing_and_can_be_revisited(engine):
     assert declined["status"]=="cancelled" and "declined" in declined["events"][-1]["message"]
 
 
+async def kept_answer(engine,run,profile,payload):
+    """The profile's answer as a stage keeps it for a resume: the challenger's is one a resumed stage reuses."""
+    async with engine.stage_answers(run).answer(Seat("challenger",profile),"x",payload) as answer:
+        return answer
+
+
 async def test_a_resumed_stage_reuses_the_model_answer_it_already_paid_for(engine):
     run=await finished_demo(engine)
     engine.cancel_flags[run["id"]]=asyncio.Event();engine.locks[run["id"]]=asyncio.Lock()
@@ -1910,10 +1917,10 @@ async def test_a_resumed_stage_reuses_the_model_answer_it_already_paid_for(engin
         calls.append(asked(messages)[1])
         return answer_with({"value":len(calls)},tokens=1)
     engine.model_port=FakePort(answer=answer)
-    assert (await engine.model(run,profile,"x",{"q":1},cache="step")).data=={"value":1}
-    assert (await engine.model(run,profile,"x",{"q":1},cache="step")).data=={"value":1} and len(calls)==1
+    assert (await kept_answer(engine,run,profile,{"q":1})).data=={"value":1}
+    assert (await kept_answer(engine,run,profile,{"q":1})).data=={"value":1} and len(calls)==1
     # A different question is a new call.
-    assert (await engine.model(run,profile,"x",{"q":2},cache="step")).data=={"value":2}
+    assert (await kept_answer(engine,run,profile,{"q":2})).data=={"value":2}
 
 
 def test_markdown_defangs_bare_urls_and_shows_challenges():
@@ -1936,7 +1943,7 @@ async def test_a_cancel_between_attempts_stays_a_cancel_and_charges_what_was_res
         return reply("not json")
     engine.model_port=FakePort(answer=answer)
     with pytest.raises(asyncio.CancelledError):
-        await engine.model(run,profile,"x",{"y":1})
+        await engine.answers(run).ask(profile,"x",{"y":1})
     assert run["usage"]["tokens"]>before and run["usage"]["tokens_estimated"] is True and run.get("reserved_tokens",0)==0
 
 
@@ -2034,7 +2041,7 @@ async def model_with_fallback(engine,failure):
 async def test_the_operators_fallback_answers_a_refusal_or_truncation_and_says_so(engine,code,what):
     run,primary,calls=await model_with_fallback(engine,{"code":code})
     before=dict(run["usage"])
-    answer=await engine.model(run,primary,"x",{"q":1},cache="step")
+    answer=await kept_answer(engine,run,primary,{"q":1})
     assert answer.data=={"by":"local"}
     assert calls==["reviewer-a","local"] and answer.answered_by=="local"
     # Both calls are counted against the run's budget: the refused one and the fallback's.
@@ -2043,7 +2050,7 @@ async def test_the_operators_fallback_answers_a_refusal_or_truncation_and_says_s
     assert run["limitations"].count(note)==1
     assert [(e["message"],e["agent_id"]) for e in run["events"][-2:]]==[(f"reviewer-a {what}; asking its fallback local (local-model)","reviewer-a"),(note,"local")]
     # A resumed stage reuses the paid answer and still knows who gave it.
-    again=await engine.model(run,primary,"x",{"q":1},cache="step")
+    again=await kept_answer(engine,run,primary,{"q":1})
     assert again.data=={"by":"local"}
     assert again.answered_by=="local" and len(calls)==2
 
@@ -2054,7 +2061,7 @@ async def test_other_failures_and_a_failing_fallback_still_stop_the_call(engine,
     run,primary,calls=await model_with_fallback(engine,failure)
     before=run["usage"]["tokens"]
     with pytest.raises(ProviderError) as err:
-        await engine.model(run,primary,"x",{"q":1})
+        await engine.answers(run).ask(primary,"x",{"q":1})
     assert err.value.code==failure["code"]
     assert calls==(["reviewer-a","local"] if failure.get("fallback") else ["reviewer-a"])
     # The error says whose failure it was; each call's usage is counted once.
@@ -2065,7 +2072,7 @@ async def test_other_failures_and_a_failing_fallback_still_stop_the_call(engine,
     # An Agent nobody stands in for keeps its refusal.
     other=next(p for p in run["manifest"]["models"] if p["id"]=="reviewer-b")
     with pytest.raises(ProviderError):
-        await engine.model(run,other,"x",{"q":1})
+        await engine.answers(run).ask(other,"x",{"q":1})
     assert calls[-1]=="reviewer-b"
 
 
