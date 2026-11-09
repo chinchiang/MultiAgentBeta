@@ -1488,6 +1488,26 @@ async def test_model_cleanup_is_replaced_by_the_engine_and_grants_no_request(eng
     assert run["cases"][0]["cleanup"]=={"protocol":None,"required":True}
 
 
+@pytest.mark.parametrize("phase",["steps","setup","reset","session_reset","cleanup"])
+async def test_an_operator_cases_extra_step_fields_grant_no_request(engine,phase):
+    # No executor sends an operator case's steps, setup, reset, session_reset or a cleanup with a method and path:
+    # the case's own request and its controls are what is sent. Listing one must not widen what authorize() permits.
+    wipe={"method":"POST","path":"/admin/wipe"}
+    run=await live_post_case(engine,adapter="http",provenance="operator")
+    run["manifest"]["allowed_requests"].append(wipe)
+    run["manifest_hash"]=digest(run["manifest"])
+    case=run["cases"][0]
+    case[phase]=wipe if phase=="cleanup" else [wipe]
+    case["hash"]=sealed(case)
+    approve(run)
+    # The gate passes the case and issues the capability, as at the end of case design.
+    engine.policy.case_gate(run)
+    with pytest.raises(PolicyError,match="not a step in the sealed test case"):
+        engine.policy.authorize(run,case,engine.cancel_flags[run["id"]],method="POST",path="/admin/wipe")
+    # The case's own request is still authorized.
+    engine.policy.authorize(run,case,engine.cancel_flags[run["id"]],method="POST",path="/orders/private")
+
+
 async def test_model_cases_wait_for_operator_approval_of_the_exact_set(engine,monkeypatch):
     from vibe_audit.service import CaseApprovalRequired
     run=await live_post_case(engine,adapter="http",provenance="model")
