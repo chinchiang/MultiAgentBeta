@@ -149,7 +149,7 @@ MultiAgentBeta/
 ├── benchmarks/                    # 比較評估設計、synthetic-v1、examples/、results-local/、results-synthetic/
 ├── docs/                          # ARCHITECTURE、LINUX_SETUP、DOCKER_INTEGRATION_TESTING、VALIDATION、DELIVERY、SOURCES、
 │                                  #   VIBESEC_ADVISORIES、threat-model.yaml、run-input.schema.json、驗證收據、截圖、history/
-├── scripts/                       # setup／start-local、verify、contract-smoke、provision-runtime／offline-db、package-release、hash-lock、
+├── scripts/                       # setup／start-local、dev-env、verify、contract-smoke、provision-runtime／offline-db、package-release、hash-lock、
 │                                  #   redact-receipts、summarize-validation、refresh-catalog、render-sample-report、mutation-test、dependency-drift
 ├── .github/workflows/ci.yml       # backend（Python 3.12／3.13：ruff、mypy、pytest ＋ PostgreSQL、契約 smoke）、frontend（typecheck、ESLint、vitest、check:i18n、check:messages、建置一致性、清單）與 Windows 全套測試
 ├── .github/workflows/integration.yml  # 以 deploy/ 建置的映像跑 Docker worker、掃描器、工具、fixture 與完整 pipeline 整合測試
@@ -354,7 +354,7 @@ MultiAgentBeta/
 ├── benchmarks/                    # comparison design, synthetic-v1, examples/, results-local/, results-synthetic/
 ├── docs/                          # ARCHITECTURE, LINUX_SETUP, DOCKER_INTEGRATION_TESTING, VALIDATION, DELIVERY, SOURCES,
 │                                  #   VIBESEC_ADVISORIES, threat-model.yaml, run-input.schema.json, receipts, screenshots, history/
-├── scripts/                       # setup/start-local, verify, contract-smoke, provision-runtime/offline-db, package-release, hash-lock,
+├── scripts/                       # setup/start-local, dev-env, verify, contract-smoke, provision-runtime/offline-db, package-release, hash-lock,
 │                                  #   redact-receipts, summarize-validation, refresh-catalog, render-sample-report, mutation-test, dependency-drift
 ├── .github/workflows/ci.yml       # backend (Python 3.12/3.13: ruff, mypy, pytest + PostgreSQL, contract smoke), frontend (typecheck, ESLint, vitest, check:i18n, check:messages, build parity, manifest) and the full test suite on Windows
 ├── .github/workflows/integration.yml  # Docker worker, scanner, tool, fixture and full-pipeline integration tests on images built from deploy/
