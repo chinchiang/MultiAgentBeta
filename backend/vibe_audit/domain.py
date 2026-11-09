@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-from .adapters import RESERVED_ENV, format_origin, model_header_list_error, parse_origin, target_ip_refused
+from .adapters import RESERVED_ENV, format_origin, model_header_list_error, parse_origin, request_path_problem, target_ip_refused
 from .contracts import OperatorCase, SecurityRequirement
 
 
@@ -187,7 +187,8 @@ class RunInput(StrictModel):
                 if primary.role == "reviewer" and fallback.family.casefold() in {p.family.casefold() for p in primaries.values() if p.role == "reviewer" and p.id != agent_id}:
                     raise ValueError("A reviewer's fallback must be a model family none of the other reviewers use")
         for request in self.allowed_requests:
-            if set(request)-{"method","path","model_body","model_headers"} or not isinstance(request.get("model_body",False),bool) or not isinstance(request.get("path"),str) or not request["path"].startswith("/") or request["path"].startswith("//") or any(c in request["path"] for c in "\r\n\\"):
+            # The path is held to the transport's own rule: a scope entry no request could ever be sent to is refused here.
+            if set(request)-{"method","path","model_body","model_headers"} or not isinstance(request.get("model_body",False),bool) or request_path_problem(request.get("path")):
                 raise ValueError("Scope requires an exact relative HTTP path")
             if request.get("method") not in {"GET","POST","PUT","PATCH","DELETE","HEAD","OPTIONS"}:
                 raise ValueError("Scope requires an explicit HTTP method")
