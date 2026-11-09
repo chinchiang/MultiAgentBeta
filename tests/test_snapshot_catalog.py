@@ -11,7 +11,7 @@ import pytest
 from vibe_audit import snapshot
 from vibe_audit.catalog import CatalogError, CatalogRegistry, default_catalog_root, load_catalogs
 from vibe_audit.messages import zh
-from vibe_audit.snapshot import _linklike, _routes, _secret_path, redact_text, snapshot_source
+from vibe_audit.snapshot import _is_directory, _linklike, _routes, _secret_path, redact_text, snapshot_source
 
 LIMITATIONS = ["Snapshot is bounded; route extraction and secret redaction are heuristic, not exhaustive. Repository code was not executed."]
 
@@ -64,6 +64,32 @@ def test_snapshot_refusals_name_their_cause(tmp_path):
         # Windows refuses an over-long path earlier, as a missing root.
         with pytest.raises(ValueError, match="^Source directory is not accessible$"):
             snapshot_source("x" * 5000)
+
+
+@pytest.mark.skipif(os.name != "posix" or os.geteuid() == 0, reason="needs POSIX permissions that bind the user running the tests")
+def test_a_root_that_cannot_be_examined_is_inaccessible_not_missing(tmp_path):
+    (tmp_path / "locked" / "src").mkdir(parents=True)
+    (tmp_path / "locked").chmod(0)
+    try:
+        # The directory exists; the user just may not look inside its parent.
+        with pytest.raises(ValueError, match="^Source directory is not accessible$"):
+            snapshot_source(str(tmp_path / "locked" / "src"))
+    finally:
+        (tmp_path / "locked").chmod(0o700)
+
+
+def test_windows_errors_that_mean_nothing_is_there_read_as_missing_and_others_raise():
+    def failing(winerror):
+        error = OSError(22, "Synthetic stat failure")
+        error.winerror = winerror
+        def stat():
+            raise error
+        return types.SimpleNamespace(stat=stat)
+    # ERROR_INVALID_NAME: what Windows answers for an over-long or malformed path.
+    assert _is_directory(failing(123)) is False
+    # ERROR_ACCESS_DENIED: the path is there but cannot be examined.
+    with pytest.raises(OSError):
+        _is_directory(failing(5))
 
 
 def test_gap_list_is_bounded_with_one_closing_note(tmp_path, monkeypatch):
