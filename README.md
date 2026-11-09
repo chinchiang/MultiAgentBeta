@@ -37,7 +37,7 @@ Windows 原生不執行 live 隔離掃描。真實工作流請在 Linux 或 WSL2
 
 ## 系統架構與流程 (Architecture Overview)
 
-下圖依程式實際行為繪製。操作者透過本機控制台呼叫 FastAPI；每個評估都在 `service.py` 的 LangGraph 圖中依序走過七個階段，每個階段結束時由程式閘門判定能否繼續。模型回答只經 `answers.py` 取得，由它經 `providers.py` 送出；黑箱請求只能經獨立 supervisor 送往目標；run、job、lease 與證據都寫入 `store.py`。實線是控制與資料流程，虛線是模型呼叫、事件回報與副作用觀測。控制／資料平面與信任邊界見 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)，API 與模組契約見 [IMPLEMENTATION.md](IMPLEMENTATION.md)。
+下圖依程式實際行為繪製。操作者透過本機控制台呼叫 FastAPI；每個評估都在 `service.py` 的 LangGraph 圖中依序走過七個階段，每個階段結束時由程式閘門判定能否繼續。各階段經 `stage_answers.py` 決定角色由誰回答、答案留不留，模型回答只經 `answers.py` 取得，由它經 `providers.py` 送出；黑箱請求只能經獨立 supervisor 送往目標；run、job、lease 與證據都寫入 `store.py`。實線是控制與資料流程，虛線是模型呼叫、事件回報與副作用觀測。控制／資料平面與信任邊界見 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)，API 與模組契約見 [IMPLEMENTATION.md](IMPLEMENTATION.md)。
 
 ```mermaid
 flowchart TB
@@ -93,13 +93,13 @@ flowchart TB
 | 階段 | 主要模組 | 做什麼、靠什麼把關 |
 |---|---|---|
 | ① intake／preflight | `api.py`、`policy.py`、`staging.py`、`snapshot.py`、`answers.py`、`catalog.py` | 建立不可變 manifest；複製 raw 私密 staging 並產生脫敏快照；探測模型端點；記錄標準目錄版本；檢查憑證綁定與目標 IP |
-| ② whitebox | `answers.py`、`snapshot.py`、`sandbox.py`、`worker_runtime.py` | 3 位 reviewer 並行審同一份脫敏快照並各自封存；Semgrep／Gitleaks／OSV 同時在隔離 worker 掃描 raw staging；`policy.whitebox_gate` |
-| ③ adjudication | `service.py`、`answers.py` | 保留所有主張的聯集、核對原始碼引用、至多 1 輪 challenger；不以多數票決定 |
-| ④ threat_model | `service.py`、`answers.py`、`policy.py`、`catalog.py` | 建立資產、信任邊界、資料流、威脅與 Requirement；`policy.threat_gate` 比對標準 ID 與版本 |
-| ⑤ case_design | `answers.py`、`contracts.py`、`adapters.py`、`fixture_protocol.py`、`policy.py` | 操作者自填或模型設計的固定案例；header 名稱正規化；`policy.case_gate` 檢查追溯、oracle、範圍與身分 |
+| ② whitebox | `stage_answers.py`、`answers.py`、`snapshot.py`、`sandbox.py`、`worker_runtime.py` | 3 位 reviewer 並行審同一份脫敏快照並各自封存；Semgrep／Gitleaks／OSV 同時在隔離 worker 掃描 raw staging；`policy.whitebox_gate` |
+| ③ adjudication | `service.py`、`stage_answers.py`、`answers.py` | 保留所有主張的聯集、核對原始碼引用、至多 1 輪 challenger；不以多數票決定 |
+| ④ threat_model | `service.py`、`stage_answers.py`、`answers.py`、`policy.py`、`catalog.py` | 建立資產、信任邊界、資料流、威脅與 Requirement；`policy.threat_gate` 比對標準 ID 與版本 |
+| ⑤ case_design | `stage_answers.py`、`answers.py`、`contracts.py`、`adapters.py`、`fixture_protocol.py`、`policy.py` | 操作者自填或模型設計的固定案例；header 名稱正規化；`policy.case_gate` 檢查追溯、oracle、範圍與身分 |
 | 核准 | `api.py`（approve-cases） | live 且有模型設計案例時停在「待核准案例」；操作者核准這組封存案例後才送出第一個請求 |
 | ⑥ blackbox | `policy.py`、`worker_runtime.py`、`lease.py`、`worker_entry.py`、`tool_runners.py`、`adapters.py`、`fixture_protocol.py`、`effect_collector.py` | 每個請求都經 supervisor 檢查 lease、方法／路徑、身分、IP 與預算才送往目標；結果分為 pass／fail／inconclusive／blocked／execution_error／outcome_unknown |
-| ⑦ report | `service.py`、`answers.py`、`store.py`、`traceability.py` | 驗證證據雜湊；選用 reporter 只能重新排序既有發現；API 匯出 JSON、Markdown（中／英）與 SARIF |
+| ⑦ report | `service.py`、`stage_answers.py`、`answers.py`、`store.py`、`traceability.py` | 驗證證據雜湊；選用 reporter 只能重新排序既有發現；API 匯出 JSON、Markdown（中／英）與 SARIF |
 
 ### 整體目錄結構
 
@@ -110,7 +110,7 @@ MultiAgentBeta/
 │   ├── api.py                     #   FastAPI：session／CSRF／Host-Origin、runs、approve-cases、SSE、證據、報告、靜態介面
 │   ├── workspace_api.py           #   專案、模型範本、標準目錄、追溯、複測、裁決、清理確認
 │   ├── service.py                 #   LangGraph 七個階段、閘門呼叫、Markdown／SARIF 報告
-│   ├── answers.py                 #   一次付費的模型回答：保留額度、計量、驗證與重試、備援代答、續跑快取、模型探測
+│   ├── answers.py                 #   一次付費的模型回答：保留額度、計量、驗證與重試、備援代答、模型探測
 │   ├── stage_answers.py           #   階段答案：每個角色由誰回答，答案通過階段檢查才保留、續跑沿用
 │   ├── providers.py               #   送出一次的 LiteLLM port、憑證 origin 綁定、無隱性 fallback
 │   ├── messages.py                #   錯誤訊息的正體中文對照（API 的 detail_zh、run 的 error_zh）
@@ -159,7 +159,7 @@ MultiAgentBeta/
 ├── .claude/                       # 雲端 session 的 SessionStart hook（不進發佈檔）
 ├── CLAUDE.md                      # 開發指引（不進發佈檔）
 ├── IMPLEMENTATION.md              # API 與模組契約
-├── GLOSSARY.md                    # 專案用語（模型回答、保留額度、代答）
+├── GLOSSARY.md                    # 專案用語（模型回答、階段答案、保留額度、代答）
 ├── README.md · LICENSE · NOTICE
 ├── pyproject.toml · requirements.lock.txt · requirements.mutation.lock.txt   # 固定版本並檢查雜湊的相依套件；第二份只供突變測試
 └── source-manifest.sha256         # 每個被追蹤檔案的雜湊清單（scripts/package-release.py）
@@ -242,7 +242,7 @@ Tool integrations use bounded, fixed cases. This version has no arbitrary site e
 
 ## Architecture Overview
 
-The diagram follows what the code actually does. The operator calls FastAPI from the local console; every assessment walks the seven stages of the LangGraph graph in `service.py` in order, and a code gate decides at the end of each stage whether it may continue. Model answers come only through `answers.py`, which sends through `providers.py`; black-box requests reach the target only through the independent supervisor; runs, jobs, leases and evidence are written to `store.py`. Solid lines are control and data flow; dashed lines are model calls, event reporting and side-effect observation. Control/data planes and trust boundaries are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md); API and module contracts are in [IMPLEMENTATION.md](IMPLEMENTATION.md).
+The diagram follows what the code actually does. The operator calls FastAPI from the local console; every assessment walks the seven stages of the LangGraph graph in `service.py` in order, and a code gate decides at the end of each stage whether it may continue. Stages go through `stage_answers.py`, which decides who answers a role and whether the answer is kept; model answers come only through `answers.py`, which sends through `providers.py`; black-box requests reach the target only through the independent supervisor; runs, jobs, leases and evidence are written to `store.py`. Solid lines are control and data flow; dashed lines are model calls, event reporting and side-effect observation. Control/data planes and trust boundaries are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md); API and module contracts are in [IMPLEMENTATION.md](IMPLEMENTATION.md).
 
 ```mermaid
 flowchart TB
@@ -298,13 +298,13 @@ flowchart TB
 | Stage | Main modules | What it does and what gates it |
 |---|---|---|
 | ① intake / preflight | `api.py`, `policy.py`, `staging.py`, `snapshot.py`, `answers.py`, `catalog.py` | Creates the immutable manifest; copies the raw private staging and builds the redacted snapshot; probes model endpoints; records the standards catalog version; checks credential bindings and target IPs |
-| ② whitebox | `answers.py`, `snapshot.py`, `sandbox.py`, `worker_runtime.py` | 3 reviewers read the same redacted snapshot in parallel and each review is sealed; Semgrep / Gitleaks / OSV scan the raw staging in isolated workers at the same time; `policy.whitebox_gate` |
-| ③ adjudication | `service.py`, `answers.py` | Keeps the union of all claims, checks source citations, at most 1 challenger round; no majority vote |
-| ④ threat_model | `service.py`, `answers.py`, `policy.py`, `catalog.py` | Builds assets, trust boundaries, data flows, threats and Requirements; `policy.threat_gate` checks standard IDs and versions |
-| ⑤ case_design | `answers.py`, `contracts.py`, `adapters.py`, `fixture_protocol.py`, `policy.py` | Fixed cases written by the operator or designed by a model; header names are canonicalized; `policy.case_gate` checks traceability, oracles, scope and identities |
+| ② whitebox | `stage_answers.py`, `answers.py`, `snapshot.py`, `sandbox.py`, `worker_runtime.py` | 3 reviewers read the same redacted snapshot in parallel and each review is sealed; Semgrep / Gitleaks / OSV scan the raw staging in isolated workers at the same time; `policy.whitebox_gate` |
+| ③ adjudication | `service.py`, `stage_answers.py`, `answers.py` | Keeps the union of all claims, checks source citations, at most 1 challenger round; no majority vote |
+| ④ threat_model | `service.py`, `stage_answers.py`, `answers.py`, `policy.py`, `catalog.py` | Builds assets, trust boundaries, data flows, threats and Requirements; `policy.threat_gate` checks standard IDs and versions |
+| ⑤ case_design | `stage_answers.py`, `answers.py`, `contracts.py`, `adapters.py`, `fixture_protocol.py`, `policy.py` | Fixed cases written by the operator or designed by a model; header names are canonicalized; `policy.case_gate` checks traceability, oracles, scope and identities |
 | Approval | `api.py` (approve-cases) | A live run with model-designed cases stops at awaiting approval; the first request goes out only after the operator approves that sealed set |
 | ⑥ blackbox | `policy.py`, `worker_runtime.py`, `lease.py`, `worker_entry.py`, `tool_runners.py`, `adapters.py`, `fixture_protocol.py`, `effect_collector.py` | Every request is checked by the supervisor for lease, method/path, identity, IP and budget before it reaches the target; results are pass / fail / inconclusive / blocked / execution_error / outcome_unknown |
-| ⑦ report | `service.py`, `answers.py`, `store.py`, `traceability.py` | Verifies evidence hashes; an optional reporter can only reorder existing findings; the API exports JSON, Markdown (Chinese or English) and SARIF |
+| ⑦ report | `service.py`, `stage_answers.py`, `answers.py`, `store.py`, `traceability.py` | Verifies evidence hashes; an optional reporter can only reorder existing findings; the API exports JSON, Markdown (Chinese or English) and SARIF |
 
 ### Repository Layout
 
@@ -315,7 +315,7 @@ MultiAgentBeta/
 │   ├── api.py                     #   FastAPI: session/CSRF/Host-Origin, runs, approve-cases, SSE, evidence, reports, static UI
 │   ├── workspace_api.py           #   projects, model templates, standards catalog, trace, retest, decisions, cleanup attestation
 │   ├── service.py                 #   the seven LangGraph stages, gate calls, Markdown/SARIF reports
-│   ├── answers.py                 #   One paid model answer: reservation, metering, validation and retry, fallback answers, resume cache, model probes
+│   ├── answers.py                 #   One paid model answer: reservation, metering, validation and retry, fallback answers, model probes
 │   ├── stage_answers.py           #   Stage answers: who answers each role, kept only after the stage's checks pass and reused on resume
 │   ├── providers.py               #   The send-once LiteLLM port, credential origin binding, no implicit fallback
 │   ├── messages.py                #   Traditional Chinese wording of error messages (detail_zh, error_zh)
@@ -364,7 +364,7 @@ MultiAgentBeta/
 ├── .claude/                       # SessionStart hook for cloud sessions (excluded from releases)
 ├── CLAUDE.md                      # development guide (excluded from releases)
 ├── IMPLEMENTATION.md              # API and module contracts
-├── GLOSSARY.md                    # Project terms (model answer, reservation, fallback answer)
+├── GLOSSARY.md                    # Project terms (model answer, stage answer, reservation, fallback answer)
 ├── README.md · LICENSE · NOTICE
 ├── pyproject.toml · requirements.lock.txt · requirements.mutation.lock.txt   # pinned, hash-checked dependencies; the second only for mutation testing
 └── source-manifest.sha256         # hash list of every tracked file (scripts/package-release.py)
