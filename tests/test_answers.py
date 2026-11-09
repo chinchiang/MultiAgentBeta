@@ -336,30 +336,6 @@ async def test_an_answer_whose_usage_is_unknown_keeps_only_its_own_reservation_b
     assert run["usage_unknown"] is True
 
 
-async def test_a_resumed_stage_reuses_an_answer_it_already_paid_for_when_it_asks_the_same_question(run, store):
-    primary = with_fallback(run)
-    port = FakePort([refused(tokens=7), reply(tokens=15)])
-    model = answers(run, store, port)
-    first = await model.ask(primary, "Challenge", {"q": 1}, contract=Ok, cache="challenger")
-    usage = dict(run["usage"])
-    again = await answers(run, store, port).ask(primary, "Challenge", {"q": 1}, contract=Ok, cache="challenger")
-    assert again.data == first.data == {"ok": True}
-    assert again.answered_by == first.answered_by == "local"
-    # Nothing was sent for it this time.
-    assert again.attempts == 0
-    assert len(port.calls) == 2
-    assert run["usage"] == usage
-
-
-async def test_a_changed_question_is_asked_again_even_under_the_same_cache_name(run, store):
-    port = FakePort([reply('{"ok":true}'), reply('{"ok":false}')])
-    profile = run["manifest"]["models"][0]
-    await answers(run, store, port).ask(profile, "Challenge", {"q": 1}, contract=Ok, cache="challenger")
-    changed = await answers(run, store, port).ask(profile, "Challenge", {"q": 2}, contract=Ok, cache="challenger")
-    assert changed.data == {"ok": False}
-    assert len(port.calls) == 2
-
-
 @pytest.mark.parametrize("content", [None, "{}" + " " * (512 * 1024)], ids=["no-text", "oversized"])
 async def test_a_reply_without_bounded_text_is_never_accepted(run, store, content):
     port = FakePort([reply(content), reply(content)])
@@ -582,43 +558,11 @@ async def test_a_fallback_answer_is_held_to_the_same_contract(run, store):
     assert str(error.value) == "Its fallback local failed too: Model output failed local JSON/schema validation (ok: type)"
 
 
-# The cache: the record an earlier engine wrote is reused, and a reused answer is the caller's own copy.
-
-async def test_an_answer_the_earlier_engine_cached_is_reused_by_its_binding(run, store):
-    from vibe_audit.domain import digest
-    profile = run["manifest"]["models"][0]
-    run["model_outputs"] = {"challenger": {"binding": digest({"profile": "commander", "instruction": "Challenge", "payload": {"q": 1}}),
-                                           "data": {"ok": False}, "answered_by": ["local"]}}
-    port = FakePort([reply()])
-    answer = await answers(run, store, port).ask(profile, "Challenge", {"q": 1}, contract=Ok, cache="challenger")
-    assert (answer.data, answer.answered_by, answer.attempts) == ({"ok": False}, "local", 0)
-    assert port.calls == []
-
-
-async def test_a_cached_answer_cannot_be_changed_through_the_data_a_caller_was_given(run, store):
-    port = FakePort([reply('{"items": [{"id": 1}]}')])
-    profile = run["manifest"]["models"][0]
-    first = await answers(run, store, port).ask(profile, "List", {}, cache="list")
-    first.data["items"][0]["id"] = 99
-    again = await answers(run, store, port).ask(profile, "List", {}, cache="list")
-    assert again.data == {"items": [{"id": 1}]}
-    again.data["items"][0]["id"] = 98
-    assert run["model_outputs"]["list"]["data"] == {"items": [{"id": 1}]}
-
-
-async def test_a_cached_question_is_still_held_to_its_contract_and_sends_its_payload(run, store):
+async def test_an_answer_is_held_to_its_contract_and_sends_its_payload(run, store):
     port = FakePort([reply('{"ok": "yes"}'), reply('{"ok": "yes"}')])
     with pytest.raises(ProviderError):
-        await answers(run, store, port).ask(run["manifest"]["models"][0], "Review", {"q": 1}, contract=Ok, cache="step")
+        await answers(run, store, port).ask(run["manifest"]["models"][0], "Review", {"q": 1}, contract=Ok)
     assert port.calls[0]["messages"][1]["content"] == '{"q": 1}'
-    assert "step" not in run.get("model_outputs", {})
-
-
-
-async def test_an_answer_with_no_fallback_is_cached_as_answered_by_no_one(run, store):
-    await answers(run, store, FakePort([reply()])).ask(run["manifest"]["models"][0], "Review", {}, contract=Ok, cache="step")
-    # The record an earlier engine wrote and a resumed one reads: an empty list, not [None].
-    assert run["model_outputs"]["step"]["answered_by"] == []
 
 
 async def test_a_fallback_that_needed_a_retry_reports_both_attempts(run, store):
@@ -676,14 +620,6 @@ async def test_a_fallbacks_answer_reports_the_refused_attempt_and_its_own(run, s
     answer = await answers(run, store, port).ask(primary, "Review", {}, contract=Ok)
     assert answer.usage == {"model_calls": 2, "tokens": 22, "prompt_tokens": 16, "completion_tokens": 6, "tokens_known": True}
     assert answer.usage["tokens"] == run["usage"]["tokens"]
-
-
-async def test_a_reused_answer_reports_that_it_cost_nothing(run, store):
-    port = FakePort([reply(tokens=15)])
-    profile = run["manifest"]["models"][0]
-    await answers(run, store, port).ask(profile, "Review", {}, contract=Ok, cache="reviewer")
-    again = await answers(run, store, port).ask(profile, "Review", {}, contract=Ok, cache="reviewer")
-    assert again.usage == {"model_calls": 0, "tokens": 0, "prompt_tokens": 0, "completion_tokens": 0, "tokens_known": True}
 
 
 PROBE_SCHEMA = {"type": "object", "properties": {"probe": {"const": "vibeaudit"}, "ok": {"const": True}}, "required": ["probe", "ok"], "additionalProperties": False}
@@ -901,9 +837,9 @@ async def test_an_answer_outside_any_run_that_is_refused_fails_as_a_refusal_with
     assert len(port.calls) == 1
 
 
-async def test_a_cached_question_is_held_to_the_schema_it_was_asked_with(run, store):
+async def test_an_answer_is_held_to_the_schema_it_was_asked_with(run, store):
     port = FakePort([reply('{"finding_ids":["x"],"extra":1}'), reply('{"finding_ids":["x"]}')])
-    answer = await answers(run, store, port).ask(run["manifest"]["models"][0], "Audit", {}, cache="audit", schema=FINDINGS)
+    answer = await answers(run, store, port).ask(run["manifest"]["models"][0], "Audit", {}, schema=FINDINGS)
     assert answer.data == {"finding_ids": ["x"]}
     assert [call["schema"] for call in port.calls] == [FINDINGS, FINDINGS]
 

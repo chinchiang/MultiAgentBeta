@@ -6,7 +6,6 @@ acceptable and what it cost lives here.
 from __future__ import annotations
 
 import asyncio
-import copy
 import json
 from dataclasses import dataclass, field
 from typing import Any
@@ -15,7 +14,7 @@ from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
 from referencing import Registry
 
-from .domain import digest, now
+from .domain import now
 from .policy import PolicyError
 from .providers import MAX_ATTEMPTS, MAX_PAYLOAD_BYTES, MAX_RESPONSE_BYTES, ProviderError, _rule_hint, _strict_json, _validation_site
 
@@ -52,7 +51,7 @@ class Answer:
     data: Any
     answered_by: str | None = None
     attempts: int = 1
-    # What this answer cost: every attempt sent for it, the fallback's included; nothing when a kept answer was reused.
+    # What this answer cost: every attempt sent for it, the fallback's included.
     usage: dict = field(default_factory=unspent)
 
 
@@ -93,23 +92,13 @@ class ModelAnswers:
         """Answers for a console probe that has no run; only probe() is asked of them."""
         return cls.unowned(budget, policy, port, timeout=min(30, budget["max_seconds"]))
 
-    async def ask(self, profile, instruction, payload, contract=None, cache=None, schema=None):
+    async def ask(self, profile, instruction, payload, contract=None, schema=None):
         """One answer for this Agent, or its operator-configured fallback's after a refusal or truncation.
 
-        With a cache name, a resumed stage reuses the answer it already paid for, as long as it asks the same question.
-        A contract (a pydantic model) gives the schema and the rules a schema cannot state; without one, the answer is held
-        to the given JSON schema, or else to any JSON object."""
+        Whether a resumed stage reuses it is for StageAnswers to decide. A contract (a pydantic model) gives the schema and
+        the rules a schema cannot state; without one, the answer is held to the given JSON schema, or else to any JSON object."""
         self.check_active()
-        if not cache:
-            return await self.answer_or_fallback(profile, instruction, payload, contract, schema)
-        binding = digest({"profile": profile["id"], "instruction": instruction, "payload": payload})
-        kept = self.run.setdefault("model_outputs", {}).get(cache)
-        if kept and kept["binding"] == binding:
-            return Answer(copy.deepcopy(kept["data"]), answered_by=(kept.get("answered_by") or [None])[0], attempts=0)
-        answer = await self.answer_or_fallback(profile, instruction, payload, contract, schema)
-        self.run["model_outputs"][cache] = {"binding": binding, "data": copy.deepcopy(answer.data), "answered_by": [answer.answered_by] if answer.answered_by else []}
-        self.store.save(self.run)
-        return answer
+        return await self.answer_or_fallback(profile, instruction, payload, contract, schema)
 
     async def answer_or_fallback(self, profile, instruction, payload, contract, schema=None):
         cost = unspent()
@@ -138,7 +127,7 @@ class ModelAnswers:
             return Answer(data, answered_by=fallback["id"], attempts=attempts, usage=cost)
 
     async def probe(self, profile):
-        """The capability probe: one answer to a fixed question and schema, with a bounded output, no fallback and no cache."""
+        """The capability probe: one answer to a fixed question and schema, with a bounded output and no fallback."""
         probing = dict(profile)
         # Reasoning models spend output tokens thinking first; 128 truncated a probe at random. 1024 still bounds its cost.
         probing["max_output_tokens"] = min(profile["max_output_tokens"], 1024)
