@@ -5,6 +5,7 @@ secret scanner. Concurrent hostile filesystem mutation needs OS isolation.
 """
 from __future__ import annotations
 
+import errno
 import hashlib
 import itertools
 import json
@@ -75,6 +76,23 @@ def _linklike(path: Path) -> bool:
     return stat.S_ISLNK(info.st_mode) or bool(getattr(info, "st_file_attributes", 0) & 0x400)
 
 
+# The stat failures that mean "nothing is there": Path.is_dir answered False for these and raised any other until
+# Python 3.14, which answers False for every OSError.
+_MISSING_ERRNOS = frozenset({errno.ENOENT, errno.ENOTDIR, errno.EBADF, errno.ELOOP})
+# ERROR_NOT_READY, ERROR_INVALID_NAME, ERROR_CANT_RESOLVE_FILENAME.
+_MISSING_WINERRORS = frozenset({21, 123, 1921})
+
+
+def _is_directory(path: Path) -> bool:
+    """Whether path is a directory, False when nothing is there; a path that cannot be examined raises OSError."""
+    try:
+        return stat.S_ISDIR(path.stat().st_mode)
+    except OSError as exc:
+        if exc.errno in _MISSING_ERRNOS or getattr(exc, "winerror", None) in _MISSING_WINERRORS:
+            return False
+        raise
+
+
 def _safe_ancestors(path: Path) -> bool:
     return all(not _linklike(item) for item in (path, *path.parents))
 
@@ -111,7 +129,7 @@ def snapshot_source(path: str, keep: frozenset[str] = frozenset()) -> dict:
         raise ValueError("source_path must identify an existing source directory")
     root = Path(os.path.abspath(path))
     try:
-        if not root.is_dir() or not _safe_ancestors(root):
+        if not _is_directory(root) or not _safe_ancestors(root):
             raise ValueError("Source root must be a real directory without symlink/reparse ancestors")
     except OSError:
         raise ValueError("Source directory is not accessible") from None
