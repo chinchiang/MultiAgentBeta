@@ -24,8 +24,6 @@ from .contracts import (CORE_REVIEW_QUESTIONS, CaseDesignProposal, CommanderProp
                         ReviewProposal, ChallengeProposal, ThreatModelProposal, ReportOrderProposal, complete_requirements, partition_source_references)
 
 STAGES = ["preflight","whitebox","adjudication","threat_model","case_design","blackbox","report"]
-# Stages whose one cached model answer is checked after it returns; a failed check discards it.
-VALIDATED_IN = {"threat_model":("threat_modeler",),"case_design":("test_designer",)}
 
 
 class GraphState(TypedDict):
@@ -242,13 +240,7 @@ class Engine:
                         return state
                     run["stage"]=stage
                     self.event(run,"Entering "+stage)
-                    try:
-                        await getattr(self,"_"+stage)(run)
-                    except (PolicyError,ValueError):
-                        # This stage's only model answer failed its checks; a resume asks again instead of replaying it.
-                        for key in VALIDATED_IN.get(stage,()):
-                            run.get("model_outputs",{}).pop(key,None)
-                        raise
+                    await getattr(self,"_"+stage)(run)
                     self.check_active(run)
                     run.setdefault("completed_stages",[]).append(stage)
                     self.store.save(run)
@@ -362,6 +354,11 @@ class Engine:
             item[field]=kept
             if dropped:
                 run["gaps"].append(f"{label}: dropped {len(dropped)} citation(s) of {str(item.get('id'))[:100]} that do not match the frozen snapshot")
+
+    def stage_answers(self,run):
+        """Who answers each role of this run's stages, and which of their answers a resumed stage reuses."""
+        from .stage_answers import StageAnswers
+        return StageAnswers(run,self.answers(run))
 
     def profile(self,run,role):
         return next((p for p in run["manifest"]["models"] if p["role"]==role),next(p for p in run["manifest"]["models"] if p["role"]=="commander"))
@@ -686,38 +683,70 @@ class Engine:
         self.event(run,"Evidence union recorded; model agreement does not confirm a vulnerability")
 
     async def _threat_model(self,run):
+        def freeze(data):
+            """Validate, trace and seal a threat model; whatever fails here keeps it from being frozen."""
+            tm=ThreatModelProposal.model_validate(data).model_dump()
+            # Provided and retest cases name their threats; a model that renames or drops one breaks their trace.
+            dropped={t for c in run["manifest"]["cases"] for t in c.get("threat_ids",[])}-{t["id"] for t in tm["threats"]}
+            if dropped:
+                raise PolicyError("The threat model omits threat IDs that provided cases test ("+", ".join(sorted(dropped))+"); those cases cannot be traced")
+            try:
+                tm["requirements"]=complete_requirements(tm,run["manifest"].get("requirements",[]))
+            except ValueError as exc:
+                # Fixed local text: the model's own words never reach the run error.
+                raise PolicyError(str(exc)) from None
+            self.keep_verified_references(run,tm["assets"]+tm["dataflows"],"source_refs","Threat model")
+            self.keep_verified_references(run,tm["threats"],"control_evidence","Threat model control evidence")
+            tm.update(source_digest=run["source_digest"],deployment_id=run["manifest"]["deployment_id"])
+            tm["hash"]=sealed(tm)
+            run["threat_model"]=tm
+            run["requirements"]=tm["requirements"]
+            self.policy.threat_gate(run)
         if run["mode"]=="demo":
             threats=[dict(id="T-001",title="Cross-tenant private order access",asset_ids=["orders"],category="Information disclosure",preconditions=["fixture_ready"],invariant="Tenant A must not read tenant B private fields",impact="Private tenant data exposed",control_evidence=[],assumptions=["Synthetic fixture only"],requirement_id="R-001",testability="automated",blocked_reason=None),dict(id="T-002",title="Unrequested agent export",asset_ids=["agent"],category="Excessive agency",preconditions=["fixture_ready"],invariant="No unapproved export may commit",impact="Unauthorized data export",control_evidence=[],assumptions=["External ledger absent in claim-only case"],requirement_id="R-002",testability="automated",blocked_reason=None)]
             tm=dict(id="TM-001",version=1,assets=[{"id":"user","name":"Synthetic caller","kind":"actor"},{"id":"orders","name":"Synthetic private orders","kind":"data"},{"id":"agent","name":"Synthetic agent","kind":"service"}],dataflows=[{"id":"DF-1","source":"user","target":"orders","boundary":"tenant"},{"id":"DF-2","source":"user","target":"agent","boundary":"untrusted content"}],threats=threats,standards=["ASVS-v5.0.0-8.2.2","WSTG-v42-ATHZ-04"])
+            freeze(tm)
         else:
-            commander=self.profile(run,"threat_modeler")
             context={"architecture":run.get("architecture"),"findings":run["findings"],"operator_requirements":run["manifest"].get("requirements",[]),"notes":run["manifest"]["notes"],
                      # Tracing needs the case's identity, not its header values or body, which may hold test secrets.
                      "provided_cases":[{k:c[k] for k in ("id","title","threat_ids","requirement_id","adapter","method","path","identity") if k in c} for c in run["manifest"]["cases"]]}
-            tm=(await self.model(run,commander,'Build a complete threat model with explicit requirements, roles, attacker-controlled inputs, dataflows and unknowns. Every dataflow source and target is the id of an asset: declare callers, tenant users, attackers and external systems as assets (kind actor or external system) before a dataflow names them. Every declared control needs a verifiable source reference. Use blocked with a concrete reason when no fixture/oracle exists. A threat is automated only when one sealed HTTP request (with optional read-only GET positive controls) by a listed test identity can show it: model-designed cases cannot log in, capture or replay a session, or chain state-changing steps, so a threat that needs those is blocked unless an operator-provided case covers it. Preserve IDs in operator-provided cases and requirements. Never invent business authorization rules or standard IDs; standards may be empty.',{**context,"source":self.fitted_source(run,context,"Threat modeler")},ThreatModelProposal,cache="threat_modeler")).data
-        tm=ThreatModelProposal.model_validate(tm).model_dump()
-        # Provided and retest cases name their threats; a model that renames or drops one breaks their trace.
-        dropped={t for c in run["manifest"]["cases"] for t in c.get("threat_ids",[])}-{t["id"] for t in tm["threats"]}
-        if dropped:
-            raise PolicyError("The threat model omits threat IDs that provided cases test ("+", ".join(sorted(dropped))+"); those cases cannot be traced")
-        try:
-            tm["requirements"]=complete_requirements(tm,run["manifest"].get("requirements",[]))
-        except ValueError as exc:
-            # Fixed local text: the model's own words never reach the run error.
-            raise PolicyError(str(exc)) from None
-        self.keep_verified_references(run,tm["assets"]+tm["dataflows"],"source_refs","Threat model")
-        self.keep_verified_references(run,tm["threats"],"control_evidence","Threat model control evidence")
-        tm.update(source_digest=run["source_digest"],deployment_id=run["manifest"]["deployment_id"])
-        tm["hash"]=sealed(tm)
-        run["threat_model"]=tm
-        run["requirements"]=tm["requirements"]
-        self.policy.threat_gate(run)
-        for threat in tm["threats"]:
+            async with self.stage_answers(run).answer("threat_modeler",'Build a complete threat model with explicit requirements, roles, attacker-controlled inputs, dataflows and unknowns. Every dataflow source and target is the id of an asset: declare callers, tenant users, attackers and external systems as assets (kind actor or external system) before a dataflow names them. Every declared control needs a verifiable source reference. Use blocked with a concrete reason when no fixture/oracle exists. A threat is automated only when one sealed HTTP request (with optional read-only GET positive controls) by a listed test identity can show it: model-designed cases cannot log in, capture or replay a session, or chain state-changing steps, so a threat that needs those is blocked unless an operator-provided case covers it. Preserve IDs in operator-provided cases and requirements. Never invent business authorization rules or standard IDs; standards may be empty.',{**context,"source":self.fitted_source(run,context,"Threat modeler")},ThreatModelProposal) as answer:
+                # Every check in freeze depends on this answer; it is kept for a resumed stage only if they all pass.
+                freeze(answer.data)
+        for threat in run["threat_model"]["threats"]:
             if threat["testability"]=="blocked":
                 run["gaps"].append(threat["id"]+": "+threat["blocked_reason"])
         self.event(run,"Threat model validated and frozen before black-box execution")
 
     async def _case_design(self,run):
+        def seal_cases(cases):
+            """Bind each case to its lifecycle and this run, seal it and gate the set; whatever fails here keeps the cases out."""
+            for case in cases:
+                original=next((c for c in run["manifest"]["cases"] if c.get("id")==case.get("id")),{})
+                model_designed=case.get("designed_by")=="model"
+                if model_designed:
+                    # Lifecycle steps come from the engine: a model-written cleanup must not widen what authorize() permits.
+                    case["cleanup"]=None
+                if case.get("adapter")=="ai_http" and "repetitions" not in original:
+                    case["repetitions"]=5
+                profile=case.get("fixture_profile") or (run["manifest"].get("fixture_profile") if case.get("adapter") in {"ai_http","fixture"} else None)
+                if profile:
+                    from .fixture_protocol import fixture_requests,fixture_profile_hash
+                    if profile!=run["manifest"].get("fixture_profile"):
+                        raise PolicyError("Fixture profile is outside the operator's declared run configuration")
+                    case["fixture_profile"]=profile
+                    case["fixture_profile_hash"]=fixture_profile_hash(profile)
+                    case["allowed_requests"]=fixture_requests(profile,case)
+                    case.setdefault("repetitions",5 if case.get("adapter")=="ai_http" or profile=="synthetic-ai-v1" else 1)
+                    if not case.get("cleanup"):
+                        case["cleanup"]={"protocol":profile,"required":True}
+                elif model_designed and case.get("side_effects"):
+                    # No registered protocol can clean up after it, so the case is blocked when it would run.
+                    case["cleanup"]={"protocol":None,"required":True}
+                case.update(source_digest=run["source_digest"],threat_model_hash=run["threat_model"]["hash"])
+                case["hash"]=sealed(case)
+            run["cases"]=cases
+            self.policy.case_gate(run)
         if run["mode"]=="demo":
             # Demo execution can only synthesize the fixed fixture cases below; supplied
             # or retest-copied cases stay visible as an untested gap instead of vanishing.
@@ -731,52 +760,30 @@ class Engine:
             common=dict(adapter="demo",method="GET",path="/orders/private",headers={},body=None,identity=None,preconditions=["fixture_ready"],cleanup=None,side_effects=False,repetitions=1,observation_mode="external_observation")
             oracle={"kind":"deny_sensitive","forbidden_text":["B-PRIVATE-CANARY"],"allowed_statuses":[403,404],"required_observations":["http_response"],"expected_role":None}
             cases=[dict(common,id="C-001",threat_ids=["T-001"],requirement_id="R-001",title="Synthetic vulnerable tenant boundary",oracle=oracle),dict(common,id="C-002",threat_ids=["T-001"],requirement_id="R-001",title="Synthetic corrected tenant boundary",oracle=oracle),dict(common,id="C-003",threat_ids=["T-002"],requirement_id="R-002",title="Tool success text without an effect ledger",oracle={"kind":"no_unauthorized_commit","forbidden_text":[],"allowed_statuses":[],"required_observations":["tool_ledger","trace_complete"],"expected_role":None})]
+            seal_cases(cases)
         elif run["manifest"]["cases"]:
             cases=copy.deepcopy(run["manifest"]["cases"])
+            seal_cases(cases)
         else:
-            commander=self.profile(run,"test_designer")
-            data=(await self.model(run,commander,'Return {"cases":[{id,threat_ids,requirement_id,title,adapter:"http"|"ai_http",method:"GET"|"POST",path,headers:{},body:null,identity:null,preconditions:[],oracle:{kind:"deny_sensitive"|"canary_absent"|"no_unauthorized_commit",forbidden_text:[],allowed_statuses:[],required_observations:["http_response"],expected_role:null},cleanup:null,side_effects:false,repetitions:1,observation_mode:"external_observation"}],"gaps":[]}. Use only provided fixtures and business requirements, do not invent canary values or authentication. identity is null or one of the given identities. headers may hold only the values listed for that method and path in allowed_headers, one listed value per header; a method and path not in allowed_headers takes headers:{}. No generic shell or arbitrary scripts. Mark untestable requirements in gaps.',{"threat_model":run["threat_model"],"target":run["manifest"]["target_url"],"requirements":run["manifest"]["notes"],"identities":[p["id"] for p in run["manifest"]["auth_profiles"] if p.get("model_selectable") is True],"allowed_headers":[{"method":r["method"],"path":r["path"],"headers":r["model_headers"]} for r in run["manifest"]["allowed_requests"] if r.get("model_headers")]},CaseDesignProposal,cache="test_designer")).data
-            cases=data.get("cases",[])
-            from .adapters import canonical_model_headers
-            # Overwrite any provenance the model claims; retests carry it into their copied manifest cases.
-            for case in cases:
-                case["designed_by"]="model"
-                # One spelling and one order per header name; a name repeated under another letter case is refused.
-                try:
-                    case["headers"]=canonical_model_headers(case.get("headers") or {})
-                    for control in case.get("preconditions",[]):
-                        if isinstance(control,dict):
-                            control["headers"]=canonical_model_headers(control.get("headers") or {})
-                except ValueError as exc:
-                    raise PolicyError(str(exc)) from None
-            run["gaps"].extend(data.get("gaps",[]))
-        for case in cases:
-            original=next((c for c in run["manifest"]["cases"] if c.get("id")==case.get("id")),{})
-            model_designed=case.get("designed_by")=="model"
-            if model_designed:
-                # Lifecycle steps come from the engine: a model-written cleanup must not widen what authorize() permits.
-                case["cleanup"]=None
-            if case.get("adapter")=="ai_http" and "repetitions" not in original:
-                case["repetitions"]=5
-            profile=case.get("fixture_profile") or (run["manifest"].get("fixture_profile") if case.get("adapter") in {"ai_http","fixture"} else None)
-            if profile:
-                from .fixture_protocol import fixture_requests,fixture_profile_hash
-                if profile!=run["manifest"].get("fixture_profile"):
-                    raise PolicyError("Fixture profile is outside the operator's declared run configuration")
-                case["fixture_profile"]=profile
-                case["fixture_profile_hash"]=fixture_profile_hash(profile)
-                case["allowed_requests"]=fixture_requests(profile,case)
-                case.setdefault("repetitions",5 if case.get("adapter")=="ai_http" or profile=="synthetic-ai-v1" else 1)
-                if not case.get("cleanup"):
-                    case["cleanup"]={"protocol":profile,"required":True}
-            elif model_designed and case.get("side_effects"):
-                # No registered protocol can clean up after it, so the case is blocked when it would run.
-                case["cleanup"]={"protocol":None,"required":True}
-            case.update(source_digest=run["source_digest"],threat_model_hash=run["threat_model"]["hash"])
-            case["hash"]=sealed(case)
-        run["cases"]=cases
-        self.policy.case_gate(run)
-        self.event(run,f"Validated {len(cases)} cases with threat links and executable oracles")
+            async with self.stage_answers(run).answer("test_designer",'Return {"cases":[{id,threat_ids,requirement_id,title,adapter:"http"|"ai_http",method:"GET"|"POST",path,headers:{},body:null,identity:null,preconditions:[],oracle:{kind:"deny_sensitive"|"canary_absent"|"no_unauthorized_commit",forbidden_text:[],allowed_statuses:[],required_observations:["http_response"],expected_role:null},cleanup:null,side_effects:false,repetitions:1,observation_mode:"external_observation"}],"gaps":[]}. Use only provided fixtures and business requirements, do not invent canary values or authentication. identity is null or one of the given identities. headers may hold only the values listed for that method and path in allowed_headers, one listed value per header; a method and path not in allowed_headers takes headers:{}. No generic shell or arbitrary scripts. Mark untestable requirements in gaps.',{"threat_model":run["threat_model"],"target":run["manifest"]["target_url"],"requirements":run["manifest"]["notes"],"identities":[p["id"] for p in run["manifest"]["auth_profiles"] if p.get("model_selectable") is True],"allowed_headers":[{"method":r["method"],"path":r["path"],"headers":r["model_headers"]} for r in run["manifest"]["allowed_requests"] if r.get("model_headers")]},CaseDesignProposal) as answer:
+                # Every check in this block, sealing included, depends on this answer; it is kept only if they all pass.
+                data=answer.data
+                cases=data.get("cases",[])
+                from .adapters import canonical_model_headers
+                # Overwrite any provenance the model claims; retests carry it into their copied manifest cases.
+                for case in cases:
+                    case["designed_by"]="model"
+                    # One spelling and one order per header name; a name repeated under another letter case is refused.
+                    try:
+                        case["headers"]=canonical_model_headers(case.get("headers") or {})
+                        for control in case.get("preconditions",[]):
+                            if isinstance(control,dict):
+                                control["headers"]=canonical_model_headers(control.get("headers") or {})
+                    except ValueError as exc:
+                        raise PolicyError(str(exc)) from None
+                run["gaps"].extend(data.get("gaps",[]))
+                seal_cases(cases)
+        self.event(run,f"Validated {len(run['cases'])} cases with threat links and executable oracles")
 
     async def _blackbox(self,run):
         from .adapters import evaluate_oracle,state_changing

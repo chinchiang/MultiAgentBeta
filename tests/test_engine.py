@@ -378,9 +378,8 @@ async def test_threat_model_that_drops_a_provided_case_threat_blocks_early(engin
     case={k:v for k,v in run["cases"][0].items() if k!="hash"}
     run["manifest"].update(mode="live",cases=[{**case,"threat_ids":["T-RENAMED"]}])
     run["manifest_hash"]=digest(run["manifest"])
-    async def model(run,profile,instruction,payload,contract=None,cache=None):
-        return proposal
-    monkeypatch.setattr(engine,"model",answering(model))
+    engine.model_port=FakePort(answer=lambda profile,messages,schema:answer_with(proposal))
+    arm_attempt(engine,run)
     monkeypatch.setattr(engine,"fitted_source",lambda run,payload,label:{"files":[]})
     with pytest.raises(PolicyError,match="T-RENAMED"):
         await engine._threat_model(run)
@@ -396,10 +395,11 @@ async def test_threat_modeler_sees_provided_cases_without_their_headers_or_body(
     run["manifest"].update(mode="live",cases=[{**case,"headers":{"X-Tenant-Token":secret},"body":{"password":secret}}])
     run["manifest_hash"]=digest(run["manifest"])
     seen=[]
-    async def model(run,profile,instruction,payload,contract=None,cache=None):
-        seen.append(payload)
-        return proposal
-    monkeypatch.setattr(engine,"model",answering(model))
+    def answer(profile,messages,schema):
+        seen.append(asked(messages)[1])
+        return answer_with(proposal)
+    engine.model_port=FakePort(answer=answer)
+    arm_attempt(engine,run)
     monkeypatch.setattr(engine,"fitted_source",lambda run,payload,label:{"files":[]})
     monkeypatch.setattr(engine.policy,"threat_gate",lambda run:None)
     await engine._threat_model(run)
@@ -1359,10 +1359,12 @@ async def test_test_designer_is_told_which_identities_and_headers_it_may_use(eng
         {"id":"alice","credential_env":"VIBEAUDIT_ALICE_TOKEN","model_selectable":True},
         {"id":"admin","credential_env":"VIBEAUDIT_ADMIN_TOKEN"}])
     seen=[]
-    async def model(run,profile,instruction,payload,contract=None,cache=None):
-        seen.append((instruction,payload))
-        return {"cases":[],"gaps":[]}
-    monkeypatch.setattr(engine,"model",answering(model))
+    def answer(profile,messages,schema):
+        # The instruction reaches the model inside its system message.
+        seen.append(asked(messages))
+        return answer_with({"cases":[],"gaps":[]})
+    engine.model_port=FakePort(answer=answer)
+    arm_attempt(engine,run)
     # No case comes back, so the case gate stops the run; only the designer's input matters here.
     with pytest.raises(PolicyError):
         await engine._case_design(run)
@@ -1457,33 +1459,31 @@ def model_proposal(run,**changes):
     return proposal
 
 
-async def designed(engine,monkeypatch,*proposals,allowed=None):
+async def designed(engine,*proposals,allowed=None):
     run=await live_post_case(engine,adapter="http",provenance="model")
     run.update(cases=[])
     run["manifest"].update(cases=[],allowed_requests=allowed or [{"method":"GET","path":"/orders/private"}])
     run["manifest_hash"]=digest(run["manifest"])
-    async def model(run,profile,instruction,payload,contract=None,cache=None):
-        return {"cases":copy.deepcopy(list(proposals)),"gaps":[]}
-    monkeypatch.setattr(engine,"model",answering(model))
+    engine.model_port=FakePort(answer=lambda profile,messages,schema:answer_with({"cases":copy.deepcopy(list(proposals)),"gaps":[]}))
     await engine._case_design(run)
     return run
 
 
-async def test_model_headers_are_sealed_in_one_spelling_and_order(engine,monkeypatch):
-    run=await designed(engine,monkeypatch,model_proposal(await finished_demo(engine),headers={"accept-language":"zh-TW","accept":"application/json"}),
+async def test_model_headers_are_sealed_in_one_spelling_and_order(engine):
+    run=await designed(engine,model_proposal(await finished_demo(engine),headers={"accept-language":"zh-TW","accept":"application/json"}),
                        allowed=[{"method":"GET","path":"/orders/private","model_headers":{"Accept":["application/json"],"Accept-Language":["zh-TW"]}}])
     assert list(run["cases"][0]["headers"].items())==[("Accept","application/json"),("Accept-Language","zh-TW")]
 
 
-async def test_model_header_repeated_under_another_case_stops_case_design(engine,monkeypatch):
+async def test_model_header_repeated_under_another_case_stops_case_design(engine):
     with pytest.raises(PolicyError,match="repeats a header name"):
-        await designed(engine,monkeypatch,model_proposal(await finished_demo(engine),headers={"Accept":"*/*","ACCEPT":"text/html"}))
+        await designed(engine,model_proposal(await finished_demo(engine),headers={"Accept":"*/*","ACCEPT":"text/html"}))
 
 
-async def test_model_cleanup_is_replaced_by_the_engine_and_grants_no_request(engine,monkeypatch):
+async def test_model_cleanup_is_replaced_by_the_engine_and_grants_no_request(engine):
     wipe={"method":"POST","path":"/admin/wipe"}
     scope=[{"method":"GET","path":"/orders/private"},wipe]
-    run=await designed(engine,monkeypatch,model_proposal(await finished_demo(engine),cleanup=wipe),allowed=scope)
+    run=await designed(engine,model_proposal(await finished_demo(engine),cleanup=wipe),allowed=scope)
     case=run["cases"][0]
     assert case["cleanup"] is None
     approve(run)
@@ -1491,7 +1491,7 @@ async def test_model_cleanup_is_replaced_by_the_engine_and_grants_no_request(eng
     with pytest.raises(PolicyError,match="not a step in the sealed test case"):
         engine.policy.authorize(run,case,engine.cancel_flags[run["id"]],method="POST",path="/admin/wipe")
     # A model case that claims side effects without a registered protocol gets an engine plan that runs nothing.
-    run=await designed(engine,monkeypatch,model_proposal(await finished_demo(engine),side_effects=True,cleanup=wipe),allowed=scope)
+    run=await designed(engine,model_proposal(await finished_demo(engine),side_effects=True,cleanup=wipe),allowed=scope)
     assert run["cases"][0]["cleanup"]=={"protocol":None,"required":True}
 
 
@@ -1548,6 +1548,101 @@ async def test_paused_run_records_approval_and_resumes(engine,monkeypatch):
     engine.store.save(stored)
     with pytest.raises(PolicyError,match="waiting for case approval"):
         engine.approve_cases(run["id"],receipt,"local_operator:abc")
+
+
+def live_threat_model(threat_ids):
+    """A threat model answer for the retest case's run: one blocked threat per ID."""
+    return answer_with({"id":"TM1","version":1,"standards":[],
+                        "assets":[{"id":"tenant","name":"Tenant user","kind":"actor"},{"id":"orders","name":"Orders","kind":"data"}],
+                        "dataflows":[{"id":"F1","source":"tenant","target":"orders","boundary":"tenant"}],
+                        "requirements":[{"id":"R-001","statement":"A tenant must not read another tenant's orders","source_kind":"operator",
+                                         "source":"Synthetic fixture owner","threat_ids":list(threat_ids),"standard_ids":[]}],
+                        "threats":[{"id":t,"title":"Cross-tenant read","asset_ids":["orders"],"category":"Information disclosure",
+                                    "invariant":"A tenant must not read another tenant's orders","impact":"Private orders exposed",
+                                    "requirement_id":"R-001","testability":"blocked","blocked_reason":"No fixture","control_evidence":[]}
+                                   for t in threat_ids]})
+
+
+async def test_a_threat_model_that_fails_its_checks_is_asked_again_when_the_stage_resumes(engine):
+    # The retest copies a case testing T-001, so a threat model without T-001 fails the stage's checks.
+    run=await live_post_case(engine,adapter="http",provenance="retest")
+    run["stage"]="threat_model"
+    engine.model_port=FakePort([live_threat_model(["T-009"]),live_threat_model(["T-001"])])
+    with pytest.raises(PolicyError,match="omits threat IDs"):
+        await engine._threat_model(run)
+    await engine._threat_model(run)
+    assert [t["id"] for t in run["threat_model"]["threats"]]==["T-001"]
+    assert len(engine.model_port.calls)==2
+
+
+async def test_a_threat_model_that_passed_its_checks_is_reused_unsent_when_the_stage_resumes(engine):
+    run=await live_post_case(engine,adapter="http",provenance="retest")
+    run["stage"]="threat_model"
+    engine.model_port=FakePort([live_threat_model(["T-001"])])
+    await engine._threat_model(run)
+    first=run["threat_model"]["hash"]
+    await engine._threat_model(run)
+    assert run["threat_model"]["hash"]==first
+    assert len(engine.model_port.calls)==1
+
+
+async def model_designed_case_stage(engine,*answers):
+    """A live run at case design whose test designer gives these answers in turn."""
+    run=await live_post_case(engine,adapter="http",provenance="model")
+    run.update(cases=[],stage="case_design")
+    run["manifest"].update(allowed_requests=[{"method":"GET","path":"/orders/private","model_headers":{"Accept":["text/html"]}}])
+    run["manifest_hash"]=digest(run["manifest"])
+    engine.model_port=FakePort([answer_with({"cases":[proposal],"gaps":[]}) for proposal in answers])
+    return run
+
+
+async def test_designed_cases_that_fail_their_checks_are_asked_for_again_when_the_stage_resumes(engine):
+    demo=await finished_demo(engine)
+    repeated=model_proposal(demo,headers={"Accept":"text/html","ACCEPT":"text/html"})
+    run=await model_designed_case_stage(engine,repeated,model_proposal(demo,headers={"Accept":"text/html"}))
+    with pytest.raises(PolicyError,match="repeats a header name"):
+        await engine._case_design(run)
+    await engine._case_design(run)
+    assert run["cases"][0]["headers"]=={"Accept":"text/html"}
+    assert len(engine.model_port.calls)==2
+
+
+async def test_designed_cases_that_passed_their_checks_are_reused_unsent_when_the_stage_resumes(engine):
+    run=await model_designed_case_stage(engine,model_proposal(await finished_demo(engine)))
+    await engine._case_design(run)
+    first=[c["hash"] for c in run["cases"]]
+    await engine._case_design(run)
+    assert [c["hash"] for c in run["cases"]]==first
+    assert len(engine.model_port.calls)==1
+
+
+async def test_a_run_resumed_after_case_approval_does_not_ask_the_test_designer_again(engine,monkeypatch):
+    run=await live_post_case(engine,adapter="http",provenance="model")
+    run.update(cases=[],stage="case_design")
+    run.pop("case_approval")
+    run["manifest"]["allowed_requests"]=[{"method":"GET","path":"/orders/private"}]
+    run["manifest_hash"]=digest(run["manifest"])
+    run["completed_stages"]=[s for s in run["completed_stages"] if s not in {"case_design","blackbox","report"}]
+    proposal=model_proposal(run)
+    engine.model_port=FakePort(answer=lambda profile,messages,schema:answer_with({"cases":[copy.deepcopy(proposal)],"gaps":[]}))
+    dispatched=[]
+    class Runtime:
+        async def run_case(self,manifest,case,**kwargs):
+            dispatched.append(case["id"])
+            return {"status":"pass","reason":"synthetic","observations":[],"evidence":[],"cleanup_confirmed":True}
+    monkeypatch.setattr(engine,"runtime",lambda _:Runtime())
+    await engine._run(run)
+    paused=engine.store.get(run["id"])
+    assert paused["status"]=="awaiting_approval" and dispatched==[]
+    assert [call["agent_id"] for call in engine.model_port.calls]==["commander"]
+    monkeypatch.setattr(engine,"start",lambda run_id,resume=False:{})
+    engine.approve_cases(run["id"],paused["gate_receipts"]["cases"],"local_operator:abc")
+    resumed=engine.store.get(run["id"])
+    arm_attempt(engine,resumed)
+    await engine._run(resumed)
+    # The approved cases run; the test designer whose answer they came from is not paid for again.
+    assert dispatched==[proposal["id"]]
+    assert len(engine.model_port.calls)==1
 
 
 async def test_execution_capability_requires_the_approval_too(engine):
