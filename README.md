@@ -156,7 +156,7 @@ MultiAgentBeta/
 ├── .github/workflows/mutation.yml     # mutmut 突變測試：閘門與解析模組的每個突變都要被測試抓到（scripts/mutation-test.py）
 ├── .github/workflows/mutation-pr.yml  # pull request 只對改動的函式做突變測試（scripts/mutation-test.py --changed）
 ├── .github/workflows/dependency-drift.yml  # 每週列出落後登錄站的固定版本與 OSV 公告（scripts/dependency-drift.py）
-├── .claude/                       # 雲端 session 的 SessionStart hook（不進發佈檔）
+├── .claude/                       # SessionStart hook：本機與雲端 session 開始時建好 .venv（不進發佈檔）
 ├── CLAUDE.md                      # 開發指引（不進發佈檔）
 ├── IMPLEMENTATION.md              # API 與模組契約
 ├── GLOSSARY.md                    # 專案用語（模型回答、階段答案、保留額度、代答）
@@ -361,7 +361,7 @@ MultiAgentBeta/
 ├── .github/workflows/mutation.yml     # mutmut mutation testing: every mutant of the gate and parser modules must be caught (scripts/mutation-test.py)
 ├── .github/workflows/mutation-pr.yml  # a pull request mutates only the functions it changed (scripts/mutation-test.py --changed)
 ├── .github/workflows/dependency-drift.yml  # weekly: pins behind their registries and OSV advisories (scripts/dependency-drift.py)
-├── .claude/                       # SessionStart hook for cloud sessions (excluded from releases)
+├── .claude/                       # SessionStart hook: builds .venv when a local or cloud session starts (excluded from releases)
 ├── CLAUDE.md                      # development guide (excluded from releases)
 ├── IMPLEMENTATION.md              # API and module contracts
 ├── GLOSSARY.md                    # Project terms (model answer, stage answer, reservation, fallback answer)
