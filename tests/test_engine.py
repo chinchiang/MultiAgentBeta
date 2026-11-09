@@ -1508,6 +1508,26 @@ async def test_an_operator_cases_extra_step_fields_grant_no_request(engine,phase
     engine.policy.authorize(run,case,engine.cancel_flags[run["id"]],method="POST",path="/orders/private")
 
 
+async def test_an_operator_cases_own_allowed_requests_grant_no_request_or_identity(engine):
+    # allowed_requests on a case is the fixture lifecycle the engine seals into it; an operator case that is not a
+    # fixture case and lists its own must not widen the requests or identities authorize() permits.
+    wipe={"method":"POST","path":"/admin/wipe"}
+    run=await live_post_case(engine,adapter="http",provenance="operator")
+    run["manifest"]["allowed_requests"].append(wipe)
+    run["manifest"]["cases"][0]["allowed_requests"]=[{**wipe,"identity":"bob"}]
+    run["manifest_hash"]=digest(run["manifest"])
+    run.update(cases=[],stage="case_design")
+    await engine._case_design(run)
+    run["stage"]="blackbox"
+    case=run["cases"][0]
+    with pytest.raises(PolicyError,match="not a step in the sealed test case"):
+        engine.policy.authorize(run,case,engine.cancel_flags[run["id"]],method="POST",path="/admin/wipe",identity=case.get("identity"))
+    with pytest.raises(PolicyError,match="Identity is outside the sealed case scope"):
+        engine.policy.authorize(run,case,engine.cancel_flags[run["id"]],identity="bob")
+    # The case's own request is still authorized.
+    engine.policy.authorize(run,case,engine.cancel_flags[run["id"]],identity=case.get("identity"))
+
+
 async def test_model_cases_wait_for_operator_approval_of_the_exact_set(engine,monkeypatch):
     from vibe_audit.service import CaseApprovalRequired
     run=await live_post_case(engine,adapter="http",provenance="model")
