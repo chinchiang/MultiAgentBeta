@@ -743,9 +743,13 @@ class Engine:
                     case.setdefault("repetitions",5 if case.get("adapter")=="ai_http" or profile=="synthetic-ai-v1" else 1)
                     if not case.get("cleanup"):
                         case["cleanup"]={"protocol":profile,"required":True}
-                elif model_designed and case.get("side_effects"):
-                    # No registered protocol can clean up after it, so the case is blocked when it would run.
-                    case["cleanup"]={"protocol":None,"required":True}
+                else:
+                    # allowed_requests is the fixture lifecycle the engine seals into a case; one the case brought along
+                    # would widen the requests and identities authorize() permits, though no executor sends them.
+                    case.pop("allowed_requests",None)
+                    if model_designed and case.get("side_effects"):
+                        # No registered protocol can clean up after it, so the case is blocked when it would run.
+                        case["cleanup"]={"protocol":None,"required":True}
                 case.update(source_digest=run["source_digest"],threat_model_hash=run["threat_model"]["hash"])
                 case["hash"]=sealed(case)
             run["cases"]=cases
