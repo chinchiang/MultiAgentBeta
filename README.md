@@ -149,14 +149,14 @@ MultiAgentBeta/
 ├── benchmarks/                    # 比較評估設計、synthetic-v1、examples/、results-local/、results-synthetic/
 ├── docs/                          # ARCHITECTURE、LINUX_SETUP、DOCKER_INTEGRATION_TESTING、VALIDATION、DELIVERY、SOURCES、
 │                                  #   VIBESEC_ADVISORIES、threat-model.yaml、run-input.schema.json、驗證收據、截圖、history/
-├── scripts/                       # setup／start-local、verify、contract-smoke、provision-runtime／offline-db、package-release、hash-lock、
+├── scripts/                       # setup／start-local、dev-env、verify、contract-smoke、provision-runtime／offline-db、package-release、hash-lock、
 │                                  #   redact-receipts、summarize-validation、refresh-catalog、render-sample-report、mutation-test、dependency-drift
 ├── .github/workflows/ci.yml       # backend（Python 3.12／3.13：ruff、mypy、pytest ＋ PostgreSQL、契約 smoke）、frontend（typecheck、ESLint、vitest、check:i18n、check:messages、建置一致性、清單）與 Windows 全套測試
 ├── .github/workflows/integration.yml  # 以 deploy/ 建置的映像跑 Docker worker、掃描器、工具、fixture 與完整 pipeline 整合測試
 ├── .github/workflows/mutation.yml     # mutmut 突變測試：閘門與解析模組的每個突變都要被測試抓到（scripts/mutation-test.py）
 ├── .github/workflows/mutation-pr.yml  # pull request 只對改動的函式做突變測試（scripts/mutation-test.py --changed）
 ├── .github/workflows/dependency-drift.yml  # 每週列出落後登錄站的固定版本與 OSV 公告（scripts/dependency-drift.py）
-├── .claude/                       # 雲端 session 的 SessionStart hook（不進發佈檔）
+├── .claude/                       # SessionStart hook：本機與雲端 session 開始時建好 .venv（不進發佈檔）
 ├── CLAUDE.md                      # 開發指引（不進發佈檔）
 ├── IMPLEMENTATION.md              # API 與模組契約
 ├── GLOSSARY.md                    # 專案用語（模型回答、階段答案、保留額度、代答）
@@ -354,14 +354,14 @@ MultiAgentBeta/
 ├── benchmarks/                    # comparison design, synthetic-v1, examples/, results-local/, results-synthetic/
 ├── docs/                          # ARCHITECTURE, LINUX_SETUP, DOCKER_INTEGRATION_TESTING, VALIDATION, DELIVERY, SOURCES,
 │                                  #   VIBESEC_ADVISORIES, threat-model.yaml, run-input.schema.json, receipts, screenshots, history/
-├── scripts/                       # setup/start-local, verify, contract-smoke, provision-runtime/offline-db, package-release, hash-lock,
+├── scripts/                       # setup/start-local, dev-env, verify, contract-smoke, provision-runtime/offline-db, package-release, hash-lock,
 │                                  #   redact-receipts, summarize-validation, refresh-catalog, render-sample-report, mutation-test, dependency-drift
 ├── .github/workflows/ci.yml       # backend (Python 3.12/3.13: ruff, mypy, pytest + PostgreSQL, contract smoke), frontend (typecheck, ESLint, vitest, check:i18n, check:messages, build parity, manifest) and the full test suite on Windows
 ├── .github/workflows/integration.yml  # Docker worker, scanner, tool, fixture and full-pipeline integration tests on images built from deploy/
 ├── .github/workflows/mutation.yml     # mutmut mutation testing: every mutant of the gate and parser modules must be caught (scripts/mutation-test.py)
 ├── .github/workflows/mutation-pr.yml  # a pull request mutates only the functions it changed (scripts/mutation-test.py --changed)
 ├── .github/workflows/dependency-drift.yml  # weekly: pins behind their registries and OSV advisories (scripts/dependency-drift.py)
-├── .claude/                       # SessionStart hook for cloud sessions (excluded from releases)
+├── .claude/                       # SessionStart hook: builds .venv when a local or cloud session starts (excluded from releases)
 ├── CLAUDE.md                      # development guide (excluded from releases)
 ├── IMPLEMENTATION.md              # API and module contracts
 ├── GLOSSARY.md                    # Project terms (model answer, stage answer, reservation, fallback answer)

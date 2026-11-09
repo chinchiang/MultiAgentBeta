@@ -18,6 +18,7 @@ python scripts/package-release.py --check                         # CI 會跑
 python scripts/redact-receipts.py --check                         # docs/ 裡的收據不得含主機或帳號名稱
 python -m ruff check backend tests scripts                        # lint：未使用的名稱與匯入、語法錯誤、bugbear（規則在 pyproject.toml）
 sh scripts/contract-smoke.sh                                      # 對真實 loopback 後端跑控制台的 SSR／API 契約 smoke（CI 會跑）
+sh scripts/dev-env.sh                                             # 本機重開機後重建 PostgreSQL 容器、離線 OSV 與 runtime-static.json（~/.cache/vibeaudit-dev），最後印出整合測試要的環境變數
 cd frontend && npm ci && npm run typecheck && npm test && npm run check:i18n && npm run check:messages && npm run build   # dist/ 有提交進版控；npm test 跑 tests/ 的 vitest 單元與元件測試；check:i18n 找出沒有英文對照的介面中文；check:messages 比對前後端讀訊息對照表的結果
 git add -N frontend/dist && git diff --exit-code -- frontend/dist # CI：dist 必須與原始碼建置結果一致
 python -m pip install --require-hashes -r requirements.mutation.lock.txt && python scripts/mutation-test.py   # 突變測試（Linux）：閘門與解析模組的每個突變都要被測試抓到
@@ -70,6 +71,7 @@ python scripts/package-release.py --check                         # CI runs this
 python scripts/redact-receipts.py --check                         # receipts in docs/ name no host or account
 python -m ruff check backend tests scripts                        # lint: unused names and imports, syntax errors, bugbear (rules in pyproject.toml)
 sh scripts/contract-smoke.sh                                      # the console's SSR/API contract smoke against a real loopback backend (CI runs it)
+sh scripts/dev-env.sh                                             # after a local reboot: rebuild the PostgreSQL container, offline OSV and runtime-static.json (~/.cache/vibeaudit-dev), then print the integration-test variables
 cd frontend && npm ci && npm run typecheck && npm test && npm run check:i18n && npm run check:messages && npm run build   # dist/ is committed; npm test runs the vitest unit and component tests in tests/; check:i18n finds interface Chinese with no English counterpart; check:messages compares how the console and backend read the message table
 git add -N frontend/dist && git diff --exit-code -- frontend/dist # CI: dist must match the sources
 python -m pip install --require-hashes -r requirements.mutation.lock.txt && python scripts/mutation-test.py   # mutation testing (Linux): every mutant of the gate and parser modules must be caught
