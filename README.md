@@ -160,6 +160,7 @@ MultiAgentBeta/
 ├── CLAUDE.md                      # 開發指引（不進發佈檔）
 ├── IMPLEMENTATION.md              # API 與模組契約
 ├── GLOSSARY.md                    # 專案用語（模型回答、階段答案、保留額度、代答）
+├── CODING_STANDARDS.md            # 程式碼審查時的判斷題（工具抓不到的部分）
 ├── README.md · LICENSE · NOTICE
 ├── pyproject.toml · requirements.lock.txt · requirements.mutation.lock.txt   # 固定版本並檢查雜湊的相依套件；第二份只供突變測試
 └── source-manifest.sha256         # 每個被追蹤檔案的雜湊清單（scripts/package-release.py）
@@ -185,7 +186,7 @@ MultiAgentBeta/
 - [Docker 整合測試](docs/DOCKER_INTEGRATION_TESTING.md)／[Worker 映像](deploy/worker/README.md)
 - [前端建置與連線行為](frontend/README.md)
 - [架構與方法](docs/ARCHITECTURE.md)
-- [API 與模組契約](IMPLEMENTATION.md)／[用語](GLOSSARY.md)
+- [API 與模組契約](IMPLEMENTATION.md)／[用語](GLOSSARY.md)／[程式碼審查規範](CODING_STANDARDS.md)
 - [交付對照](docs/DELIVERY.md)／[驗證紀錄](docs/VALIDATION.md)
 - [模型減偏比較設計](benchmarks/README.md)
 - [來源與授權](docs/SOURCES.md)／[NOTICE](NOTICE)
@@ -365,6 +366,7 @@ MultiAgentBeta/
 ├── CLAUDE.md                      # development guide (excluded from releases)
 ├── IMPLEMENTATION.md              # API and module contracts
 ├── GLOSSARY.md                    # Project terms (model answer, stage answer, reservation, fallback answer)
+├── CODING_STANDARDS.md            # judgement calls for code review (what no tool catches)
 ├── README.md · LICENSE · NOTICE
 ├── pyproject.toml · requirements.lock.txt · requirements.mutation.lock.txt   # pinned, hash-checked dependencies; the second only for mutation testing
 └── source-manifest.sha256         # hash list of every tracked file (scripts/package-release.py)
@@ -390,7 +392,7 @@ Containers, the database, and control-process administrators are trust boundarie
 - [Docker integration testing](docs/DOCKER_INTEGRATION_TESTING.md) / [Worker images](deploy/worker/README.md)
 - [Frontend build and connection behavior](frontend/README.md)
 - [Architecture and methodology](docs/ARCHITECTURE.md)
-- [API and module contracts](IMPLEMENTATION.md) / [Glossary](GLOSSARY.md)
+- [API and module contracts](IMPLEMENTATION.md) / [Glossary](GLOSSARY.md) / [Code review standards](CODING_STANDARDS.md)
 - [Delivery comparison](docs/DELIVERY.md) / [Validation log](docs/VALIDATION.md)
 - [Bias-reduction comparison design](benchmarks/README.md)
 - [Sources and license](docs/SOURCES.md) / [NOTICE](NOTICE)

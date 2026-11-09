@@ -134,3 +134,17 @@ def test_readme_directory_tree_matches_the_repository(half):
     tests = [name for name in FILES if re.fullmatch(r"tests/test_\w+\.py", name)]
     stated = re.search(r"pytest\s*[（(](\d+)", tree)
     assert stated and int(stated.group(1)) == len(tests), f"README tree states {stated and stated.group(1)} test files; there are {len(tests)}"
+
+
+# Modules that are the package's own plumbing rather than a part of the system.
+UNMAPPED_MODULES = {"__init__.py", "__main__.py"}
+
+
+@pytest.mark.parametrize("half,heading", [(0, "### 模組對照"), (1, "### Module map")], ids=["chinese", "english"])
+def test_every_backend_module_is_in_the_architecture_module_map(half, heading):
+    section = halves("docs/ARCHITECTURE.md")[half].split(heading, 1)[1].split("\n## ", 1)[0]
+    mapped = set(re.findall(r"`([\w.]+\.py)`", section))
+    modules = {name.removeprefix("backend/vibe_audit/") for name in FILES
+               if re.fullmatch(r"backend/vibe_audit/[\w]+\.py", name)}
+    missing = sorted(modules - mapped - UNMAPPED_MODULES)
+    assert not missing, f"docs/ARCHITECTURE.md's module map leaves out: {missing}"
