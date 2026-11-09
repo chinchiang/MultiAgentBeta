@@ -1,4 +1,5 @@
 """Regression checks for boundaries found during the local integration audit."""
+import asyncio
 import base64
 import copy
 import os
@@ -6,8 +7,8 @@ import sys
 
 import pytest
 
+from fakes import FakePort, answer_with
 from vibe_audit import adapters
-from vibe_audit.answers import Answer
 from vibe_audit.domain import RunInput
 from vibe_audit.policy import PolicyError
 from vibe_audit.service import Engine, report_markdown
@@ -121,17 +122,17 @@ async def test_optional_reporter_can_order_but_cannot_invent_findings(tmp_path):
     await engine.tasks[run["id"]]
     run = store.get(run["id"])
     run["mode"] = "live"
-    run["manifest"]["models"].append({"id":"reporter","role":"reporter"})
+    commander = next(p for p in run["manifest"]["models"] if p["role"] == "commander")
+    run["manifest"]["models"].append({**commander, "id":"reporter", "role":"reporter"})
+    engine.cancel_flags[run["id"]] = asyncio.Event()
+    engine.locks[run["id"]] = asyncio.Lock()
     original = copy.deepcopy(run["findings"])
-    async def valid(*args):
-        return Answer({"finding_ids":[f["id"] for f in reversed(original)]})
-    engine.model = valid
+    engine.model_port = FakePort([answer_with({"finding_ids":[f["id"] for f in reversed(original)]}), answer_with({"finding_ids":["fabricated"]})])
     await engine._report(run)
     assert run["findings"] == list(reversed(original))
+    # A fresh order: neither the recorded one nor the answer kept for a resumed stage.
     run.pop("report_order")
-    async def invalid(*args):
-        return Answer({"finding_ids":["fabricated"]})
-    engine.model = invalid
+    run.get("model_outputs", {}).pop("report_order", None)
     with pytest.raises(PolicyError):
         await engine._report(run)
     assert {f["id"] for f in run["findings"]} == {f["id"] for f in original}
