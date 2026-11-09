@@ -49,7 +49,7 @@ flowchart TB
 
 ### 模組對照
 
-上圖每個節點對應 `backend/vibe_audit/`（或註明目錄）中的程式。兩個區塊就是下文的信任邊界：不受信任區的內容只能以資料形式經過閘門或 supervisor 進入控制平面。README 的「系統架構與流程」以階段為主軸畫出同一個系統。
+上圖每個節點對應 `backend/vibe_audit/`（或註明目錄）中的程式。兩個區塊就是下文的信任邊界：不受信任區的內容只能以資料形式經過閘門或 supervisor 進入控制平面。README 的「系統架構與流程」以階段為主軸畫出同一個系統。表格最後一列是圖上沒有節點的支援模組。
 
 | 節點 | 實作位置 |
 |---|---|
@@ -57,14 +57,15 @@ flowchart TB
 | FastAPI：session／CSRF／scope | `api.py`、`workspace_api.py` |
 | 指揮與 LangGraph 階段 | `service.py`（`STAGES`，每個階段一個圖節點） |
 | 模型閘道・每個代理的 profile | `stage_answers.py`（`StageAnswers`：角色由誰回答、答案通過階段檢查才保留、續跑沿用）、`answers.py`（`ModelAnswers`：保留額度、計量、驗證與有界重試、操作者設定的備援）、`providers.py`（`LiteLLMPort`：經 LiteLLM 送出一次，無隱性 fallback） |
-| 確定性閘門 | `policy.py`（manifest、whitebox、threat、case 閘門與 `authorize`）、`contracts.py`、`domain.py` |
+| 確定性閘門 | `policy.py`（manifest、whitebox、threat、case 閘門與 `authorize`）、`contracts.py`、`domain.py`；標準 ID 目錄在 `catalog.py`，目錄與 benchmark 檔案的 JSON schema 在 `schemas.py` |
 | 獨立 supervisor ＋ 持久 lease | `worker_runtime.py`、`lease.py`；IP 釘選傳輸與 oracle 在 `adapters.py` |
 | 獨立 effect collector | `effect_collector.py`，經 `fixture_protocol.py` 使用 |
 | 證據寫入與 job 帳本 | `store.py`、`traceability.py`；報告匯出在 `service.py` |
 | raw 私密 staging／脫敏快照 | `staging.py`（只給掃描器）、`snapshot.py`（只給模型） |
-| 唯讀白箱掃描 worker | `sandbox.py`、`worker_runtime.py` 的 `run_scanner`、`deploy/scanners/` |
+| 唯讀白箱掃描 worker | `sandbox.py`、`worker_runtime.py` 的 `run_scanner`、`deploy/scanners/`；掃描器輸入與 provisioning 資源的釘選在 `resource_manifest.py` |
 | Docker 黑箱 worker | `worker_entry.py`、`tool_runners.py`、`deploy/worker/` |
 | 核准的 staging 目標 | 操作者提供；合成目標在 `fixtures/` |
+| 圖外的支援模組 | `settings.py`（後端程序的 VIBEAUDIT_* 設定）、`messages.py`（固定英文訊息的中文）、`diagnostics.py`（只寫在本機的失敗原因）、`benchmark.py`（預算對齊的比較基準）、`benchmark_matching.py`（benchmark 發現的盲審比對） |
 
 受信任的控制平面包含操作者設定、模型閘道、supervisor、資料庫與證據寫入器。儲存庫、模型、目標、掃描器產物與報告文字皆屬不受信任的資料。JSON schema 驗證並不保證語意正確。broker 是強制執行點；模型 prompt 不是安全邊界。
 
@@ -157,7 +158,7 @@ flowchart TB
 
 ### Module map
 
-Each node above maps to code in `backend/vibe_audit/` (or the named directory). The two boxes are the trust boundary described below: anything from the untrusted box reaches the control plane only as data, through a gate or the supervisor. The README's "Architecture Overview" draws the same system by stage.
+Each node above maps to code in `backend/vibe_audit/` (or the named directory). The two boxes are the trust boundary described below: anything from the untrusted box reaches the control plane only as data, through a gate or the supervisor. The README's "Architecture Overview" draws the same system by stage. The table's last row holds the supporting modules that have no node in the diagram.
 
 | Node | Implementation |
 |---|---|
@@ -165,14 +166,15 @@ Each node above maps to code in `backend/vibe_audit/` (or the named directory). 
 | FastAPI: session / CSRF / scope | `api.py`, `workspace_api.py` |
 | Commander and LangGraph stages | `service.py` (`STAGES`, one graph node per stage) |
 | Model gateway · per-agent profiles | `stage_answers.py` (`StageAnswers`: who answers a role, an answer kept only once it passes the stage's checks and reused on resume), `answers.py` (`ModelAnswers`: reservation, metering, validation and the bounded retry, the operator's fallback), `providers.py` (`LiteLLMPort`: one send through LiteLLM, no implicit fallback) |
-| Deterministic gates | `policy.py` (manifest, whitebox, threat and case gates and `authorize`), `contracts.py`, `domain.py` |
+| Deterministic gates | `policy.py` (manifest, whitebox, threat and case gates and `authorize`), `contracts.py`, `domain.py`; the standards ID catalog in `catalog.py`, the JSON schemas of catalog and benchmark files in `schemas.py` |
 | Independent supervisor + persistent lease | `worker_runtime.py`, `lease.py`; IP-pinned transport and oracles in `adapters.py` |
 | Independent effect collector | `effect_collector.py`, used through `fixture_protocol.py` |
 | Evidence writer and job ledger | `store.py`, `traceability.py`; report export in `service.py` |
 | Raw private staging / redacted snapshot | `staging.py` (scanners only), `snapshot.py` (models only) |
-| Read-only whitebox scanner worker | `sandbox.py`, `run_scanner` in `worker_runtime.py`, `deploy/scanners/` |
+| Read-only whitebox scanner worker | `sandbox.py`, `run_scanner` in `worker_runtime.py`, `deploy/scanners/`; scanner inputs and provisioning resources pinned in `resource_manifest.py` |
 | Docker blackbox worker | `worker_entry.py`, `tool_runners.py`, `deploy/worker/` |
 | Approved staging target | Supplied by the operator; synthetic targets in `fixtures/` |
+| Supporting modules outside the diagram | `settings.py` (the backend process's VIBEAUDIT_* settings), `messages.py` (Chinese wording of the fixed English messages), `diagnostics.py` (failure reasons kept only on this machine), `benchmark.py` (the budget-matched benchmark), `benchmark_matching.py` (blind-review matching of benchmark findings) |
 
 The trusted control plane includes operator configuration, the model gateway, supervisor, database and evidence writer. Repository, model, target, scanner artifacts and report text are untrusted data. JSON schema validation does not establish semantic correctness. The broker is the enforcement point; model prompts are not security boundaries.
 
