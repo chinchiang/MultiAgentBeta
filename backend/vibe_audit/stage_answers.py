@@ -12,9 +12,11 @@ from typing import Any
 
 from .domain import digest
 
-# Roles whose one answer a resumed stage reuses, each kept under its role's name. Reviewers are sealed per reviewer
-# in the run's reviews instead, so they keep nothing here.
-KEPT_ROLES = frozenset({"challenger", "architecture_mapper", "threat_modeler", "test_designer"})
+# Roles whose one answer a resumed stage reuses, and the name each is kept under: the commander's own answer is its
+# review plan, the reporter's its report order. Reviewers are sealed per reviewer in the run's reviews instead, so they
+# keep nothing here.
+KEPT_UNDER = {"challenger": "challenger", "architecture_mapper": "architecture_mapper", "threat_modeler": "threat_modeler",
+              "test_designer": "test_designer", "commander": "commander_plan", "reporter": "report_order"}
 # Roles a run may leave out: with no Agent of their own the step is skipped, never handed to the commander.
 OPTIONAL_ROLES = frozenset({"reporter"})
 
@@ -67,7 +69,7 @@ class StageAnswers:
     async def _held(self, who, instruction, payload, contract):
         seat = who if isinstance(who, Seat) else self.seat(who)
         binding = digest({"profile": seat.agent["id"], "instruction": instruction, "payload": payload})
-        name = seat.role if seat.role in KEPT_ROLES else None
+        name = KEPT_UNDER.get(seat.role)
         kept = self.run.get("model_outputs", {}).get(name)
         reused = bool(kept) and kept["binding"] == binding
         if reused:

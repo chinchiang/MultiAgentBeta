@@ -190,3 +190,14 @@ async def test_a_cancellation_during_the_checks_is_no_verdict_on_a_reused_answer
         async with stage(run, store, port).answer("threat_modeler", "Model", {}, Findings):
             raise asyncio.CancelledError()
     assert store.get(run["id"])["model_outputs"]["threat_modeler"]["data"] == {"ids": ["F-1"]}
+
+
+async def test_the_commanders_plan_and_the_reporters_order_are_kept_under_names_of_their_own(run, store):
+    add_agent(run, "reporter")
+    port = FakePort([answer_with({"ids": ["F-1"]}), answer_with({"ids": ["F-2"]})])
+    async with stage(run, store, port).answer("commander", "Plan", {}, Findings):
+        pass
+    async with stage(run, store, port).answer("reporter", "Order", {}, Findings):
+        pass
+    kept = store.get(run["id"])["model_outputs"]
+    assert {name: entry["data"] for name, entry in kept.items()} == {"commander_plan": {"ids": ["F-1"]}, "report_order": {"ids": ["F-2"]}}
