@@ -15,8 +15,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 3.12 is the validated release runtime; 3.13 shows what the next interpreter would break.
-        python-version: ["3.12", "3.13"]
+        # 3.12 is the validated release runtime; 3.13 and 3.14 show what the next interpreters would break (3.14 changed
+        # Path.is_dir to answer False for every OSError, which snapshot_source had relied on).
+        python-version: ["3.12", "3.13", "3.14"]
     services:
       postgres:
         # postgres:18.6, digest read from the registry on 2026-10-03. Pulled from the ECR Public mirror of the Docker
