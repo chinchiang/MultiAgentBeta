@@ -714,7 +714,8 @@ async def execute_case(manifest: dict, case: dict, *, cancel_event, request_hook
         return _result("blocked", "This adapter executes live HTTP only; synthetic demo execution belongs to the service.")
     if manifest.get("mode") != "live":
         return _result("blocked", "HTTP target requests require an explicitly live run.")
-    if state_changing(case):
+    # Only an operator may declare a POST free of side effects (service passes the same flag for the case).
+    if state_changing(case, operator_case=case.get("designed_by") != "model"):
         return _result("blocked", "Side-effecting cases require a sandbox effect collector and cleanup runner, which are not connected.")
     if request_hook is None:
         return _result("blocked", "The request budget/cancellation hook is required for live transport.")
