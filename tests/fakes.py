@@ -9,7 +9,13 @@ from vibe_audit.providers import Reply
 class FakePort:
     """Sends nothing: answers from a script (replies or errors, in order) or from an answer function, and records each send.
 
-    An asyncio.Event in the script is a send still in flight: it does not return until the test sets it."""
+    An asyncio.Event in the script is a send still in flight: it does not return until the test sets it.
+
+    Every send ModelAnswers makes reaches the port, retries and fallbacks included. A reply that breaks the JSON, the
+    schema or the contract is asked for again once, with a retry hint appended to the messages; a refusal or truncation
+    goes on to the fallback Agent, if one stands in. Each of those sends takes the next scripted reply, or calls the
+    answer function again, so a function that hands out answers in turn gives the retry the next one. To test a stage's
+    own checks, answer with something the contract accepts and the check refuses."""
 
     def __init__(self, replies=(), *, answer=None, refuse=None):
         self.replies = list(replies)
