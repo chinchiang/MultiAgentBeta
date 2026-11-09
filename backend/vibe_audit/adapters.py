@@ -480,6 +480,17 @@ def _put_header(headers, name, value):
     return {(name if key.lower() == lower else key): (value if key.lower() == lower else old) for key, old in headers.items()}
 
 
+def request_path_problem(path):
+    """Why the transport would never send this path, or None. The operator's scope is held to the same rule, so a scope
+    entry is refused as input rather than listing a path no request can ever take."""
+    if (not isinstance(path, str) or not path.startswith("/") or path.startswith("//")
+            or "\\" in path or "#" in path or any(ord(c) < 33 for c in path)):
+        return "Case path must be origin-relative and must not contain control characters."
+    if not path.isascii():
+        return "Case path must use ASCII URL encoding."
+    return None
+
+
 def _prepare_request(manifest, case, *, transport_headers=None):
     """transport_headers are added by trusted transport code (the supervisor's Content-Type for a body it forwards):
     they are not a model's choice, so they skip the per-endpoint model vocabulary but keep the same wire order."""
@@ -487,13 +498,9 @@ def _prepare_request(manifest, case, *, transport_headers=None):
     if method not in {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}:
         raise AdapterBlocked("Unsupported HTTP method.")
     path = case.get("path", "/")
-    if (not isinstance(path, str) or not path.startswith("/") or path.startswith("//")
-            or "\\" in path or "#" in path or any(ord(c) < 33 for c in path)):
-        raise AdapterBlocked("Case path must be origin-relative and must not contain control characters.")
-    try:
-        path.encode("ascii")  # pragma: no mutate (codec names are case-insensitive)
-    except UnicodeError:
-        raise AdapterBlocked("Case path must use ASCII URL encoding.") from None
+    problem = request_path_problem(path)
+    if problem:
+        raise AdapterBlocked(problem)
     headers = {"Accept": "application/json", "Accept-Encoding": "identity", "Connection": "close"}
     supplied = case.get("headers") or {}
     model_designed = case.get("designed_by") == "model"
@@ -707,7 +714,8 @@ async def execute_case(manifest: dict, case: dict, *, cancel_event, request_hook
         return _result("blocked", "This adapter executes live HTTP only; synthetic demo execution belongs to the service.")
     if manifest.get("mode") != "live":
         return _result("blocked", "HTTP target requests require an explicitly live run.")
-    if state_changing(case):
+    # Only an operator may declare a POST free of side effects (service passes the same flag for the case).
+    if state_changing(case, operator_case=case.get("designed_by") != "model"):
         return _result("blocked", "Side-effecting cases require a sandbox effect collector and cleanup runner, which are not connected.")
     if request_hook is None:
         return _result("blocked", "The request budget/cancellation hook is required for live transport.")

@@ -116,6 +116,15 @@ def test_generic_profiles_validate_and_add_scope_before_sealing():
             register_target_adapter("bad", {**profile, "cleanup": [step]})
 
 
+@pytest.mark.parametrize("headers", [{"X-HTTP-Method-Override": "DELETE"}, {"Forwarded": "for=10.0.0.1"},
+                                     {"Accept": "application/json", "ACCEPT": "text/html"}])
+def test_a_lifecycle_step_is_held_at_registration_to_the_headers_the_supervisor_sends(headers):
+    # The supervisor refuses these when the step is sent; refused at registration, no sequence stops halfway.
+    cleanup = {"id": "cleanup", "method": "POST", "path": "/test/cleanup", "body": {}, "expected_status": 200}
+    with pytest.raises(ValueError, match="routing or credential-bearing request header"):
+        register_target_adapter("bad", {"reset": [{**cleanup, "id": "reset", "headers": headers}], "cleanup": [cleanup]})
+
+
 def rag_case(profile):
     c = {"id":"generic-rag", "method":"POST", "path":"/retrieve", "identity":"tenant-a", "headers":{},
          "body":{"document_id":"doc-b"}, "threat_model_hash":"sealed-threat", "side_effects":True,

@@ -225,6 +225,15 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result["requests"], 0)
         self.assertEqual(self.events, [])
 
+    async def test_a_model_post_counts_as_state_changing_inside_the_worker_too(self):
+        # Only an operator may declare a POST free of side effects; the controller holds a model case to that, and so
+        # does the worker, which has the case's designed_by.
+        self.case = {**case_template(), "method": "POST", "body": {"message": "fixture"}, "side_effects": False, "designed_by": "model"}
+        result = await self.run_case()
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["requests"], 0)
+        self.assertEqual(self.events, [])
+
     async def test_hook_precedes_each_request(self):
         self.case["repetitions"] = 3
         result = await self.run_case()

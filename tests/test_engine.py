@@ -1678,6 +1678,14 @@ def test_scope_entries_accept_only_a_boolean_model_body_flag():
             RunInput(**base,allowed_requests=[entry])
 
 
+@pytest.mark.parametrize("path",["/orders private","/orders#top","/caf\u00e9","/a\tb"])
+def test_a_scope_path_the_transport_could_never_send_is_refused_as_input(path):
+    with pytest.raises(ValueError,match="Scope requires an exact relative HTTP path"):
+        RunInput(name="Scope",mode="demo",allowed_requests=[{"method":"GET","path":path}])
+    # What the transport does send stays accepted.
+    RunInput(name="Scope",mode="demo",allowed_requests=[{"method":"GET","path":"/orders/caf%C3%A9?page=2"}])
+
+
 def sid_of(client):
     return client.cookies.get("vibeaudit_session")
 

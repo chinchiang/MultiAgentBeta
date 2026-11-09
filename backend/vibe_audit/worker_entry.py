@@ -317,7 +317,7 @@ class Supervisor:
                 "hard_deadline_unix":time.time()+self.spec["timeout_seconds"]}
 
     def allowed_request(self,request):
-        from adapters import _prepare_request  # type: ignore[import-not-found]  # flat import inside the container
+        from adapters import SAFE_METHODS, _prepare_request  # type: ignore[import-not-found]  # flat import inside the container
         method=request.get("method")
         path=request.get("path")
         if (method,path) not in {(r.get("method","GET").upper(),r.get("path")) for r in self.manifest.get("allowed_requests",[])}:
@@ -371,9 +371,10 @@ class Supervisor:
         # The case and its positive controls are what the model wrote; fixture lifecycle steps come from the engine.
         model_step=case.get("designed_by")=="model" and (self.spec.get("operation")!="request_sequence"
             or step.get("id")=="case" or str(step.get("id","")).startswith("control:"))
-        if model_step and raw and not any(r.get("model_body") is True and (r.get("method","GET").upper(),r.get("path"))==(method,path)
-                                          for r in self.manifest.get("allowed_requests",[])):
-            raise ValueError("A model-written body goes only to an endpoint the operator marked model_body")
+        # The controller's rule (service.model_body_denied): a model request that carries a body, or is not a read.
+        if model_step and (raw or method not in SAFE_METHODS) and not any(r.get("model_body") is True and (r.get("method","GET").upper(),r.get("path"))==(method,path)
+                                                                          for r in self.manifest.get("allowed_requests",[])):
+            raise ValueError("A model-written request that carries a body or is not a read goes only to an endpoint the operator marked model_body")
         # Transport-generated headers are not part of the reviewed request.
         headers=dict(step.get("headers",{}))
         transport={"Content-Type":"application/json"} if raw else None
