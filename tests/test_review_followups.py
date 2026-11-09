@@ -93,7 +93,7 @@ def test_model_header_choices_that_mean_the_same_look_the_same():
     assert not case_headers_allowed({"Content-Type": "application/json;charset=utf-8"}, model_designed=True, vocabulary=LISTED)
 
 
-def model_supervisor(monkeypatch, *, model_body=False, designed_by="model", headers=None, model_headers=None):
+def model_supervisor(monkeypatch, *, model_body=False, designed_by="model", headers=None, model_headers=None, bodiless=False):
     monkeypatch.setitem(sys.modules, "adapters", adapters)
     instance = Supervisor.__new__(Supervisor)
     listed = {"Accept": ["application/json"]} if model_headers is None else model_headers
@@ -101,12 +101,22 @@ def model_supervisor(monkeypatch, *, model_body=False, designed_by="model", head
              **({"model_headers": listed} if listed else {})}
     instance.manifest = {"allowed_requests": [entry], "auth_profiles": []}
     case = {"id": "C1", "method": "POST", "path": "/chat", "identity": None,
-            "headers": headers if headers is not None else {"Accept": "application/json"}, "body": {"q": "hi"}}
+            "headers": headers if headers is not None else {"Accept": "application/json"}, "body": None if bodiless else {"q": "hi"}}
     if designed_by:
         case["designed_by"] = designed_by
     instance.spec = {"operation": "tool", "cases": [case]}
     instance.sessions = {}
     return instance
+
+
+def test_supervisor_sends_a_bodiless_model_write_only_to_an_operator_marked_endpoint(monkeypatch):
+    # The controller sends a model request that carries a body, or is not a read, only to a model_body endpoint;
+    # the last trusted hop holds a POST without a body to the same rule.
+    bodiless = {**chat_request(), "headers": {"Accept": "application/json"}, "body_b64": ""}
+    with pytest.raises(ValueError, match="model_body"):
+        model_supervisor(monkeypatch, bodiless=True).allowed_request(bodiless)
+    case_id, _, method, path, headers, raw, _ = model_supervisor(monkeypatch, model_body=True, bodiless=True).allowed_request(bodiless)
+    assert (method, path, raw) == ("POST", "/chat", b"")
 
 
 def chat_request(headers=None):
