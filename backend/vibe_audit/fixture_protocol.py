@@ -13,7 +13,7 @@ import re
 from typing import Protocol
 from urllib.parse import urlsplit
 
-from .adapters import evaluate_oracle
+from .adapters import case_headers_allowed, evaluate_oracle
 from .effect_collector import EffectCollector, EffectGateway
 from .settings import fixture_config
 
@@ -56,8 +56,12 @@ def register_target_adapter(name, profile):
             if (step.get("method") not in {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"} or not path.startswith("/") or path.startswith("//")
                     or parsed.netloc or parsed.scheme or parsed.fragment or "\\" in path or any(ord(c) < 32 for c in path)):
                 raise ValueError("Target adapter requires exact relative method/path")
-            if any(k.lower() in {"authorization", "cookie", "host", "proxy-authorization"} for k in step.get("headers", {})):
-                raise ValueError("Credentials belong in supervisor auth profiles")
+            # The supervisor holds every lifecycle step to these header rules when it sends it; refused here, a
+            # sequence never stops halfway, after its reset was already sent.
+            headers = step.get("headers", {})
+            if (not isinstance(headers, dict) or not case_headers_allowed(headers)
+                    or len({str(name).lower() for name in headers}) != len(headers)):
+                raise ValueError("Target adapter step contains an unsupported, routing or credential-bearing request header")
             # A lifecycle step is only confirmed by an expected success; an error answer must not count.
             if group in {"reset", "session_reset", "setup", "cleanup"} and (type(step.get("expected_status")) is not int or not 200 <= step["expected_status"] < 300):
                 raise ValueError("Lifecycle steps need an explicit 2xx expected_status")
