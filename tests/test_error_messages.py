@@ -52,6 +52,11 @@ def message_args(node):
         return [keyword.value for keyword in node.keywords if keyword.arg == "reason"]
     if isinstance(node, ast.Dict):
         return [value for key, value in zip(node.keys, node.values) if getattr(key, "value", None) == "reason"]
+    if (isinstance(node, ast.Assign) and isinstance(node.value, ast.Dict)
+            and any(getattr(target, "id", "").endswith("_REFUSALS") for target in node.targets)):
+        # A caller's table of what it says for each request rule (request_rules.RequestRefused.rule): every value is a
+        # message that caller reports.
+        return list(node.value.values)
     if isinstance(node, ast.Assign) and isinstance(node.value, ast.Tuple):
         names = [getattr(target, "id", None) for target in getattr(node.targets[0], "elts", [])]
         return [node.value.elts[names.index("reason")]] if "reason" in names else []

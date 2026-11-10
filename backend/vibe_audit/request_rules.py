@@ -157,3 +157,76 @@ def request_path_problem(path):
     if not path.isascii():
         return "Case path must use ASCII URL encoding."
     return None
+
+
+class RequestRefused(ValueError):
+    """A request rule a case breaks. rule is a stable code each caller maps to its own message and exception type;
+    step is the id of the plan step that breaks it."""
+
+    def __init__(self, rule, step=None):
+        super().__init__(rule)
+        self.rule = rule
+        self.step = step
+
+
+def _source(manifest, case):
+    """Who wrote a case's requests: the model, the operator (a case of the operator's own list), or else the engine."""
+    if case.get("designed_by") == "model":
+        return "model"
+    return "operator" if any(c.get("id") == case.get("id") for c in manifest.get("cases") or []) else "engine"
+
+
+def _step(id, phase, source, request, *, side_effects=False):
+    step = {"id": id, "phase": phase, "source": source, "method": request.get("method", "GET"), "path": request.get("path"),
+            "identity": request.get("identity"), "headers": {} if request.get("headers") is None else request.get("headers"),
+            "body": request.get("body")}
+    step["read_only"] = not state_changing({**step, "side_effects": side_effects}, operator_case=source == "operator")
+    return step
+
+
+def plan_case(manifest, case, *, live, lifecycle=None):
+    """The case's request plan: every request it may send, in order, each with who wrote it.
+
+    lifecycle is the engine's fixture lifecycle for the case (reset, setup, cleanup and the like); without it the
+    lifecycle the case was sealed with is used. Each rule is checked over every step before the next rule, the case's
+    own request first, then its controls, then its lifecycle: the order the case gate has always reported them in.
+    A step that breaks a rule raises RequestRefused naming the rule and the step."""
+    source = _source(manifest, case)
+    own = _step("case", "case", source, case, side_effects=bool(case.get("side_effects")))
+    controls = [_step("control:" + str(p.get("name")), "control", source, p)
+                for p in case.get("preconditions", []) if isinstance(p, dict)]
+    if lifecycle is None:
+        # Sealed before the plan existed: the lifecycle sits in allowed_requests beside the case's own requests.
+        lifecycle = case.get("allowed_requests") or []
+    seen = {(s["method"], s["path"], s["identity"]) for s in [own, *controls]}
+    engine = []
+    for request in lifecycle:
+        step = _step(request.get("id") or f"lifecycle:{len(engine) + 1}", request.get("phase", "lifecycle"), "engine", request)
+        key = (step["method"], step["path"], step["identity"])
+        if key not in seen:
+            seen.add(key)
+            engine.append(step)
+    checked = [own, *controls, *engine]
+    # The model wrote a body or a write after reading the untrusted snapshot: it goes only to an endpoint the operator
+    # marked model_body, never to one that stores, publishes or forwards what it receives.
+    unnamed = "GET"  # pragma: no mutate (upper() below makes any spelling of it the same method)
+    marked = {(str(r.get("method", unnamed)).upper(), r.get("path")) for r in manifest.get("allowed_requests") or []
+              if r.get("model_body") is True}
+    for step in checked:
+        payload = step["body"] is not None or str(step["method"]).upper() not in SAFE_METHODS
+        step["body_permitted"] = not (live and step["source"] == "model" and payload) or (str(step["method"]).upper(), step["path"]) in marked
+    for step in checked:
+        # The operator's per-endpoint list binds only what the model wrote; other headers ignore it.
+        vocabulary = model_header_vocabulary(manifest, step["method"], step["path"])
+        if not case_headers_allowed(step["headers"], model_designed=step["source"] == "model", vocabulary=vocabulary):
+            raise RequestRefused("headers", step["id"])
+    selectable = {p.get("id") for p in manifest.get("auth_profiles") or [] if p.get("model_selectable") is True}
+    for step in checked:
+        if step["source"] == "model" and step["identity"] is not None and step["identity"] not in selectable:
+            raise RequestRefused("identity", step["id"])
+    if live:
+        scope = {(r.get("method"), r.get("path")) for r in manifest.get("allowed_requests") or []}
+        for step in checked:
+            if (step["method"], step["path"]) not in scope:
+                raise RequestRefused("scope", step["id"])
+    return {"version": 1, "steps": [*controls, own, *engine]}
