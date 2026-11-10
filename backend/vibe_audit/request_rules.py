@@ -150,15 +150,27 @@ def state_changing(case: dict, *, operator_case: bool = True) -> bool:
             or (method not in SAFE_METHODS and not operator_case))
 
 
+# The phases of the steps the case itself names: its own request and its positive controls. Every other step of a
+# plan is the engine's lifecycle, which only a request sequence sends.
+CASE_PHASES = frozenset({"case", "control"})
+
+
+def own_step(case):
+    """The step of the case's request plan that is the case's own request, or None without one."""
+    plan = case.get("request_plan")
+    if not isinstance(plan, dict):
+        return None
+    return next((s for s in plan.get("steps") or [] if s.get("phase") == "case"), None)
+
+
 def read_only(case):
     """Whether the case's own request leaves the target's state as it was, as the case's request plan records it.
 
-    The worker gets only that step of the plan. A case sealed before request plans is read by the rule of its time:
-    only a model-written POST is never read-only."""
-    plan = case.get("request_plan")
-    own = next((s for s in plan.get("steps") or [] if s.get("phase") == "case"), None) if isinstance(plan, dict) else None
+    The worker gets only that step of the plan; a step that does not say it reads is a write. A case sealed before
+    request plans is read by the rule of its time: only a model-written POST is never read-only."""
+    own = own_step(case)
     if own is not None:
-        return own["read_only"] is True
+        return own.get("read_only") is True
     return not state_changing(case, operator_case=case.get("designed_by") != "model")
 
 
@@ -209,6 +221,7 @@ def _headers(headers):
 
 
 def _key(step):
+    """What makes two steps the same step; the headers are spelled as text so the key can sit in a set."""
     headers = _headers(step["headers"])
     return step["method"], step["path"], step["identity"], repr(sorted(headers.items()) if isinstance(headers, dict) else headers)
 
@@ -224,7 +237,7 @@ def _steps(manifest, case, *, lifecycle):
         # A sealed case carries its lifecycle in its request plan; one sealed before the plan existed carries it in
         # allowed_requests, beside the case's own requests.
         plan = case.get("request_plan")
-        lifecycle = ([s for s in plan.get("steps", []) if s.get("phase") not in ("case", "control")] if isinstance(plan, dict)
+        lifecycle = ([s for s in plan.get("steps", []) if s.get("phase") not in CASE_PHASES] if isinstance(plan, dict)
                      else case.get("allowed_requests") or [])
     # A step is the same step only with the same headers too: an engine probe of a control's request keeps its own source.
     seen = {_key(s) for s in [own, *controls]}

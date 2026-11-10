@@ -3,7 +3,7 @@ import copy
 
 import pytest
 
-from vibe_audit.request_rules import RequestRefused, match_request, plan_case, read_only
+from vibe_audit.request_rules import RequestRefused, match_request, own_step, plan_case, read_only
 
 
 def manifest(**changes):
@@ -318,3 +318,16 @@ def test_whether_a_case_writes_is_read_from_its_plans_own_step_or_else_by_who_wr
     for plan in ({"version": 1, "steps": []}, {"version": 1}, None):
         assert read_only({**post, "request_plan": plan}) is True
         assert read_only({**post, "request_plan": plan, "designed_by": "model"}) is False
+
+
+def test_a_cases_own_step_is_the_plans_step_for_its_own_request():
+    sealed = sealed_case()
+    assert own_step(sealed) == next(s for s in sealed["request_plan"]["steps"] if s["id"] == "case")
+    for plan in ({"version": 1, "steps": [engine_step()]}, {"version": 1}, None):
+        assert own_step({**fixture_case(), "request_plan": plan}) is None
+
+
+def test_an_own_step_that_does_not_say_it_reads_is_a_write():
+    post = case(method="POST", path="/chat", body={"q": "hi"})
+    assert read_only({**post, "request_plan": {"version": 1, "steps": [{"id": "case", "phase": "case"}]}}) is False
+    assert read_only({**post, "request_plan": {"version": 1, "steps": [{"id": "case", "phase": "case", "read_only": True}]}}) is True

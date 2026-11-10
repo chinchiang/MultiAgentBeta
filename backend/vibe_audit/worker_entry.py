@@ -301,12 +301,12 @@ class Supervisor:
             return self.spec
         def control(index,item):
             return {**{k:item[k] for k in ("method","path","headers","identity","expected_status","required_text") if k in item},"name":f"control-{index}"}
-        def own_step(case):
+        from request_rules import own_step  # type: ignore[import-not-found]  # flat import inside the container
+        def own_plan(case):
             # Whether the case writes (request_rules.read_only) is the one thing the worker reads from its request plan.
-            plan=case.get("request_plan")
-            if not isinstance(plan,dict): return {}
-            return {"request_plan":{"version":plan.get("version"),"steps":[s for s in plan.get("steps") or [] if s.get("phase")=="case"]}}
-        cases=[{**{k:c[k] for k in WORKER_CASE_FIELDS if k in c},**own_step(c),
+            own=own_step(case)
+            return {"request_plan":{"version":case["request_plan"].get("version"),"steps":[own]}} if own else {}
+        cases=[{**{k:c[k] for k in WORKER_CASE_FIELDS if k in c},**own_plan(c),
                 "preconditions":[control(i,p) for i,p in enumerate([p for p in c.get("preconditions",[]) if isinstance(p,dict)],1)]}
                for c in self.spec.get("cases",[])]
         view={**self.spec,"cases":cases}
@@ -323,7 +323,7 @@ class Supervisor:
 
     def allowed_request(self,request):
         from adapters import SAFE_METHODS, _prepare_request  # type: ignore[import-not-found]  # flat import inside the container
-        from request_rules import RequestRefused, match_request  # type: ignore[import-not-found]
+        from request_rules import CASE_PHASES, RequestRefused, match_request
         method=request.get("method")
         path=request.get("path")
         if (method,path) not in {(r.get("method","GET").upper(),r.get("path")) for r in self.manifest.get("allowed_requests",[])}:
@@ -351,7 +351,7 @@ class Supervisor:
             planned=match_request(self.manifest,case,request,expect=step)
         except RequestRefused:
             raise ValueError("Request or identity is not in the sealed case") from None
-        if planned["phase"] not in {"case","control"} and self.spec.get("operation")!="request_sequence":
+        if planned["phase"] not in CASE_PHASES and self.spec.get("operation")!="request_sequence":
             raise ValueError("Request or identity is not in the sealed case")
         headers=request.get("headers") or {}
         raw=base64.b64decode(request.get("body_b64",""),validate=True)
