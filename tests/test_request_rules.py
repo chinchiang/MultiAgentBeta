@@ -3,7 +3,7 @@ import copy
 
 import pytest
 
-from vibe_audit.request_rules import RequestRefused, plan_case
+from vibe_audit.request_rules import RequestRefused, match_request, plan_case
 
 
 def manifest(**changes):
@@ -180,3 +180,109 @@ def test_a_refusal_reads_as_the_rule_it_names():
     with pytest.raises(RequestRefused) as refused:
         plan_case(manifest(), controlled, live=True)
     assert str(refused.value) == "headers"
+
+
+def sealed_with(steps, base=None):
+    """A case sealed with a request plan whose engine steps are these."""
+    value = base or fixture_case()
+    value["request_plan"] = {"version": 1, "steps": [
+        {"id": "case", "phase": "case", "source": "operator", "method": value["method"], "path": value["path"],
+         "identity": value["identity"], "headers": {}, "body": None, "read_only": True, "body_permitted": True},
+        *steps]}
+    return value
+
+
+def engine_step(**changes):
+    step = {"id": "reset", "phase": "reset", "source": "engine", "method": "POST", "path": "/__fixture/reset", "identity": None,
+            "headers": {"X-Fixture-Control": "local-synthetic-control"}, "body": None, "read_only": False, "body_permitted": True}
+    step.update(changes)
+    return step
+
+
+def test_a_sealed_cases_lifecycle_is_read_from_its_request_plan():
+    steps = plan_case(fixture_manifest(), sealed_with([engine_step()]), live=True)["steps"]
+    assert [(s["id"], s["headers"]) for s in steps[2:]] == [("reset", {"X-Fixture-Control": "local-synthetic-control"})]
+    # Its engine steps are held to the same rules, which allowed_requests could never show: it carries no headers.
+    assert refusal(fixture_manifest(), sealed_with([engine_step(headers={"Forwarded": "for=x"})])) == ("headers", "reset")
+    assert refusal(fixture_manifest(), sealed_with([engine_step(path="/__fixture/wipe")])) == ("scope", "reset")
+
+
+def sealed_case():
+    value = fixture_case()
+    value["request_plan"] = plan_case(fixture_manifest(), value, live=True)
+    return value
+
+
+def test_a_request_is_matched_to_the_plan_step_with_its_method_path_and_identity():
+    step = match_request(fixture_manifest(), sealed_case(), {"method": "get", "path": "/orders/a", "identity": "alice"})
+    assert (step["id"], step["source"]) == ("control:own", "operator")
+    assert match_request(fixture_manifest(), sealed_case(), {"method": "POST", "path": "/__fixture/reset", "identity": None})["id"] == "lifecycle:1"
+
+
+def match_refusal(request, value=None, scope=None):
+    with pytest.raises(RequestRefused) as refused:
+        match_request(scope or fixture_manifest(), value or sealed_case(), request)
+    return refused.value.rule
+
+
+def test_a_request_must_use_the_identity_of_the_step_it_names_not_any_identity_the_case_uses():
+    # alice reads /orders/a as the control; the engine's reset runs with no identity. Neither lends its identity to the other.
+    assert match_refusal({"method": "POST", "path": "/__fixture/reset", "identity": "alice"}) == "identity"
+    assert match_refusal({"method": "GET", "path": "/orders/a", "identity": None}) == "identity"
+
+
+def test_a_request_outside_the_run_scope_is_refused_as_that_before_it_is_looked_for_in_the_plan():
+    assert match_refusal({"method": "GET", "path": "/admin", "identity": "alice"}) == "scope"
+    # In the run's scope but no step of this case.
+    wider = fixture_manifest()
+    wider["allowed_requests"].append({"method": "GET", "path": "/admin"})
+    assert match_refusal({"method": "GET", "path": "/admin", "identity": "alice"}, scope=wider) == "step"
+
+
+def test_a_case_sealed_before_request_plans_is_matched_against_the_plan_its_fields_give():
+    legacy = fixture_case()
+    assert "request_plan" not in legacy
+    assert match_request(fixture_manifest(), legacy, {"method": "POST", "path": "/__fixture/reset", "identity": None})["source"] == "engine"
+    assert match_request(fixture_manifest(), legacy, {"method": "POST", "path": "/agent", "identity": "alice"})["id"] == "case"
+    # It passed the case gate when it was sealed; a rule tightened since does not stop it from being matched.
+    legacy["preconditions"][0]["headers"] = {"Forwarded": "for=x"}
+    assert match_request(fixture_manifest(), legacy, {"method": "GET", "path": "/orders/a", "identity": "alice"})["id"] == "control:own"
+    assert "request_plan" not in legacy
+
+
+def test_an_engine_cases_own_request_is_not_read_back_as_a_lifecycle_step():
+    # A case neither the model wrote nor the operator listed is the engine's, its own request included.
+    engine_case = {**case(id="C9"), "preconditions": []}
+    engine_case["request_plan"] = plan_case(manifest(), engine_case, live=True)
+    assert [(s["id"], s["source"]) for s in engine_case["request_plan"]["steps"]] == [("case", "engine")]
+    assert [s["id"] for s in plan_case(manifest(), engine_case, live=True)["steps"]] == ["case"]
+
+
+def test_a_sealed_cases_own_steps_are_never_read_back_as_lifecycle_steps():
+    # Changed after sealing, the plan's old case and control steps no longer match the case: they still are not lifecycle.
+    changed = sealed_case()
+    changed["method"] = "GET"
+    changed["preconditions"][0]["path"] = "/orders/b"
+    ids = [s["id"] for s in plan_case(manifest(allowed_requests=[{"method": "GET", "path": "/agent"}, {"method": "GET", "path": "/orders/b"},
+                                                                  {"method": "POST", "path": "/__fixture/reset"}]), changed, live=True)["steps"]]
+    assert ids == ["control:own", "case", "lifecycle:1"]
+    # A plan that lists no steps has no lifecycle to read.
+    assert [s["id"] for s in plan_case(fixture_manifest(), {**fixture_case(), "request_plan": {"version": 1}}, live=True)["steps"]] == ["control:own", "case"]
+
+
+def test_a_sealed_plan_is_matched_as_sealed_even_where_the_cases_fields_would_give_another():
+    held = sealed_case()
+    held["request_plan"]["steps"].append(engine_step(id="instrument", path="/agent"))
+    assert match_request(fixture_manifest(), held, {"method": "POST", "path": "/agent", "identity": None})["id"] == "instrument"
+
+
+def test_an_identity_refusal_names_the_step_the_request_named():
+    with pytest.raises(RequestRefused) as refused:
+        match_request(fixture_manifest(), sealed_case(), {"method": "GET", "path": "/orders/a", "identity": "bob"})
+    assert (refused.value.rule, refused.value.step) == ("identity", "control:own")
+
+
+def test_a_request_or_scope_entry_naming_no_method_is_a_get():
+    scope = manifest(allowed_requests=[{"path": "/orders/a"}, {"method": "GET", "path": "/orders/b"}])
+    assert match_request(scope, sealed_with([], case()), {"path": "/orders/b", "identity": "alice"})["id"] == "case"
+    assert match_refusal({"path": "/orders/a", "identity": "alice"}, value=sealed_with([], case()), scope=scope) == "step"

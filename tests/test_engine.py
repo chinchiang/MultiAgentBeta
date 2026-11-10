@@ -1078,6 +1078,9 @@ async def test_positive_control_needs_exact_scope_and_sealed_case_authorization(
     case.update(adapter="http",threat_model_hash=run["threat_model"]["hash"],preconditions=[{
         "name":"fixture_ready","method":"GET","path":"/fixture-private", "expected_status":200,
         "required_text":["B-PRIVATE-CANARY"]}])
+    # Its control is new, so the demo's sealed request plan no longer describes it: it stands for a case sealed
+    # before request plans.
+    case.pop("request_plan",None)
     case["hash"]=sealed(case)
     run["cases"]=[case]
     run["usage"]["requests"]=0
@@ -1129,6 +1132,9 @@ async def live_post_case(engine,*,adapter,provenance):
     run["threat_model"]["hash"]=sealed(run["threat_model"])
     case=copy.deepcopy(run["cases"][0])
     case.update(adapter=adapter,method="POST",body={},preconditions=[],side_effects=False,threat_model_hash=run["threat_model"]["hash"])
+    # Rewritten here, the demo's sealed request plan no longer describes the case: it stands for a case sealed before
+    # request plans, whose plan is rebuilt from its fields.
+    case.pop("request_plan",None)
     if provenance!="operator":
         case["designed_by"]="model"
     # A retest copies the parent's sealed cases, model-designed ones included, into its manifest.
@@ -2334,3 +2340,54 @@ async def test_an_order_asked_again_that_fails_its_checks_leaves_no_earlier_orde
     run["findings"].pop()
     await engine._report(run)
     assert len(engine.model_port.calls)==3
+
+
+async def operator_case_stage(engine,**changes):
+    """A live run at case design whose one case the operator wrote; changes are made to that manifest case."""
+    run=await live_post_case(engine,adapter="http",provenance="operator")
+    run["manifest"]["cases"][0].update(changes)
+    run["manifest_hash"]=digest(run["manifest"])
+    run.update(cases=[],stage="case_design")
+    return run
+
+
+async def test_sealing_writes_the_cases_request_plan_over_any_it_brought_along(engine):
+    # A retest copies every field of the parent's cases, so a plan written elsewhere would otherwise be sealed as is.
+    run=await operator_case_stage(engine,request_plan={"version":1,"steps":[{"id":"case","method":"DELETE","path":"/admin"}]})
+    await engine._case_design(run)
+    case=run["cases"][0]
+    assert case["request_plan"]=={"version":1,"steps":[
+        {"id":"case","phase":"case","source":"operator","method":"POST","path":"/orders/private","identity":None,
+         "headers":{},"body":{},"read_only":True,"body_permitted":True}]}
+    # The plan is part of what was sealed and approved.
+    assert case["hash"]==sealed(case)
+
+
+async def test_a_fixture_cases_plan_carries_the_engines_lifecycle_with_its_phases_and_headers(engine):
+    run=await operator_case_stage(engine,adapter="ai_http")
+    run["manifest"]["fixture_profile"]="synthetic-ai-v1"
+    run["manifest"]["allowed_requests"]+=[{"method":"POST","path":"/__fixture/reset"},{"method":"POST","path":"/sessions/reset"}]
+    run["manifest_hash"]=digest(run["manifest"])
+    await engine._case_design(run)
+    steps=run["cases"][0]["request_plan"]["steps"]
+    assert [(s["id"],s["phase"],s["source"],s["method"],s["path"],s["identity"],s["headers"]) for s in steps]==[
+        ("case","case","operator","POST","/orders/private",None,{}),
+        ("reset","reset","engine","POST","/__fixture/reset",None,{"X-Fixture-Control":"local-synthetic-control"}),
+        ("session-reset","session_reset","engine","POST","/sessions/reset",None,{})]
+
+
+async def test_authorize_holds_a_request_to_the_identity_of_the_step_it_names(engine):
+    # bob reads /orders/mine as the positive control; the case's own POST runs with no identity. Before the request plan,
+    # any identity some step used passed for every step.
+    control={"name":"bob-reads-own","method":"GET","path":"/orders/mine","identity":"bob","expected_status":200,"required_text":["BOB-ORDER"]}
+    run=await operator_case_stage(engine,preconditions=[control])
+    run["manifest"]["allowed_requests"].append({"method":"GET","path":"/orders/mine"})
+    run["manifest_hash"]=digest(run["manifest"])
+    await engine._case_design(run)
+    run["stage"]="blackbox"
+    case=run["cases"][0]
+    flag=engine.cancel_flags[run["id"]]
+    with pytest.raises(PolicyError,match="Identity is outside the sealed case scope"):
+        engine.policy.authorize(run,case,flag,method="POST",path="/orders/private",identity="bob")
+    engine.policy.authorize(run,case,flag,method="POST",path="/orders/private",identity=None)
+    engine.policy.authorize(run,case,flag,method="GET",path="/orders/mine",identity="bob")
