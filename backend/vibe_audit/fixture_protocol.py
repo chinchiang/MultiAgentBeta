@@ -15,6 +15,7 @@ from urllib.parse import urlsplit
 
 from .adapters import case_headers_allowed, evaluate_oracle
 from .effect_collector import EffectCollector, EffectGateway
+from .request_rules import RequestRefused, match_request
 from .settings import fixture_config
 
 CONTROL = {"X-Fixture-Control": "local-synthetic-control"}
@@ -135,11 +136,12 @@ def _step(id, method, path, *, identity=None, body=None, expected_status=None, r
 
 
 async def _sequence(runtime, manifest, case, steps, *, cancel_event, request_hook, lease_hook, repetition, task_stage="execution"):
-    permitted = {(r.get("method"), r.get("path"), r.get("identity")) for r in case.get("allowed_requests", [])}
-    permitted.update((r.get("method", "GET"), r.get("path"), r.get("identity"))
-                     for r in [case, *[p for p in case.get("preconditions", []) if isinstance(p, dict)]])
-    if any((s["method"], s["path"], s.get("identity")) not in permitted for s in steps):
-        raise ValueError("Fixture lifecycle request was not sealed into case scope")
+    # Every step is one of the case's request plan, before the first of them is sent.
+    try:
+        for step in steps:
+            match_request(manifest, case, step)
+    except RequestRefused:
+        raise ValueError("Fixture lifecycle request was not sealed into case scope") from None
     spec = {"operation": "request_sequence", "tool_id": "request_sequence", "phase": "blackbox",
             "cases": [case], "requests": steps, "timeout_seconds": min(60, manifest.get("budget", {}).get("max_seconds", 60)), "max_output_bytes": 262144,
             "max_requests": len(steps), "task_stage": task_stage}

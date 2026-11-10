@@ -6,7 +6,8 @@ import uuid
 
 import pytest
 
-from vibe_audit.fixture_protocol import fixture_requests, fixture_profile_hash, register_target_adapter, run_fixture_case
+from vibe_audit.fixture_protocol import fixture_lifecycle, fixture_requests, fixture_profile_hash, register_target_adapter, run_fixture_case
+from vibe_audit.request_rules import plan_case
 from vibe_audit.lease import canonical_hash
 from vibe_audit.worker_runtime import WorkerRuntime
 from test_fixtures import FIXTURES, RunningFixture, node_runtime
@@ -40,6 +41,26 @@ def manifest(origin, case, monkeypatch):
         "allowed_target_ips": ["127.0.0.1"], "allowed_requests": case["allowed_requests"],
         "budget": {"max_requests": 100, "max_seconds": 600},
         "auth_profiles": [{"id": "tenant-a", "credential_env": "VIBEAUDIT_FIXTURE_A", "header": "Authorization", "scheme": "Bearer"}]}
+
+
+@pytest.mark.asyncio
+async def test_a_fixture_sequence_sends_only_steps_of_the_cases_request_plan(monkeypatch):
+    case = bound_case("synthetic-ai-v1")
+    scope = manifest("http://127.0.0.1:9", case, monkeypatch)
+    # allowed_requests still lists the reset; the plan the case was sealed with does not.
+    lifecycle = [step for step in fixture_lifecycle("synthetic-ai-v1", case) if step["id"] != "reset"]
+    case["request_plan"] = plan_case(scope, case, live=True, lifecycle=lifecycle)
+    sent = []
+    class Runtime:
+        async def execute_tool(self, spec, **kwargs):
+            sent.append(spec)
+            return {"status": "completed", "cleanup_confirmed": True, "observations": []}
+    async def hook(**ctx):
+        pass
+    result = await run_fixture_case(Runtime(), scope, case, fixture_profile="synthetic-ai-v1", cancel_event=asyncio.Event(),
+                                    request_hook=hook, repetitions=1)
+    assert sent == []
+    assert result["repetitions"][0]["cleanup_confirmed"] is False
 
 
 @pytest.mark.asyncio

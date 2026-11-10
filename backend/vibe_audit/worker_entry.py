@@ -170,7 +170,7 @@ class Unusable(ValueError):
 
 
 # What execute_case and evaluate_oracle read from a case (adapters.py), and what the sequence worker reads from a
-# step; worker_view passes nothing else.
+# step; worker_view passes nothing else, except the case's own step of its request plan.
 WORKER_CASE_FIELDS=("id","adapter","method","path","headers","body","identity","designed_by","side_effects","repetitions","oracle")
 # A sequence step's expected answer stays with the supervisor and the console (supervised_sequence): the worker
 # sends steps in order and stops when the relay refuses one.
@@ -301,7 +301,12 @@ class Supervisor:
             return self.spec
         def control(index,item):
             return {**{k:item[k] for k in ("method","path","headers","identity","expected_status","required_text") if k in item},"name":f"control-{index}"}
-        cases=[{**{k:c[k] for k in WORKER_CASE_FIELDS if k in c},
+        def own_step(case):
+            # Whether the case writes (request_rules.read_only) is the one thing the worker reads from its request plan.
+            plan=case.get("request_plan")
+            if not isinstance(plan,dict): return {}
+            return {"request_plan":{"version":plan.get("version"),"steps":[s for s in plan.get("steps") or [] if s.get("phase")=="case"]}}
+        cases=[{**{k:c[k] for k in WORKER_CASE_FIELDS if k in c},**own_step(c),
                 "preconditions":[control(i,p) for i,p in enumerate([p for p in c.get("preconditions",[]) if isinstance(p,dict)],1)]}
                for c in self.spec.get("cases",[])]
         view={**self.spec,"cases":cases}
@@ -318,6 +323,7 @@ class Supervisor:
 
     def allowed_request(self,request):
         from adapters import SAFE_METHODS, _prepare_request  # type: ignore[import-not-found]  # flat import inside the container
+        from request_rules import RequestRefused, match_request  # type: ignore[import-not-found]
         method=request.get("method")
         path=request.get("path")
         if (method,path) not in {(r.get("method","GET").upper(),r.get("path")) for r in self.manifest.get("allowed_requests",[])}:
@@ -340,6 +346,13 @@ class Supervisor:
             permitted=[case,*[p for p in case.get("preconditions",[]) if isinstance(p,dict)]]
             step=next((p for p in permitted if (p.get("method","GET"),p.get("path"),p.get("identity"))==(method,path,identity)),None)
             if step is None: raise ValueError("Request or identity is not in the sealed case")
+        # Which step of the case's request plan this is, and so who wrote it. Only a sequence sends the engine's own steps.
+        try:
+            planned=match_request(self.manifest,case,request,expect=step)
+        except RequestRefused:
+            raise ValueError("Request or identity is not in the sealed case") from None
+        if planned["phase"] not in {"case","control"} and self.spec.get("operation")!="request_sequence":
+            raise ValueError("Request or identity is not in the sealed case")
         headers=request.get("headers") or {}
         raw=base64.b64decode(request.get("body_b64",""),validate=True)
         if len(raw)>64*1024 or (method in {"GET","HEAD"} and raw): raise ValueError("Request body exceeds scope")
@@ -368,9 +381,7 @@ class Supervisor:
                 raw=json.dumps(step["body"]).encode()
             elif step.get("body") is not None:
                 raise ValueError("Sealed request body is missing")
-        # The case and its positive controls are what the model wrote; fixture lifecycle steps come from the engine.
-        model_step=case.get("designed_by")=="model" and (self.spec.get("operation")!="request_sequence"
-            or step.get("id")=="case" or str(step.get("id","")).startswith("control:"))
+        model_step=planned["source"]=="model"
         # The controller's rule (service.model_body_denied): a model request that carries a body, or is not a read.
         if model_step and (raw or method not in SAFE_METHODS) and not any(r.get("model_body") is True and (r.get("method","GET").upper(),r.get("path"))==(method,path)
                                                                           for r in self.manifest.get("allowed_requests",[])):

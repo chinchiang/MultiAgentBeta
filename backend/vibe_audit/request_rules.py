@@ -150,6 +150,18 @@ def state_changing(case: dict, *, operator_case: bool = True) -> bool:
             or (method not in SAFE_METHODS and not operator_case))
 
 
+def read_only(case):
+    """Whether the case's own request leaves the target's state as it was, as the case's request plan records it.
+
+    The worker gets only that step of the plan. A case sealed before request plans is read by the rule of its time:
+    only a model-written POST is never read-only."""
+    plan = case.get("request_plan")
+    own = next((s for s in plan.get("steps") or [] if s.get("phase") == "case"), None) if isinstance(plan, dict) else None
+    if own is not None:
+        return own["read_only"] is True
+    return not state_changing(case, operator_case=case.get("designed_by") != "model")
+
+
 def request_path_problem(path):
     """Why the transport would never send this path, or None. The operator's scope is held to the same rule, so a scope
     entry is refused as input rather than listing a path no request can ever take."""
@@ -186,6 +198,21 @@ def _step(id, phase, source, request, *, side_effects=False):
     return step
 
 
+# Header names ignore letter case. Both sides of a comparison fold the same way, so any one folding will do.
+_FOLD = str.lower
+
+
+def _headers(headers):
+    if not isinstance(headers, dict):
+        return headers
+    return {_FOLD(str(name)): value for name, value in headers.items()}
+
+
+def _key(step):
+    headers = _headers(step["headers"])
+    return step["method"], step["path"], step["identity"], repr(sorted(headers.items()) if isinstance(headers, dict) else headers)
+
+
 def _steps(manifest, case, *, lifecycle):
     """The case's plan steps in their checking order, own request first, then controls, then lifecycle, and the
     order the plan lists them in; no rule is checked here."""
@@ -199,11 +226,12 @@ def _steps(manifest, case, *, lifecycle):
         plan = case.get("request_plan")
         lifecycle = ([s for s in plan.get("steps", []) if s.get("phase") not in ("case", "control")] if isinstance(plan, dict)
                      else case.get("allowed_requests") or [])
-    seen = {(s["method"], s["path"], s["identity"]) for s in [own, *controls]}
+    # A step is the same step only with the same headers too: an engine probe of a control's request keeps its own source.
+    seen = {_key(s) for s in [own, *controls]}
     engine = []
     for request in lifecycle:
         step = _step(request.get("id") or f"lifecycle:{len(engine) + 1}", request.get("phase", "lifecycle"), "engine", request)
-        key = (step["method"], step["path"], step["identity"])
+        key = _key(step)
         if key not in seen:
             seen.add(key)
             engine.append(step)
@@ -242,8 +270,12 @@ def plan_case(manifest, case, *, live, lifecycle=None):
     return {"version": 1, "steps": planned}
 
 
-def match_request(manifest, case, request):
-    """The step of the case's request plan this request is: the one with its method, path and identity."""
+def match_request(manifest, case, request, *, expect=None):
+    """The step of the case's request plan this request is: the one with its method, path and identity.
+
+    Where more than one step has them, expect (the sealed step the caller is about to send) picks the one with its
+    headers. Steps that are still alike, or no expect, give the first: the plan lists the case's own steps before the
+    engine's, so a model's step is never read as the engine's."""
     method = str(request.get("method", DEFAULT_METHOD)).upper()
     scope = {(str(r.get("method", DEFAULT_METHOD)).upper(), r.get("path")) for r in manifest.get("allowed_requests") or []}
     if (method, request.get("path")) not in scope:
@@ -256,7 +288,9 @@ def match_request(manifest, case, request):
     if not named:
         raise RequestRefused("step")
     # The identity is the named step's own, never another step's.
-    step = next((s for s in named if s["identity"] == request.get("identity")), None)
-    if step is None:
+    steps = [s for s in named if s["identity"] == request.get("identity")]
+    if not steps:
         raise RequestRefused("identity", named[0]["id"])
-    return step
+    if expect is not None:
+        steps = [s for s in steps if _headers(s["headers"]) == _headers(expect.get("headers"))] or steps
+    return steps[0]
