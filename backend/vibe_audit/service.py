@@ -19,7 +19,7 @@ from .diagnostics import note_failure
 from .domain import RunInput, digest, new_run, now
 from .messages import zh
 from .policy import Policy, PolicyError, elapsed_seconds, sealed
-from .request_rules import RequestRefused, plan_case
+from .request_rules import RequestRefused, body_permitted, own_step, plan_case
 from .stage_answers import KEPT_UNDER
 from .store import Store
 from .contracts import (CORE_REVIEW_QUESTIONS, CaseDesignProposal, CommanderProposal, ArchitectureProposal,
@@ -734,20 +734,20 @@ class Engine:
                 if case.get("adapter")=="ai_http" and "repetitions" not in original:
                     case["repetitions"]=5
                 profile=case.get("fixture_profile") or (run["manifest"].get("fixture_profile") if case.get("adapter") in {"ai_http","fixture"} else None)
+                # A case sealed before request plans carried its fixture lifecycle in allowed_requests, and a case without
+                # a plan is still matched by it (request_rules, for old runs). The request plan replaces it, so one a case
+                # brought along would only widen the requests and identities such a case may send: none survives.
+                case.pop("allowed_requests",None)
                 if profile:
-                    from .fixture_protocol import fixture_requests,fixture_profile_hash
+                    from .fixture_protocol import fixture_profile_hash
                     if profile!=run["manifest"].get("fixture_profile"):
                         raise PolicyError("Fixture profile is outside the operator's declared run configuration")
                     case["fixture_profile"]=profile
                     case["fixture_profile_hash"]=fixture_profile_hash(profile)
-                    case["allowed_requests"]=fixture_requests(profile,case)
                     case.setdefault("repetitions",5 if case.get("adapter")=="ai_http" or profile=="synthetic-ai-v1" else 1)
                     if not case.get("cleanup"):
                         case["cleanup"]={"protocol":profile,"required":True}
                 else:
-                    # allowed_requests is the fixture lifecycle the engine seals into a case; one the case brought along
-                    # would widen the requests and identities authorize() permits, though no executor sends them.
-                    case.pop("allowed_requests",None)
                     if model_designed and case.get("side_effects"):
                         # No registered protocol can clean up after it, so the case is blocked when it would run.
                         case["cleanup"]={"protocol":None,"required":True}
@@ -786,7 +786,7 @@ class Engine:
                 # Every check in this block, sealing included, depends on this answer; it is kept only if they all pass.
                 data=answer.data
                 cases=data.get("cases",[])
-                from .adapters import canonical_model_headers
+                from .request_rules import canonical_model_headers
                 # Overwrite any provenance the model claims; retests carry it into their copied manifest cases.
                 for case in cases:
                     case["designed_by"]="model"
@@ -803,7 +803,7 @@ class Engine:
         self.event(run,f"Validated {len(run['cases'])} cases with threat links and executable oracles")
 
     async def _blackbox(self,run):
-        from .adapters import evaluate_oracle,state_changing
+        from .adapters import evaluate_oracle
         # Reissue bounded capabilities only after revalidating every artifact on resume.
         self.policy.case_gate(run)
         model_cases=[c["id"] for c in run["cases"] if c.get("designed_by")=="model"]
@@ -817,9 +817,10 @@ class Engine:
                     continue
                 self.check_active(run)
                 job_id=self.store.job(run["id"],case)
-                # Model-designed cases cannot declare an unsafe request free of side effects.
-                operator_case=case.get("designed_by")!="model" and any(c.get("id")==case["id"] for c in run["manifest"]["cases"])
-                side_effects=state_changing(case,operator_case=operator_case)
+                # The case's own step of its request plan: whether it writes (model-designed cases cannot declare an
+                # unsafe request free of side effects) and whether it may carry a body. Without that step, it writes.
+                own=own_step(case,run["manifest"]) or {}
+                side_effects=own.get("read_only") is not True
                 async def request_hook(*args,**kwargs):
                     self.policy.authorize(run,case,self.cancel_flags[run["id"]],method=kwargs.get("method"),path=kwargs.get("path"),identity=kwargs.get("identity"))
                     self.store.update_job(job_id,"sent",{"case_hash":case["hash"],"side_effects":side_effects,"sent_at":now(),"repetition":repetition})
@@ -840,7 +841,7 @@ class Engine:
                     async def lease_hook(*args,**kwargs):
                         self.check_active(run)
                     # Outside a fixture a model POST is already blocked below as state-changing; a GET carries no body.
-                    if fixture and model_body_denied(run,case):
+                    if fixture and not body_permitted(own):
                         result={"status":"blocked","reason":"A model-written request body goes only to an endpoint the operator marked model_body in allowed_requests","observations":[],"evidence":[],"requests":0}
                     elif fixture:
                         from .fixture_protocol import run_fixture_case
@@ -908,21 +909,6 @@ class Engine:
                 run["findings"].sort(key=lambda f:ids.index(f["id"]))
         run["report_note"]="SYNTHETIC DEMO ONLY: not real model or application validation" if run["mode"]=="demo" else "Results cover only executed cases and available evidence; unresolved gaps remain visible"
         self.event(run,"Evidence attribution and integrity verified for report")
-
-
-def model_body_denied(run:dict,case:dict)->bool:
-    """A model-designed request that carries a body, or is not a read, goes only to an endpoint the operator marked model_body.
-
-    The model wrote that body after reading the untrusted snapshot, so an endpoint that stores, publishes or forwards
-    what it receives must not be a destination the model can pick from the operator's own scope.
-    """
-    if run["mode"]!="live" or case.get("designed_by")!="model":
-        return False
-    method=str(case.get("method","GET")).upper()
-    if case.get("body") is None and method in {"GET","HEAD","OPTIONS"}:
-        return False
-    return not any(r.get("model_body") is True and (str(r.get("method","GET")).upper(),r.get("path"))==(method,case.get("path"))
-                   for r in run["manifest"].get("allowed_requests",[]))
 
 
 # Report languages: English (the default, for existing callers) and Traditional Chinese for the console's Chinese interface.

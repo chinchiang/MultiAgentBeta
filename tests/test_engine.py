@@ -1214,7 +1214,7 @@ async def test_case_headers_cannot_override_method_path_or_relay(engine,monkeypa
     run=await live_post_case(engine,adapter="http",provenance=provenance)
     # The operator lists each model header value that the fixed vocabulary accepts. A value outside the vocabulary
     # cannot be listed (RunInput refuses it), so those rows reach the vocabulary check itself with no list entry.
-    from vibe_audit.adapters import model_header_list_error
+    from vibe_audit.request_rules import model_header_list_error
     listed={name:[value] for name,value in headers.items() if model_header_list_error({name:[value]}) is None}
     as_get_case(run,headers,model_headers=listed if provenance=="model" else None)
     dispatched=[]
@@ -2374,6 +2374,18 @@ async def test_a_fixture_cases_plan_carries_the_engines_lifecycle_with_its_phase
         ("case","case","operator","POST","/orders/private",None,{}),
         ("reset","reset","engine","POST","/__fixture/reset",None,{"X-Fixture-Control":"local-synthetic-control"}),
         ("session-reset","session_reset","engine","POST","/sessions/reset",None,{})]
+
+
+async def test_a_sealed_fixture_case_carries_its_lifecycle_in_its_plan_only(engine):
+    # Before request plans the lifecycle was sealed into allowed_requests too; the plan replaces it, and one the case
+    # brought along does not survive either.
+    run=await operator_case_stage(engine,adapter="ai_http",allowed_requests=[{"method":"DELETE","path":"/admin","identity":"bob"}])
+    run["manifest"]["fixture_profile"]="synthetic-ai-v1"
+    run["manifest"]["allowed_requests"]+=[{"method":"POST","path":"/__fixture/reset"},{"method":"POST","path":"/sessions/reset"}]
+    run["manifest_hash"]=digest(run["manifest"])
+    await engine._case_design(run)
+    case=run["cases"][0]
+    assert "allowed_requests" not in case and [s["id"] for s in case["request_plan"]["steps"]]==["case","reset","session-reset"]
 
 
 async def test_authorize_holds_a_request_to_the_identity_of_the_step_it_names(engine):

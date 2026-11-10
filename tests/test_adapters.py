@@ -10,7 +10,7 @@ import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import patch
 
-from vibe_audit import adapters
+from vibe_audit import adapters, request_rules
 
 
 def case_template():
@@ -498,7 +498,7 @@ class TargetAddressTests(unittest.TestCase):
                 adapters._pinned_address("10.0.0.5", 80, allowed)
 
     def test_one_of_matches_whole_listed_values_only(self):
-        pattern = adapters._one_of(["a", "b.c"])
+        pattern = request_rules._one_of(["a", "b.c"])
         self.assertTrue(pattern.fullmatch("b.c") and pattern.fullmatch("a"))
         self.assertIsNone(pattern.fullmatch("bxc"))
         self.assertIsNone(pattern.fullmatch("a|b.c"))
@@ -507,12 +507,12 @@ class TargetAddressTests(unittest.TestCase):
 class StateChangeTests(unittest.TestCase):
     def test_side_effects_claim_cannot_make_unsafe_method_read_only(self):
         for method in ["PUT", "PATCH", "DELETE"]:
-            self.assertTrue(adapters.state_changing({"method": method, "side_effects": False}))
+            self.assertTrue(request_rules.state_changing({"method": method, "side_effects": False}))
         # POST also serves search and chat: only an operator-written case may declare it read-only.
-        self.assertFalse(adapters.state_changing({"method": "POST", "side_effects": False}))
-        self.assertTrue(adapters.state_changing({"method": "POST", "side_effects": False}, operator_case=False))
-        self.assertFalse(adapters.state_changing({"method": "GET", "side_effects": False}, operator_case=False))
-        self.assertTrue(adapters.state_changing({"method": "GET", "side_effects": True}))
+        self.assertFalse(request_rules.state_changing({"method": "POST", "side_effects": False}))
+        self.assertTrue(request_rules.state_changing({"method": "POST", "side_effects": False}, operator_case=False))
+        self.assertFalse(request_rules.state_changing({"method": "GET", "side_effects": False}, operator_case=False))
+        self.assertTrue(request_rules.state_changing({"method": "GET", "side_effects": True}))
 
 
 class ToolCapabilityTests(unittest.TestCase):

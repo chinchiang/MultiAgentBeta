@@ -322,11 +322,11 @@ class Supervisor:
                 "hard_deadline_unix":time.time()+self.spec["timeout_seconds"]}
 
     def allowed_request(self,request):
-        from adapters import SAFE_METHODS, _prepare_request  # type: ignore[import-not-found]  # flat import inside the container
-        from request_rules import CASE_PHASES, RequestRefused, match_request
+        from adapters import _prepare_request  # type: ignore[import-not-found]  # flat import inside the container
+        from request_rules import CASE_PHASES, RequestRefused, body_permitted, in_scope, match_request
         method=request.get("method")
         path=request.get("path")
-        if (method,path) not in {(r.get("method","GET").upper(),r.get("path")) for r in self.manifest.get("allowed_requests",[])}:
+        if not in_scope(self.manifest,method,path):
             raise ValueError("Request outside authorized method/path scope")
         cases=self.spec.get("cases",[])
         case_id=request.get("case_id") or (cases[0].get("id") if len(cases)==1 else None)
@@ -382,9 +382,10 @@ class Supervisor:
             elif step.get("body") is not None:
                 raise ValueError("Sealed request body is missing")
         model_step=planned["source"]=="model"
-        # The controller's rule (service.model_body_denied): a model request that carries a body, or is not a read.
-        if model_step and (raw or method not in SAFE_METHODS) and not any(r.get("model_body") is True and (r.get("method","GET").upper(),r.get("path"))==(method,path)
-                                                                          for r in self.manifest.get("allowed_requests",[])):
+        # The plan's body rule, as the controller reads it too: a model request that carries a body, or is not a read,
+        # goes only to an endpoint the operator marked model_body. The rule was applied to the plan step's sealed body;
+        # the body sent is the spec step's (checked above), and the case hash binds that step and the plan together.
+        if not body_permitted(planned):
             raise ValueError("A model-written request that carries a body or is not a read goes only to an endpoint the operator marked model_body")
         # Transport-generated headers are not part of the reviewed request.
         headers=dict(step.get("headers",{}))
@@ -509,7 +510,8 @@ class Supervisor:
         record={"case_id":case_id,"method":method,"path":path,"identity":request.get("identity"),"purpose":step.get("purpose","test")}
         # Only a read-only step that reached the target has a known outcome when its answer cannot be
         # relayed; any other failure after reservation may have changed the target.
-        unsafe=method not in {"GET","HEAD","OPTIONS"} or step.get("side_effects") is True
+        from request_rules import SAFE_METHODS
+        unsafe=method not in SAFE_METHODS or step.get("side_effects") is True
         try:
             result=self.forward(method,path,headers,body,deadline)
         except Exception as exc:

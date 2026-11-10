@@ -155,11 +155,15 @@ def state_changing(case: dict, *, operator_case: bool = True) -> bool:
 CASE_PHASES = frozenset({"case", "control"})
 
 
-def own_step(case):
-    """The step of the case's request plan that is the case's own request, or None without one."""
+def own_step(case, manifest=None):
+    """The step of the case's request plan that is the case's own request, or None without one.
+
+    With the run's manifest, a case sealed before request plans has its plan rebuilt from its fields (as match_request
+    does), unchecked and never written back. The rebuilt step holds a model's body to the live rule, so only a caller
+    in a live run may read its body_permitted (the controller reads it only outside demo runs)."""
     plan = case.get("request_plan")
     if not isinstance(plan, dict):
-        return None
+        return None if manifest is None else _steps(manifest, case, lifecycle=None, live=True)[0][0]
     return next((s for s in plan.get("steps") or [] if s.get("phase") == "case"), None)
 
 
@@ -226,9 +230,25 @@ def _key(step):
     return step["method"], step["path"], step["identity"], repr(sorted(headers.items()) if isinstance(headers, dict) else headers)
 
 
-def _steps(manifest, case, *, lifecycle):
+def _endpoint(request):
+    """The method and exact path a request, step or scope entry names; naming no method is a GET."""
+    return str(request.get("method", DEFAULT_METHOD)).upper(), request.get("path")
+
+
+def in_scope(manifest, method, path):
+    """Whether the operator's run scope (allowed_requests) lists this method and exact path."""
+    return (method, path) in {_endpoint(r) for r in manifest.get("allowed_requests") or []}
+
+
+def body_permitted(step):
+    """Whether this plan step may carry a body or be a write: only where its plan says so (the body rule in _steps)."""
+    return isinstance(step, dict) and step.get("body_permitted") is True
+
+
+def _steps(manifest, case, *, lifecycle, live):
     """The case's plan steps in their checking order, own request first, then controls, then lifecycle, and the
-    order the plan lists them in; no rule is checked here."""
+    order the plan lists them in. The body rule is the one rule applied here, since every plan (sealed or rebuilt for
+    a case sealed before plans) records it on each step; live says whether the run is live. No rule refuses here."""
     source = _source(manifest, case)
     own = _step("case", "case", source, case, side_effects=bool(case.get("side_effects")))
     controls = [_step("control:" + str(p.get("name")), "control", source, p)
@@ -248,6 +268,12 @@ def _steps(manifest, case, *, lifecycle):
         if key not in seen:
             seen.add(key)
             engine.append(step)
+    # The model wrote a body or a write after reading the untrusted snapshot: it goes only to an endpoint the operator
+    # marked model_body, never to one that stores, publishes or forwards what it receives.
+    marked = {_endpoint(r) for r in manifest.get("allowed_requests") or [] if r.get("model_body") is True}
+    for step in [own, *controls, *engine]:
+        payload = step["body"] is not None or _endpoint(step)[0] not in SAFE_METHODS
+        step["body_permitted"] = not (live and step["source"] == "model" and payload) or _endpoint(step) in marked
     return [own, *controls, *engine], [*controls, own, *engine]
 
 
@@ -258,14 +284,7 @@ def plan_case(manifest, case, *, live, lifecycle=None):
     lifecycle the case was sealed with is used. Each rule is checked over every step before the next rule, the case's
     own request first, then its controls, then its lifecycle: the order the case gate has always reported them in.
     A step that breaks a rule raises RequestRefused naming the rule and the step."""
-    checked, planned = _steps(manifest, case, lifecycle=lifecycle)
-    # The model wrote a body or a write after reading the untrusted snapshot: it goes only to an endpoint the operator
-    # marked model_body, never to one that stores, publishes or forwards what it receives.
-    marked = {(str(r.get("method", DEFAULT_METHOD)).upper(), r.get("path")) for r in manifest.get("allowed_requests") or []
-              if r.get("model_body") is True}
-    for step in checked:
-        payload = step["body"] is not None or str(step["method"]).upper() not in SAFE_METHODS
-        step["body_permitted"] = not (live and step["source"] == "model" and payload) or (str(step["method"]).upper(), step["path"]) in marked
+    checked, planned = _steps(manifest, case, lifecycle=lifecycle, live=live)
     for step in checked:
         # The operator's per-endpoint list binds only what the model wrote; other headers ignore it.
         vocabulary = model_header_vocabulary(manifest, step["method"], step["path"])
@@ -276,9 +295,8 @@ def plan_case(manifest, case, *, live, lifecycle=None):
         if step["source"] == "model" and step["identity"] is not None and step["identity"] not in selectable:
             raise RequestRefused("identity", step["id"])
     if live:
-        scope = {(r.get("method"), r.get("path")) for r in manifest.get("allowed_requests") or []}
         for step in checked:
-            if (step["method"], step["path"]) not in scope:
+            if not in_scope(manifest, step["method"], step["path"]):
                 raise RequestRefused("scope", step["id"])
     return {"version": 1, "steps": planned}
 
@@ -290,13 +308,13 @@ def match_request(manifest, case, request, *, expect=None):
     headers. Steps that are still alike, or no expect, give the first: the plan lists the case's own steps before the
     engine's, so a model's step is never read as the engine's."""
     method = str(request.get("method", DEFAULT_METHOD)).upper()
-    scope = {(str(r.get("method", DEFAULT_METHOD)).upper(), r.get("path")) for r in manifest.get("allowed_requests") or []}
-    if (method, request.get("path")) not in scope:
+    if not in_scope(manifest, method, request.get("path")):
         raise RequestRefused("scope")
     plan = case.get("request_plan")
     # A case sealed before the plan existed passed the case gate then: its plan is rebuilt from its fields, unchecked
     # and never written back, so neither its hash nor the operator's approval changes.
-    steps = plan["steps"] if isinstance(plan, dict) else _steps(manifest, case, lifecycle=None)[1]
+    # Every caller matches requests of a live run, so the rebuilt plan holds a model's body to the live rule.
+    steps = plan["steps"] if isinstance(plan, dict) else _steps(manifest, case, lifecycle=None, live=True)[1]
     named = [s for s in steps if (str(s["method"]).upper(), s["path"]) == (method, request.get("path"))]
     if not named:
         raise RequestRefused("step")

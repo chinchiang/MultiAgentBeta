@@ -8,7 +8,8 @@ from datetime import datetime, timezone
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-from .adapters import RESERVED_ENV, format_origin, model_header_list_error, parse_origin, request_path_problem, target_ip_refused
+from .request_rules import model_header_list_error, request_path_problem
+from .adapters import RESERVED_ENV, format_origin, parse_origin, target_ip_refused
 from .contracts import OperatorCase, SecurityRequirement
 
 
