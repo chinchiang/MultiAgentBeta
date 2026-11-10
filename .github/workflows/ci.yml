@@ -21,7 +21,7 @@ jobs:
     services:
       postgres:
         # postgres:18.6, digest read from the registry on 2026-10-03. Pulled from the ECR Public mirror of the Docker
-        # official images (the same digest), which has no anonymous pull rate limit; Docker Hub throttled shared runners.
+        # official images (the same digest), which rarely limits anonymous pulls; Docker Hub throttled shared runners.
         image: public.ecr.aws/docker/library/postgres@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722
         env:
           POSTGRES_USER: vibeaudit_test
