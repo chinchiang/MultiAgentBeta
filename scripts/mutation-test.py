@@ -3,7 +3,8 @@
   python -m pip install --require-hashes -r requirements.mutation.lock.txt
   python scripts/mutation-test.py                     mutate the modules [tool.mutmut] in pyproject.toml names, run their tests
   python scripts/mutation-test.py --update-baseline   the same, then record the escaped mutants per module and per function
-  python scripts/mutation-test.py --changed <ref>     only the functions the diff against <ref> touched (a pull request)
+  python scripts/mutation-test.py --changed <ref>     only the functions the diff against <ref> touched (a pull request);
+                                                      prints the change each escaped mutant of a function over its ceiling made
   python scripts/mutation-test.py <mutant name>...    re-test the named mutants only (see mutmut results / mutmut show)
 
 mutmut changes one operator, constant or branch of the code at a time and runs the tests that cover the changed
@@ -43,6 +44,8 @@ HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", re.M)
 
 
 def mutmut(*args):
+    # What this script printed so far goes out first: mutmut writes to the same output, and a redirected stdout is buffered.
+    sys.stdout.flush()
     return subprocess.run([sys.executable, "-m", "mutmut", *args], cwd=ROOT).returncode
 
 
@@ -174,7 +177,16 @@ def main(argv):
         for key, state in keys_states.items():
             if state in ESCAPED:
                 print(f"    {key}: {state}")
-        worse = report(counts(keys_states)[1], baseline.get("functions", {}), "changed function")
+        rows = counts(keys_states)[1]
+        worse = report(rows, baseline.get("functions", {}), "changed function")
+        # The mutants to act on are those of a function over its ceiling: show what each one changed, so no one has
+        # to link src and ask mutmut for them one at a time.
+        over = {name for name, s in rows.items() if escaped(s) > (baseline.get("functions", {}).get(name) or 0)}
+        shown = [key for key, state in keys_states.items() if state in ESCAPED and function_of(key) in over]
+        if shown:
+            print()
+            print("What each of those functions' escaped mutants changed:")
+            with_link(lambda: [mutmut("show", key) for key in shown])
     else:
         with_link(lambda: mutmut("results"))
         by_module, by_function = counts(keys_states)
