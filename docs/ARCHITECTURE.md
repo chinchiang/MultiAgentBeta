@@ -57,7 +57,7 @@ flowchart TB
 | FastAPI：session／CSRF／scope | `api.py`、`workspace_api.py` |
 | 指揮與 LangGraph 階段 | `service.py`（`STAGES`，每個階段一個圖節點） |
 | 模型閘道・每個代理的 profile | `stage_answers.py`（`StageAnswers`：角色由誰回答、答案通過階段檢查才保留、續跑沿用）、`answers.py`（`ModelAnswers`：保留額度、計量、驗證與有界重試、操作者設定的備援）、`providers.py`（`LiteLLMPort`：經 LiteLLM 送出一次，無隱性 fallback） |
-| 確定性閘門 | `policy.py`（manifest、whitebox、threat、case 閘門與 `authorize`）、`contracts.py`、`domain.py`；標準 ID 目錄在 `catalog.py`，目錄與 benchmark 檔案的 JSON schema 在 `schemas.py` |
+| 確定性閘門 | `policy.py`（manifest、whitebox、threat、case 閘門與 `authorize`）、`contracts.py`、`domain.py`；請求規則（header、路徑、身分、scope、來源與請求計畫）在 `request_rules.py`；標準 ID 目錄在 `catalog.py`，目錄與 benchmark 檔案的 JSON schema 在 `schemas.py` |
 | 獨立 supervisor ＋ 持久 lease | `worker_runtime.py`、`lease.py`；IP 釘選傳輸與 oracle 在 `adapters.py` |
 | 獨立 effect collector | `effect_collector.py`，經 `fixture_protocol.py` 使用 |
 | 證據寫入與 job 帳本 | `store.py`、`traceability.py`；報告匯出在 `service.py` |
@@ -166,7 +166,7 @@ Each node above maps to code in `backend/vibe_audit/` (or the named directory). 
 | FastAPI: session / CSRF / scope | `api.py`, `workspace_api.py` |
 | Commander and LangGraph stages | `service.py` (`STAGES`, one graph node per stage) |
 | Model gateway · per-agent profiles | `stage_answers.py` (`StageAnswers`: who answers a role, an answer kept only once it passes the stage's checks and reused on resume), `answers.py` (`ModelAnswers`: reservation, metering, validation and the bounded retry, the operator's fallback), `providers.py` (`LiteLLMPort`: one send through LiteLLM, no implicit fallback) |
-| Deterministic gates | `policy.py` (manifest, whitebox, threat and case gates and `authorize`), `contracts.py`, `domain.py`; the standards ID catalog in `catalog.py`, the JSON schemas of catalog and benchmark files in `schemas.py` |
+| Deterministic gates | `policy.py` (manifest, whitebox, threat and case gates and `authorize`), `contracts.py`, `domain.py`; the request rules (headers, path, identity, scope, provenance and the request plan) in `request_rules.py`; the standards ID catalog in `catalog.py`, the JSON schemas of catalog and benchmark files in `schemas.py` |
 | Independent supervisor + persistent lease | `worker_runtime.py`, `lease.py`; IP-pinned transport and oracles in `adapters.py` |
 | Independent effect collector | `effect_collector.py`, used through `fixture_protocol.py` |
 | Evidence writer and job ledger | `store.py`, `traceability.py`; report export in `service.py` |

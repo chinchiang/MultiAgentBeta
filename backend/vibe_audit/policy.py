@@ -3,8 +3,16 @@ from __future__ import annotations
 import time
 from datetime import datetime, timezone
 
-from .adapters import case_headers_allowed, model_header_vocabulary
+from .request_rules import RequestRefused, plan_case
 from .domain import digest
+
+
+# What the case gate says when a case breaks a request rule (request_rules.plan_case).
+GATE_REFUSALS={
+    "headers":"Case headers cannot carry credentials, relay controls or method/path overrides; a model-designed header must be one the operator listed in allowed_requests[].model_headers for that method and path",
+    "identity":"A model-designed case can use only test identities the operator marked as model-selectable",
+    "scope":"Case or fixture request exceeds the declared method/path scope",
+}
 
 
 class PolicyError(RuntimeError):
@@ -135,23 +143,12 @@ class Policy:
                 raise PolicyError("Observation mode is required")
             if not 1<=case.get("repetitions",1)<=20:
                 raise PolicyError("Invalid repetition count")
-            model_designed=case.get("designed_by")=="model"
-            # A model-designed request may use only the header values the operator listed for its method and path.
-            if not all(case_headers_allowed(r.get("headers"),model_designed=model_designed,
-                                            vocabulary=model_header_vocabulary(run["manifest"],r.get("method","GET"),r.get("path")) if model_designed else None)
-                       for r in [case,*[p for p in case.get("preconditions",[]) if isinstance(p,dict)]]):
-                raise PolicyError("Case headers cannot carry credentials, relay controls or method/path overrides; a model-designed header must be one the operator listed in allowed_requests[].model_headers for that method and path")
-            if model_designed:
-                selectable={p.get("id") for p in run["manifest"].get("auth_profiles",[]) if p.get("model_selectable") is True}
-                identities={case.get("identity")}|{p.get("identity") for p in case.get("preconditions",[]) if isinstance(p,dict)}
-                if identities-{None}-selectable:
-                    raise PolicyError("A model-designed case can use only test identities the operator marked as model-selectable")
+            # The request rules decide every request the case may send: its headers, identities and scope.
+            try:
+                plan_case(run["manifest"],case,live=run["mode"]=="live")
+            except RequestRefused as refused:
+                raise PolicyError(GATE_REFUSALS[refused.rule]) from None
             if run["mode"]=="live":
-                scope={(r["method"],r["path"]) for r in run["manifest"]["allowed_requests"]}
-                requests=[case]+[p for p in case.get("preconditions",[]) if isinstance(p,dict)]+case.get("allowed_requests",[])
-                for request in requests:
-                    if (request.get("method","GET"),request.get("path")) not in scope:
-                        raise PolicyError("Case or fixture request exceeds the declared method/path scope")
                 if case.get("fixture_profile"):
                     from .fixture_protocol import fixture_profile_hash
                     if case.get("fixture_profile_hash")!=fixture_profile_hash(case["fixture_profile"]):

@@ -479,6 +479,11 @@ PATTERNS = [
      r"for their method and path, or supply operator-written cases\.",
      "這次複測會複製模型設計的案例（{0}），但它們的 header 不在原執行的 allowed_requests[].model_headers 中，案例閘門會拒絕。"
      "複測不能改變原本的範圍：請建立新的評估，為對應的 method 與 path 列出這些 header 值，或改用操作者撰寫的案例。"),
+    (r"This retest would copy cases \((.+)\) whose headers, identities or requests the original run's scope does not allow, "
+     r"so the case gate would refuse them\. A retest cannot change the original scope: create a new assessment whose scope allows them, "
+     r"or supply other cases\.",
+     "這次複測會複製的案例（{0}），它們的 header、身分或請求不在原執行允許的範圍內，案例閘門會拒絕。"
+     "複測不能改變原本的範圍：請建立範圍涵蓋它們的新評估，或改用其他案例。"),
     (r"Model call failed \(([^)]*)\): (.+)", "模型呼叫失敗（{0}）：{1}"),
     (r"(\w+): operation failed; no successful verification claimed", "{0}：操作失敗；不主張任何驗證成功"),
     (r"Invalid run configuration: (.*)", "執行設定無效：{0}"),

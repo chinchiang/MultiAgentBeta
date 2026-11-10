@@ -332,6 +332,13 @@ def test_workspace_settings_catalog_and_linked_retest(tmp_path):
         parent["cases"][0]["headers"]={}
         app.state.store.save(parent)
         assert client.post(f"/api/runs/{run['id']}/retest",json=body,headers=headers).status_code==201
+        # The preflight applies every request rule the case gate would, not only the header vocabulary: a model case
+        # with an identity the operator never marked model-selectable is refused at creation too.
+        parent["cases"][0]["identity"]="tenant-a-admin"
+        app.state.store.save(parent)
+        refused=client.post(f"/api/runs/{run['id']}/retest",json=body,headers=headers)
+        assert refused.status_code==409 and parent["cases"][0]["id"] in refused.json()["detail"]
+        assert "new assessment" in refused.json()["detail"]
 
 
 def test_run_inventory_carries_summaries_and_concurrent_decisions_both_persist(tmp_path):

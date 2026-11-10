@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from .domain import ModelProfile, RunInput, now
-from .adapters import case_headers_allowed, model_header_vocabulary
+from .request_rules import RequestRefused, plan_case
 from .policy import PolicyError
 
 
@@ -100,17 +100,25 @@ def workspace_router(store, engine, source_roots, *, session):
         if cases:
             manifest["cases"] = [{k: v for k, v in case.items() if k not in
                                   {"hash", "source_digest", "threat_model_hash"}} for case in cases]
-        # A retest keeps the parent's manifest, so a model-designed case whose headers that manifest never listed
-        # would only be refused later by the case gate, after the white-box stage had spent its budget. Say so now.
-        refused = sorted(str(case.get("id", "?")) for case in manifest.get("cases", []) if case.get("designed_by") == "model"
-                         and not all(case_headers_allowed(step.get("headers"), model_designed=True,
-                                                          vocabulary=model_header_vocabulary(manifest, step.get("method", "GET"), step.get("path")))
-                                     for step in [case, *[p for p in case.get("preconditions", []) if isinstance(p, dict)]]))
-        if refused:
-            raise PolicyError("This retest would copy model-designed cases (" + ", ".join(refused) + ") whose headers the original "
+        # A retest keeps the parent's manifest, so a copied case that manifest no longer allows would only be refused
+        # later by the case gate, after the white-box stage had spent its budget. Hold each copy to the same request
+        # rules now and say so.
+        refused: dict[str, list[str]] = {}
+        for case in manifest.get("cases", []):
+            try:
+                plan_case(manifest, case, live=manifest.get("mode") == "live")
+            except RequestRefused as refusal:
+                headers = refusal.rule == "headers" and case.get("designed_by") == "model"
+                refused.setdefault("model_headers" if headers else "rules", []).append(str(case.get("id", "?")))
+        if refused.get("model_headers"):
+            raise PolicyError("This retest would copy model-designed cases (" + ", ".join(sorted(refused["model_headers"])) + ") whose headers the original "
                               "run's allowed_requests[].model_headers do not list, so the case gate would refuse them. A retest cannot "
                               "change the original scope: create a new assessment that lists those header values for their method and "
                               "path, or supply operator-written cases.")
+        if refused.get("rules"):
+            raise PolicyError("This retest would copy cases (" + ", ".join(sorted(refused["rules"])) + ") whose headers, identities or "
+                              "requests the original run's scope does not allow, so the case gate would refuse them. A retest cannot "
+                              "change the original scope: create a new assessment whose scope allows them, or supply other cases.")
         model = RunInput.model_validate(manifest)
         if model.mode == "live":
             path = Path(model.source_path).resolve()
