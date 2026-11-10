@@ -92,6 +92,24 @@ jobs:
       - run: git add -N frontend/dist && git diff --exit-code -- frontend/dist
       - run: python scripts/package-release.py --check
 
+  # A pull request that moves code leaves no line reference in docs/ naming the lines it moved away
+  # (tests/test_doc_refs.py only checks that each lands inside its file). Standard library only: nothing to install.
+  doc-refs:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The base commit has to be present to compare each referenced file with it.
+          fetch-depth: 0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - run: python scripts/reanchor-doc-refs.py --check --base "$BASE_SHA"
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+
   windows:
     # Windows is a documented platform for the console and the demo; Docker, PostgreSQL and POSIX-only tests skip there.
     runs-on: windows-2025

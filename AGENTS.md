@@ -16,6 +16,7 @@ PYTHONPATH=backend python -m pytest tests -q -rs                  # -rs：逐項
 python scripts/package-release.py --manifest-only                 # 任何被追蹤的檔案變更後執行
 python scripts/package-release.py --check                         # CI 會跑
 python scripts/redact-receipts.py --check                         # docs/ 裡的收據不得含主機或帳號名稱
+python scripts/reanchor-doc-refs.py                               # 改動程式後，把 docs/ 裡被移走的行號參照對回去（CI 對 pull request 跑 --check）
 python -m ruff check backend tests scripts                        # lint：未使用的名稱與匯入、語法錯誤、bugbear（規則在 pyproject.toml）
 sh scripts/contract-smoke.sh                                      # 對真實 loopback 後端跑控制台的 SSR／API 契約 smoke（CI 會跑）
 sh scripts/dev-env.sh                                             # 本機重開機後重建 PostgreSQL 容器、離線 OSV 與 runtime-static.json（~/.cache/vibeaudit-dev），最後印出整合測試要的環境變數
@@ -69,6 +70,7 @@ PYTHONPATH=backend python -m pytest tests -q -rs                  # -rs: read ev
 python scripts/package-release.py --manifest-only                 # after changing any tracked file
 python scripts/package-release.py --check                         # CI runs this
 python scripts/redact-receipts.py --check                         # receipts in docs/ name no host or account
+python scripts/reanchor-doc-refs.py                               # after changing code, re-anchor the line references in docs/ it moved (CI runs --check on pull requests)
 python -m ruff check backend tests scripts                        # lint: unused names and imports, syntax errors, bugbear (rules in pyproject.toml)
 sh scripts/contract-smoke.sh                                      # the console's SSR/API contract smoke against a real loopback backend (CI runs it)
 sh scripts/dev-env.sh                                             # after a local reboot: rebuild the PostgreSQL container, offline OSV and runtime-static.json (~/.cache/vibeaudit-dev), then print the integration-test variables
