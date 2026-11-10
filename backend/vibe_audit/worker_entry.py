@@ -323,7 +323,7 @@ class Supervisor:
 
     def allowed_request(self,request):
         from adapters import _prepare_request  # type: ignore[import-not-found]  # flat import inside the container
-        from request_rules import CASE_PHASES, RequestRefused, in_scope, match_request
+        from request_rules import CASE_PHASES, RequestRefused, body_permitted, in_scope, match_request
         method=request.get("method")
         path=request.get("path")
         if not in_scope(self.manifest,method,path):
@@ -383,8 +383,9 @@ class Supervisor:
                 raise ValueError("Sealed request body is missing")
         model_step=planned["source"]=="model"
         # The plan's body rule, as the controller reads it too: a model request that carries a body, or is not a read,
-        # goes only to an endpoint the operator marked model_body. The body sent is the sealed step's (checked above).
-        if not planned["body_permitted"]:
+        # goes only to an endpoint the operator marked model_body. The rule was applied to the plan step's sealed body;
+        # the body sent is the spec step's (checked above), and the case hash binds that step and the plan together.
+        if not body_permitted(planned):
             raise ValueError("A model-written request that carries a body or is not a read goes only to an endpoint the operator marked model_body")
         # Transport-generated headers are not part of the reviewed request.
         headers=dict(step.get("headers",{}))
@@ -509,7 +510,8 @@ class Supervisor:
         record={"case_id":case_id,"method":method,"path":path,"identity":request.get("identity"),"purpose":step.get("purpose","test")}
         # Only a read-only step that reached the target has a known outcome when its answer cannot be
         # relayed; any other failure after reservation may have changed the target.
-        unsafe=method not in {"GET","HEAD","OPTIONS"} or step.get("side_effects") is True
+        from request_rules import SAFE_METHODS
+        unsafe=method not in SAFE_METHODS or step.get("side_effects") is True
         try:
             result=self.forward(method,path,headers,body,deadline)
         except Exception as exc:

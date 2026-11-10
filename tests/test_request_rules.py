@@ -4,6 +4,7 @@ import copy
 import pytest
 
 from vibe_audit.request_rules import RequestRefused, match_request, own_step, plan_case, read_only
+from vibe_audit.request_rules import body_permitted as step_body_permitted
 
 
 def manifest(**changes):
@@ -388,3 +389,13 @@ def test_with_the_manifest_a_case_sealed_before_request_plans_has_its_own_step_r
     assert "request_plan" not in legacy
     # The case's own step, not the control the plan lists before it.
     assert own_step(case(), manifest())["id"] == "case"
+
+
+def test_a_step_may_carry_a_body_only_where_its_plan_says_so():
+    scope = manifest(allowed_requests=[{"method": "POST", "path": "/chat"}])
+    write = case(designed_by="model", method="POST", path="/chat", body={"q": "hi"}, identity=None, preconditions=[])
+    assert step_body_permitted(plan_case(scope, write, live=True)["steps"][0]) is False
+    assert step_body_permitted(plan_case(scope, write, live=False)["steps"][0]) is True
+    # A step that does not say so, or no step at all, carries none.
+    for step in ({"id": "case", "body_permitted": "yes"}, {"id": "case"}, {}, None):
+        assert step_body_permitted(step) is False

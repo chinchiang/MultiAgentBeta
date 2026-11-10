@@ -159,7 +159,8 @@ def own_step(case, manifest=None):
     """The step of the case's request plan that is the case's own request, or None without one.
 
     With the run's manifest, a case sealed before request plans has its plan rebuilt from its fields (as match_request
-    does), unchecked and never written back."""
+    does), unchecked and never written back. The rebuilt step holds a model's body to the live rule, so only a caller
+    in a live run may read its body_permitted (the controller reads it only outside demo runs)."""
     plan = case.get("request_plan")
     if not isinstance(plan, dict):
         return None if manifest is None else _steps(manifest, case, lifecycle=None, live=True)[0][0]
@@ -229,14 +230,25 @@ def _key(step):
     return step["method"], step["path"], step["identity"], repr(sorted(headers.items()) if isinstance(headers, dict) else headers)
 
 
+def _endpoint(request):
+    """The method and exact path a request, step or scope entry names; naming no method is a GET."""
+    return str(request.get("method", DEFAULT_METHOD)).upper(), request.get("path")
+
+
 def in_scope(manifest, method, path):
     """Whether the operator's run scope (allowed_requests) lists this method and exact path."""
-    return (method, path) in {(str(r.get("method", DEFAULT_METHOD)).upper(), r.get("path")) for r in manifest.get("allowed_requests") or []}
+    return (method, path) in {_endpoint(r) for r in manifest.get("allowed_requests") or []}
+
+
+def body_permitted(step):
+    """Whether this plan step may carry a body or be a write: only where its plan says so (the body rule in _steps)."""
+    return isinstance(step, dict) and step.get("body_permitted") is True
 
 
 def _steps(manifest, case, *, lifecycle, live):
     """The case's plan steps in their checking order, own request first, then controls, then lifecycle, and the
-    order the plan lists them in; no rule is checked here, each step only records whether it may carry a body."""
+    order the plan lists them in. The body rule is the one rule applied here, since every plan (sealed or rebuilt for
+    a case sealed before plans) records it on each step; live says whether the run is live. No rule refuses here."""
     source = _source(manifest, case)
     own = _step("case", "case", source, case, side_effects=bool(case.get("side_effects")))
     controls = [_step("control:" + str(p.get("name")), "control", source, p)
@@ -258,11 +270,10 @@ def _steps(manifest, case, *, lifecycle, live):
             engine.append(step)
     # The model wrote a body or a write after reading the untrusted snapshot: it goes only to an endpoint the operator
     # marked model_body, never to one that stores, publishes or forwards what it receives.
-    marked = {(str(r.get("method", DEFAULT_METHOD)).upper(), r.get("path")) for r in manifest.get("allowed_requests") or []
-              if r.get("model_body") is True}
+    marked = {_endpoint(r) for r in manifest.get("allowed_requests") or [] if r.get("model_body") is True}
     for step in [own, *controls, *engine]:
-        payload = step["body"] is not None or str(step["method"]).upper() not in SAFE_METHODS
-        step["body_permitted"] = not (live and step["source"] == "model" and payload) or (str(step["method"]).upper(), step["path"]) in marked
+        payload = step["body"] is not None or _endpoint(step)[0] not in SAFE_METHODS
+        step["body_permitted"] = not (live and step["source"] == "model" and payload) or _endpoint(step) in marked
     return [own, *controls, *engine], [*controls, own, *engine]
 
 

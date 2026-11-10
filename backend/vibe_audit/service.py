@@ -19,7 +19,7 @@ from .diagnostics import note_failure
 from .domain import RunInput, digest, new_run, now
 from .messages import zh
 from .policy import Policy, PolicyError, elapsed_seconds, sealed
-from .request_rules import RequestRefused, own_step, plan_case
+from .request_rules import RequestRefused, body_permitted, own_step, plan_case
 from .stage_answers import KEPT_UNDER
 from .store import Store
 from .contracts import (CORE_REVIEW_QUESTIONS, CaseDesignProposal, CommanderProposal, ArchitectureProposal,
@@ -841,7 +841,7 @@ class Engine:
                     async def lease_hook(*args,**kwargs):
                         self.check_active(run)
                     # Outside a fixture a model POST is already blocked below as state-changing; a GET carries no body.
-                    if fixture and own.get("body_permitted") is not True:
+                    if fixture and not body_permitted(own):
                         result={"status":"blocked","reason":"A model-written request body goes only to an endpoint the operator marked model_body in allowed_requests","observations":[],"evidence":[],"requests":0}
                     elif fixture:
                         from .fixture_protocol import run_fixture_case
