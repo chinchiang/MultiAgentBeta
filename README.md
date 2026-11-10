@@ -121,7 +121,8 @@ MultiAgentBeta/
 │   ├── catalog.py                 #   標準 ID 與來源釘選
 │   ├── contracts.py / policy.py   #   案例契約；manifest、白箱、威脅、案例閘門與 authorize
 │   ├── domain.py / schemas.py     #   資料模型與 JSON schema
-│   ├── adapters.py                #   受控 HTTP 傳輸、IP 釘選、header 規則、oracle 評估
+│   ├── adapters.py                #   受控 HTTP 傳輸、IP 釘選、oracle 評估
+│   ├── request_rules.py           #   請求規則：送往目標的請求能長什麼樣、能不能送出（header、路徑、身分、scope、來源）
 │   ├── fixture_protocol.py        #   reset／setup／cleanup 協定、測試身分
 │   ├── effect_collector.py        #   獨立事件序列與 sink 收據
 │   ├── worker_runtime.py          #   controller ＋ 獨立 supervisor、run_scanner、run_case
@@ -327,7 +328,8 @@ MultiAgentBeta/
 │   ├── catalog.py                 #   standard IDs and source pins
 │   ├── contracts.py / policy.py   #   case contract; manifest, white-box, threat and case gates, authorize
 │   ├── domain.py / schemas.py     #   data model and JSON schemas
-│   ├── adapters.py                #   controlled HTTP transport, IP pinning, header rules, oracle evaluation
+│   ├── adapters.py                #   controlled HTTP transport, IP pinning, oracle evaluation
+│   ├── request_rules.py           #   request rules: what a request to the target may look like and whether it may be sent (headers, path, identity, scope, provenance)
 │   ├── fixture_protocol.py        #   reset/setup/cleanup protocol, test identities
 │   ├── effect_collector.py        #   independent event sequence and sink receipts
 │   ├── worker_runtime.py          #   controller + independent supervisor, run_scanner, run_case
