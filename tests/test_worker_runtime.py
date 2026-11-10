@@ -455,16 +455,19 @@ async def test_pre_send_revocation_is_known_not_unknown(runtime,monkeypatch):
                                  max_requests=5,ttl_seconds=5,max_seconds=30,operation="http_case",repetition=0,spec_hash="s")
     runtime.leases.claim(sup.cap,"w")
     sup.revoked.set()
-    with pytest.raises(NotSent):
+    # Each refusal names its own reason: a refused connection to the unused port is a NotSent too.
+    with pytest.raises(NotSent,match="Egress revoked"):
         sup.forward("GET","/private",{},None)
     assert not getattr(sup,"unknown_dispatch",False)
-    # An expired lease also stops the request before it is sent.
+    # An expired lease also stops the request before it is sent. It is claimed while still valid however slowly the
+    # runner gets there (a 0.1s lease once expired between issue and claim on Windows CI), then its clock runs past it.
     expired=runtime.leases.issue(run_id="pre-send-2",case_hash="case",threat_hash="threat",manifest_hash="m",
-                                 max_requests=5,ttl_seconds=0.1,max_seconds=30,operation="http_case",repetition=1,spec_hash="s")
+                                 max_requests=5,ttl_seconds=5,max_seconds=30,operation="http_case",repetition=1,spec_hash="s")
     runtime.leases.claim(expired,"w")
     sup.cap=expired;sup.revoked=threading.Event()
-    await asyncio.sleep(0.15)
-    with pytest.raises(NotSent):
+    real=runtime.leases.clock
+    runtime.leases.clock=lambda:real()+6
+    with pytest.raises(NotSent,match="lease is no longer valid"):
         sup.forward("GET","/private",{},None)
 
 
