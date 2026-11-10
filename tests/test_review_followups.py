@@ -6,7 +6,7 @@ import sys
 
 import pytest
 
-from vibe_audit import adapters
+from vibe_audit import adapters, request_rules
 from vibe_audit.adapters import AdapterBlocked, _prepare_request, canonical_model_headers, case_headers_allowed
 
 # Every value of the fixed model vocabulary that these tests use, as an operator would list it for an endpoint.
@@ -95,6 +95,7 @@ def test_model_header_choices_that_mean_the_same_look_the_same():
 
 def model_supervisor(monkeypatch, *, model_body=False, designed_by="model", headers=None, model_headers=None, bodiless=False):
     monkeypatch.setitem(sys.modules, "adapters", adapters)
+    monkeypatch.setitem(sys.modules, "request_rules", request_rules)
     instance = Supervisor.__new__(Supervisor)
     listed = {"Accept": ["application/json"]} if model_headers is None else model_headers
     entry = {"method": "POST", "path": "/chat", **({"model_body": True} if model_body else {}),
@@ -152,6 +153,7 @@ def test_supervisor_sends_the_sealed_body_not_the_worker_spelling_of_it(monkeypa
 
 def test_supervisor_applies_the_header_list_to_model_steps_of_a_sequence_only(monkeypatch):
     monkeypatch.setitem(sys.modules, "adapters", adapters)
+    monkeypatch.setitem(sys.modules, "request_rules", request_rules)
     supervisor = Supervisor.__new__(Supervisor)
     supervisor.manifest = {"auth_profiles": [], "allowed_requests": [
         {"method": "GET", "path": "/fixture"}, {"method": "GET", "path": "/private", "model_headers": {"Accept": ["text/html"]}}]}
@@ -160,7 +162,12 @@ def test_supervisor_applies_the_header_list_to_model_steps_of_a_sequence_only(mo
     steps = [step("fixture:setup", "/fixture", {"X-Fixture": "engine"}),   # engine lifecycle step: not a model choice
              step("case", "/private", {"Accept": "text/html"}),            # listed for /private
              step("control:1", "/fixture", {"Accept": "text/html"})]       # /fixture lists nothing
-    supervisor.spec = {"operation": "request_sequence", "cases": [{"id": "C1", "designed_by": "model"}], "requests": steps}
+    # A case sealed before request plans: its plan comes from its fields, its lifecycle from allowed_requests.
+    sealed = {"id": "C1", "designed_by": "model", "method": "GET", "path": "/private", "identity": None,
+              "headers": {"Accept": "text/html"}, "body": None,
+              "preconditions": [{"name": "1", "method": "GET", "path": "/fixture", "identity": None, "headers": {"Accept": "text/html"}}],
+              "allowed_requests": [{"id": "fixture:setup", "method": "GET", "path": "/fixture", "identity": None, "headers": {"X-Fixture": "engine"}}]}
+    supervisor.spec = {"operation": "request_sequence", "cases": [sealed], "requests": steps}
     supervisor.sessions, supervisor.sequence_stopped = {}, False
     request = lambda s: {"case_id": "C1", "method": "GET", "path": s["path"], "identity": None, "headers": s["headers"], "body_b64": ""}
     for index, expected in ((0, True), (1, True), (2, False)):
@@ -170,6 +177,89 @@ def test_supervisor_applies_the_header_list_to_model_steps_of_a_sequence_only(mo
         else:
             with pytest.raises(AdapterBlocked):
                 supervisor.allowed_request(request(steps[index]))
+
+
+def planned_sequence_supervisor(monkeypatch, steps):
+    """A request_sequence supervisor for a model case with one control on /fixture, where the engine also probes /fixture."""
+    monkeypatch.setitem(sys.modules, "adapters", adapters)
+    monkeypatch.setitem(sys.modules, "request_rules", request_rules)
+    supervisor = Supervisor.__new__(Supervisor)
+    supervisor.manifest = {"auth_profiles": [], "allowed_requests": [
+        {"method": "GET", "path": "/fixture"}, {"method": "GET", "path": "/leak"},
+        {"method": "GET", "path": "/private", "model_headers": {"Accept": ["text/html"]}}]}
+    case = {"id": "C1", "designed_by": "model", "method": "GET", "path": "/private", "identity": None,
+            "headers": {"Accept": "text/html"}, "body": None,
+            "preconditions": [{"name": "ready", "method": "GET", "path": "/fixture", "identity": None, "headers": {"Accept": "text/html"},
+                               "expected_status": 200, "required_text": ["READY"]}]}
+    # Sealed as if the case gate had let the control's header through.
+    case["request_plan"] = {"version": 1, "steps": [
+        {"id": "control:ready", "phase": "control", "source": "model", "method": "GET", "path": "/fixture", "identity": None,
+         "headers": {"Accept": "text/html"}, "body": None, "read_only": True, "body_permitted": True},
+        {"id": "case", "phase": "case", "source": "model", "method": "GET", "path": "/private", "identity": None,
+         "headers": {"Accept": "text/html"}, "body": None, "read_only": True, "body_permitted": True},
+        {"id": "probe", "phase": "setup", "source": "engine", "method": "GET", "path": "/fixture", "identity": None,
+         "headers": {"X-Fixture": "engine"}, "body": None, "read_only": True, "body_permitted": True}]}
+    supervisor.spec = {"operation": "request_sequence", "cases": [case], "requests": steps}
+    supervisor.sessions, supervisor.sequence_stopped, supervisor.sequence = {}, False, 0
+    return supervisor
+
+
+def sequence_step(sid, path, headers):
+    return {"id": sid, "case_id": "C1", "method": "GET", "path": path, "identity": None, "headers": headers, "body": None}
+
+
+def sent(supervisor, index):
+    supervisor.sequence = index
+    step = supervisor.spec["requests"][index]
+    return supervisor.allowed_request({"case_id": "C1", "method": "GET", "path": step["path"], "identity": None,
+                                       "headers": step["headers"], "body_b64": ""})
+
+
+def test_a_sequence_step_is_the_models_or_the_engines_by_the_request_plan_whatever_its_id(monkeypatch):
+    # Step ids name nothing: the engine's probe is called "case" and the model's control "setup".
+    steps = [sequence_step("case", "/fixture", {"X-Fixture": "engine"}), sequence_step("setup", "/private", {"Accept": "text/html"}),
+             sequence_step("cleanup", "/fixture", {"Accept": "text/html"})]
+    supervisor = planned_sequence_supervisor(monkeypatch, steps)
+    sent(supervisor, 0)
+    sent(supervisor, 1)
+    # The model's control is held to the operator's header list, which lists nothing for /fixture.
+    with pytest.raises(AdapterBlocked):
+        sent(supervisor, 2)
+
+
+def test_a_sequence_step_its_case_never_planned_is_refused_though_the_run_scope_has_it(monkeypatch):
+    supervisor = planned_sequence_supervisor(monkeypatch, [sequence_step("case", "/leak", {})])
+    with pytest.raises(ValueError, match="not in the sealed case"):
+        sent(supervisor, 0)
+
+
+def test_a_tool_or_http_case_task_sends_only_its_cases_planned_own_requests(monkeypatch):
+    reset = {"id": "reset", "phase": "reset", "source": "engine", "method": "POST", "path": "/chat", "identity": None,
+             "headers": {"Accept": "application/json"}, "body": None, "read_only": False, "body_permitted": True}
+    # The engine's reset of the same endpoint is a sequence step: a tool task never sends it.
+    tool = model_supervisor(monkeypatch, model_body=True, designed_by=None)
+    case = tool.spec["cases"][0]
+    case["request_plan"] = {"version": 1, "steps": [reset]}
+    with pytest.raises(ValueError, match="not in the sealed case"):
+        tool.allowed_request(chat_request())
+    # An http_case sends what its plan holds, whatever the case's fields say.
+    tool.spec["operation"] = "http_case"
+    tool.sequence, tool.sequence_stopped = 0, False
+    with pytest.raises(ValueError, match="not in the sealed case"):
+        tool.allowed_request(chat_request())
+    case["request_plan"]["steps"].insert(0, {**reset, "id": "case", "phase": "case", "source": "operator"})
+    assert tool.allowed_request(chat_request())[2:4] == ("POST", "/chat")
+
+
+def test_the_worker_gets_only_its_cases_own_plan_step(monkeypatch):
+    supervisor = planned_sequence_supervisor(monkeypatch, [])
+    supervisor.spec["operation"] = "http_case"
+    own = supervisor.spec["cases"][0]["request_plan"]["steps"][1]
+    # Not the control's step nor the engine's: the worker sends the controls but needs to know only whether the case writes.
+    assert supervisor.worker_view()["cases"][0]["request_plan"] == {"version": 1, "steps": [own]}
+    # A case sealed before request plans has none to pass on.
+    del supervisor.spec["cases"][0]["request_plan"]
+    assert "request_plan" not in supervisor.worker_view()["cases"][0]
 
 
 def test_supervisor_rechecks_the_operator_header_list_before_tb_target(monkeypatch):
@@ -342,6 +432,7 @@ def sequence_supervisor(monkeypatch, *, results):
     """A supervisor for one http_case with two positive controls; forward answers from results, in order."""
     import threading
     monkeypatch.setitem(sys.modules, "adapters", adapters)
+    monkeypatch.setitem(sys.modules, "request_rules", request_rules)
     instance = Supervisor.__new__(Supervisor)
     controls = [{"name": f"secret control name {n}", "method": "GET", "path": f"/fixture{n}", "identity": None,
                  "expected_status": 200, "required_text": ["CANARY"]} for n in (1, 2)]

@@ -27,12 +27,12 @@ try:
     from .request_rules import (  # noqa: F401  (re-exported for callers that still import them from here)
         _FORBIDDEN_HEADERS, _HEADER_NAME, _LANGUAGES, _MEDIA_TYPES, _MODEL_HEADER_VALUES, MODEL_CASE_HEADER_NAMES,
         MODEL_CASE_HEADERS, RELAY_HEADERS, SAFE_METHODS, _one_of, canonical_model_headers, case_headers_allowed,
-        model_header_list_error, model_header_vocabulary, request_path_problem, state_changing)
+        model_header_list_error, model_header_vocabulary, read_only, request_path_problem, state_changing)
 except ImportError:
     from request_rules import (  # type: ignore[import-not-found,no-redef]  # noqa: F401
         _FORBIDDEN_HEADERS, _HEADER_NAME, _LANGUAGES, _MEDIA_TYPES, _MODEL_HEADER_VALUES, MODEL_CASE_HEADER_NAMES,
         MODEL_CASE_HEADERS, RELAY_HEADERS, SAFE_METHODS, _one_of, canonical_model_headers, case_headers_allowed,
-        model_header_list_error, model_header_vocabulary, request_path_problem, state_changing)
+        model_header_list_error, model_header_vocabulary, read_only, request_path_problem, state_changing)
 
 MAX_RESPONSE_BYTES = 256 * 1024
 MAX_REQUEST_BYTES = 64 * 1024
@@ -578,8 +578,8 @@ async def execute_case(manifest: dict, case: dict, *, cancel_event, request_hook
         return _result("blocked", "This adapter executes live HTTP only; synthetic demo execution belongs to the service.")
     if manifest.get("mode") != "live":
         return _result("blocked", "HTTP target requests require an explicitly live run.")
-    # Only an operator may declare a POST free of side effects (service passes the same flag for the case).
-    if state_changing(case, operator_case=case.get("designed_by") != "model"):
+    # Only an operator may declare a POST free of side effects; the case's request plan records who wrote it.
+    if not read_only(case):
         return _result("blocked", "Side-effecting cases require a sandbox effect collector and cleanup runner, which are not connected.")
     if request_hook is None:
         return _result("blocked", "The request budget/cancellation hook is required for live transport.")

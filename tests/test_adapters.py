@@ -234,6 +234,15 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["requests"], 0)
         self.assertEqual(self.events, [])
 
+    async def test_the_worker_reads_whether_a_post_changes_state_from_the_cases_request_plan(self):
+        # The plan decided who wrote the case (the model) when it was sealed; the worker's copy says nothing of it.
+        self.case = {**case_template(), "method": "POST", "body": {"message": "fixture"}, "side_effects": False,
+                     "request_plan": {"version": 1, "steps": [{"id": "case", "phase": "case", "source": "model", "read_only": False}]}}
+        result = await self.run_case()
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["requests"], 0)
+        self.assertEqual(self.events, [])
+
     async def test_hook_precedes_each_request(self):
         self.case["repetitions"] = 3
         result = await self.run_case()

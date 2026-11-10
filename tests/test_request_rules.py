@@ -3,7 +3,7 @@ import copy
 
 import pytest
 
-from vibe_audit.request_rules import RequestRefused, match_request, plan_case
+from vibe_audit.request_rules import RequestRefused, match_request, own_step, plan_case, read_only
 
 
 def manifest(**changes):
@@ -167,6 +167,11 @@ def test_a_lifecycle_step_listed_twice_is_planned_once():
     reset = {"method": "POST", "path": "/__fixture/reset", "identity": None}
     steps = plan_case(fixture_manifest(), fixture_case(), live=True, lifecycle=[reset, dict(reset)])["steps"]
     assert [s["id"] for s in steps] == ["control:own", "case", "lifecycle:1"]
+    # The same headers in another order or letter case are the same step.
+    headed = {**reset, "headers": {"X-Fixture-Control": "on", "Accept": "*/*"}}
+    again = {**reset, "headers": {"accept": "*/*", "x-fixture-control": "on"}}
+    steps = plan_case(fixture_manifest(), fixture_case(), live=True, lifecycle=[headed, again])["steps"]
+    assert [s["id"] for s in steps] == ["control:own", "case", "lifecycle:1"]
 
 
 def test_a_scope_entry_naming_no_method_marks_a_get_for_model_bodies():
@@ -286,3 +291,43 @@ def test_a_request_or_scope_entry_naming_no_method_is_a_get():
     scope = manifest(allowed_requests=[{"path": "/orders/a"}, {"method": "GET", "path": "/orders/b"}])
     assert match_request(scope, sealed_with([], case()), {"path": "/orders/b", "identity": "alice"})["id"] == "case"
     assert match_refusal({"path": "/orders/a", "identity": "alice"}, value=sealed_with([], case()), scope=scope) == "step"
+
+
+def test_a_lifecycle_step_sending_a_controls_request_stays_the_engines_and_is_told_apart_by_its_headers():
+    # The engine probes the same method, path and identity as the model's control, with its own control header.
+    probe = {"id": "probe", "phase": "setup", "method": "GET", "path": "/orders/a", "identity": "alice",
+             "headers": {"X-Fixture-Control": "local-synthetic-control"}}
+    model = {**fixture_case(), "designed_by": "model", "body": None, "method": "GET", "path": "/orders/b"}
+    scope = manifest(allowed_requests=[{"method": "GET", "path": "/orders/b"}, {"method": "GET", "path": "/orders/a"}])
+    model["request_plan"] = plan_case(scope, model, live=True, lifecycle=[probe])
+    assert [(s["id"], s["source"]) for s in model["request_plan"]["steps"]] == [("control:own", "model"), ("case", "model"), ("probe", "engine")]
+    request = {"method": "GET", "path": "/orders/a", "identity": "alice"}
+    assert match_request(scope, model, request, expect={"headers": {"x-fixture-control": "local-synthetic-control"}})["id"] == "probe"
+    assert match_request(scope, model, request, expect={"headers": {}})["id"] == "control:own"
+    # Headers that tell neither apart, or no expected step at all, take the stricter rule: the model's.
+    assert match_request(scope, model, request, expect={"headers": {"Accept": "text/html"}})["source"] == "model"
+    assert match_request(scope, model, request, expect={"headers": {"X-Other": "local-synthetic-control"}})["source"] == "model"
+    assert match_request(scope, model, request)["source"] == "model"
+
+
+def test_whether_a_case_writes_is_read_from_its_plans_own_step_or_else_by_who_wrote_it():
+    post = case(method="POST", path="/chat", body={"q": "hi"})
+    planned = {**post, "request_plan": {"version": 1, "steps": [{"id": "case", "phase": "case", "source": "engine", "read_only": False}]}}
+    assert read_only(post) is True and read_only(planned) is False
+    # A plan without the case's own step, or no plan, leaves it to who wrote the case: only an operator's POST reads.
+    for plan in ({"version": 1, "steps": []}, {"version": 1}, None):
+        assert read_only({**post, "request_plan": plan}) is True
+        assert read_only({**post, "request_plan": plan, "designed_by": "model"}) is False
+
+
+def test_a_cases_own_step_is_the_plans_step_for_its_own_request():
+    sealed = sealed_case()
+    assert own_step(sealed) == next(s for s in sealed["request_plan"]["steps"] if s["id"] == "case")
+    for plan in ({"version": 1, "steps": [engine_step()]}, {"version": 1}, None):
+        assert own_step({**fixture_case(), "request_plan": plan}) is None
+
+
+def test_an_own_step_that_does_not_say_it_reads_is_a_write():
+    post = case(method="POST", path="/chat", body={"q": "hi"})
+    assert read_only({**post, "request_plan": {"version": 1, "steps": [{"id": "case", "phase": "case"}]}}) is False
+    assert read_only({**post, "request_plan": {"version": 1, "steps": [{"id": "case", "phase": "case", "read_only": True}]}}) is True
