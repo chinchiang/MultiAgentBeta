@@ -19,6 +19,7 @@ from .diagnostics import note_failure
 from .domain import RunInput, digest, new_run, now
 from .messages import zh
 from .policy import Policy, PolicyError, elapsed_seconds, sealed
+from .request_rules import RequestRefused, plan_case
 from .stage_answers import KEPT_UNDER
 from .store import Store
 from .contracts import (CORE_REVIEW_QUESTIONS, CaseDesignProposal, CommanderProposal, ArchitectureProposal,
@@ -750,6 +751,15 @@ class Engine:
                     if model_designed and case.get("side_effects"):
                         # No registered protocol can clean up after it, so the case is blocked when it would run.
                         case["cleanup"]={"protocol":None,"required":True}
+                # The request plan is sealed with the case, so what the operator approves is every request it may send.
+                # One a case brought along (a retest copies every field) never survives; a case that breaks a request
+                # rule gets none, and the case gate below refuses it in its own words and order.
+                case.pop("request_plan",None)
+                try:
+                    from .fixture_protocol import fixture_lifecycle
+                    case["request_plan"]=plan_case(run["manifest"],case,live=run["mode"]=="live",lifecycle=fixture_lifecycle(profile,case) if profile else [])
+                except RequestRefused:
+                    pass
                 case.update(source_digest=run["source_digest"],threat_model_hash=run["threat_model"]["hash"])
                 case["hash"]=sealed(case)
             run["cases"]=cases

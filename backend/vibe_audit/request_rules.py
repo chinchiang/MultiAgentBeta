@@ -9,6 +9,8 @@ from __future__ import annotations
 import re
 
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+# The method of a request or scope entry that names none.
+DEFAULT_METHOD = "GET"  # pragma: no mutate (every comparison upper-cases it, so any spelling is the same method)
 
 
 _HEADER_NAME = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
@@ -184,20 +186,19 @@ def _step(id, phase, source, request, *, side_effects=False):
     return step
 
 
-def plan_case(manifest, case, *, live, lifecycle=None):
-    """The case's request plan: every request it may send, in order, each with who wrote it.
-
-    lifecycle is the engine's fixture lifecycle for the case (reset, setup, cleanup and the like); without it the
-    lifecycle the case was sealed with is used. Each rule is checked over every step before the next rule, the case's
-    own request first, then its controls, then its lifecycle: the order the case gate has always reported them in.
-    A step that breaks a rule raises RequestRefused naming the rule and the step."""
+def _steps(manifest, case, *, lifecycle):
+    """The case's plan steps in their checking order, own request first, then controls, then lifecycle, and the
+    order the plan lists them in; no rule is checked here."""
     source = _source(manifest, case)
     own = _step("case", "case", source, case, side_effects=bool(case.get("side_effects")))
     controls = [_step("control:" + str(p.get("name")), "control", source, p)
                 for p in case.get("preconditions", []) if isinstance(p, dict)]
     if lifecycle is None:
-        # Sealed before the plan existed: the lifecycle sits in allowed_requests beside the case's own requests.
-        lifecycle = case.get("allowed_requests") or []
+        # A sealed case carries its lifecycle in its request plan; one sealed before the plan existed carries it in
+        # allowed_requests, beside the case's own requests.
+        plan = case.get("request_plan")
+        lifecycle = ([s for s in plan.get("steps", []) if s.get("phase") not in ("case", "control")] if isinstance(plan, dict)
+                     else case.get("allowed_requests") or [])
     seen = {(s["method"], s["path"], s["identity"]) for s in [own, *controls]}
     engine = []
     for request in lifecycle:
@@ -206,11 +207,20 @@ def plan_case(manifest, case, *, live, lifecycle=None):
         if key not in seen:
             seen.add(key)
             engine.append(step)
-    checked = [own, *controls, *engine]
+    return [own, *controls, *engine], [*controls, own, *engine]
+
+
+def plan_case(manifest, case, *, live, lifecycle=None):
+    """The case's request plan: every request it may send, in order, each with who wrote it.
+
+    lifecycle is the engine's fixture lifecycle for the case (reset, setup, cleanup and the like); without it the
+    lifecycle the case was sealed with is used. Each rule is checked over every step before the next rule, the case's
+    own request first, then its controls, then its lifecycle: the order the case gate has always reported them in.
+    A step that breaks a rule raises RequestRefused naming the rule and the step."""
+    checked, planned = _steps(manifest, case, lifecycle=lifecycle)
     # The model wrote a body or a write after reading the untrusted snapshot: it goes only to an endpoint the operator
     # marked model_body, never to one that stores, publishes or forwards what it receives.
-    unnamed = "GET"  # pragma: no mutate (upper() below makes any spelling of it the same method)
-    marked = {(str(r.get("method", unnamed)).upper(), r.get("path")) for r in manifest.get("allowed_requests") or []
+    marked = {(str(r.get("method", DEFAULT_METHOD)).upper(), r.get("path")) for r in manifest.get("allowed_requests") or []
               if r.get("model_body") is True}
     for step in checked:
         payload = step["body"] is not None or str(step["method"]).upper() not in SAFE_METHODS
@@ -229,4 +239,24 @@ def plan_case(manifest, case, *, live, lifecycle=None):
         for step in checked:
             if (step["method"], step["path"]) not in scope:
                 raise RequestRefused("scope", step["id"])
-    return {"version": 1, "steps": [*controls, own, *engine]}
+    return {"version": 1, "steps": planned}
+
+
+def match_request(manifest, case, request):
+    """The step of the case's request plan this request is: the one with its method, path and identity."""
+    method = str(request.get("method", DEFAULT_METHOD)).upper()
+    scope = {(str(r.get("method", DEFAULT_METHOD)).upper(), r.get("path")) for r in manifest.get("allowed_requests") or []}
+    if (method, request.get("path")) not in scope:
+        raise RequestRefused("scope")
+    plan = case.get("request_plan")
+    # A case sealed before the plan existed passed the case gate then: its plan is rebuilt from its fields, unchecked
+    # and never written back, so neither its hash nor the operator's approval changes.
+    steps = plan["steps"] if isinstance(plan, dict) else _steps(manifest, case, lifecycle=None)[1]
+    named = [s for s in steps if (str(s["method"]).upper(), s["path"]) == (method, request.get("path"))]
+    if not named:
+        raise RequestRefused("step")
+    # The identity is the named step's own, never another step's.
+    step = next((s for s in named if s["identity"] == request.get("identity")), None)
+    if step is None:
+        raise RequestRefused("identity", named[0]["id"])
+    return step

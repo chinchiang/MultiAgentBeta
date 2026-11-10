@@ -420,7 +420,8 @@ def test_authorize_reads_each_step_and_identity_by_its_exact_name(run, monkeypat
     # name; each path below is reachable through one of them only.
     policy.authorize(record, case, idle, identity="alice")
     policy.authorize(record, case, idle, method="POST", path="/reset", identity="dave")
-    policy.authorize(record, case, idle, method="GET", path="/control-only", identity="alice")
+    # A request goes as the identity of the step it names: this control names none.
+    policy.authorize(record, case, idle, method="GET", path="/control-only", identity=None)
     policy.authorize(record, case, idle, method="GET", path="/allowed-only", identity="frank")
     assert record["usage"]["requests"] == 4
     # The steps, setup, reset, session_reset and cleanup fields are sent by no executor, so they permit nothing.

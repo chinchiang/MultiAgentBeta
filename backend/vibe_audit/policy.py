@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from datetime import datetime, timezone
 
-from .request_rules import RequestRefused, plan_case
+from .request_rules import RequestRefused, match_request, plan_case
 from .domain import digest
 
 
@@ -12,6 +12,12 @@ GATE_REFUSALS={
     "headers":"Case headers cannot carry credentials, relay controls or method/path overrides; a model-designed header must be one the operator listed in allowed_requests[].model_headers for that method and path",
     "identity":"A model-designed case can use only test identities the operator marked as model-selectable",
     "scope":"Case or fixture request exceeds the declared method/path scope",
+}
+# What authorize says when a request is not one the case's request plan holds (request_rules.match_request).
+AUTHORIZE_REFUSALS={
+    "scope":"Request method and exact path were not authorized in run scope",
+    "step":"Request is not a step in the sealed test case",
+    "identity":"Identity is outside the sealed case scope",
 }
 
 
@@ -186,22 +192,12 @@ class Policy:
         if run["mode"]=="live" and case.get("designed_by")=="model" and (run.get("case_approval") or {}).get("receipt")!=receipt[2]:
             raise PolicyError("Model-designed cases need the operator's approval of this sealed case set")
         if run["mode"]=="live":
-            requested=((method or case.get("method","GET")).upper(),path or case.get("path"))
-            allowed={(r.get("method","GET").upper(),r.get("path")) for r in run["manifest"].get("allowed_requests",[])}
-            if requested not in allowed:
-                raise PolicyError("Request method and exact path were not authorized in run scope")
-            permitted={(case.get("method","GET").upper(),case.get("path"))}
-            permitted|={(p.get("method","GET").upper(),p.get("path")) for p in case.get("preconditions",[]) if isinstance(p,dict)}
-            # A fixture case's lifecycle steps are the allowed_requests the engine sealed into it. An operator case's own
-            # steps, setup, reset or cleanup fields are sent by no executor, so they permit nothing.
-            permitted|={(s.get("method","GET").upper(),s.get("path")) for s in case.get("allowed_requests",[]) if isinstance(s,dict)}
-            if requested not in permitted:
-                raise PolicyError("Request is not a step in the sealed test case")
-            allowed_identities={case.get("identity")}
-            allowed_identities|={p.get("identity") for p in case.get("preconditions",[]) if isinstance(p,dict)}
-            allowed_identities|={p.get("identity") for p in case.get("allowed_requests",[]) if isinstance(p,dict)}
-            if identity not in allowed_identities:
-                raise PolicyError("Identity is outside the sealed case scope")
+            # The request is one step of the case's sealed request plan, sent as that step's own identity.
+            request={"method":method or case.get("method","GET"),"path":path or case.get("path"),"identity":identity}
+            try:
+                match_request(run["manifest"],case,request)
+            except RequestRefused as refused:
+                raise PolicyError(AUTHORIZE_REFUSALS[refused.rule]) from None
         if run["usage"]["requests"]>=run["manifest"]["budget"]["max_requests"]:
             raise PolicyError("Request budget exhausted")
         if elapsed_seconds(run)>=run["manifest"]["budget"]["max_seconds"]:

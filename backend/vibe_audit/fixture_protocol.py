@@ -87,28 +87,38 @@ def _profile(name):
     return _REGISTERED.get(name)
 
 
+def fixture_lifecycle(profile, case):
+    """The requests the engine adds around a fixture case, as the case's request plan records them.
+
+    Each carries the step id run_fixture_case sends it under, its phase and its fixed headers. A body is left out:
+    some are built afresh for each repetition (the instrument step's collector configuration)."""
+    def step(id, phase, method, path, identity=None, headers=None):
+        return {"id": id, "phase": phase, "method": method, "path": path, "identity": identity, "headers": dict(headers or {})}
+    if profile in PROFILES:
+        steps = [step("reset", "reset", "POST", "/__fixture/reset", headers=CONTROL)]
+        if profile == "synthetic-ai-v1":
+            steps.append(step("session-reset", "session_reset", "POST", "/sessions/reset", case.get("identity")))
+            if case.get("oracle", {}).get("kind") == "no_unauthorized_commit":
+                steps.append(step("instrument", "setup", "POST", "/__fixture/instrument", headers=CONTROL))
+        if profile == "synthetic-web-v1" and case["path"] == "/auth/logout":
+            steps += [step("login", "sequence", "POST", "/auth/login"),
+                      step("before", "sequence", "GET", "/orders/order-a", "session:login"),
+                      step("logout", "sequence", "POST", "/auth/logout", "session:login")]
+        return steps
+    config = _profile(profile)
+    if config is None:
+        raise ValueError("Unknown trusted target adapter")
+    return [step(item.get("id") or f"{key}-{index}", key, item["method"], item["path"], item.get("identity"), item.get("headers"))
+            for key in ("reset", "session_reset", "setup", "cleanup", "collector_requests")
+            for index, item in enumerate(config.get(key, []), 1)]
+
+
 def fixture_requests(profile, case):
     """Compute explicit scope before the controller seals the case hash."""
     requests = [{"method": case.get("method", "GET"), "path": case["path"], "identity": case.get("identity")}]
     requests += [{"method": p.get("method", "GET"), "path": p["path"], "identity": p.get("identity")}
                  for p in case.get("preconditions", []) if isinstance(p, dict)]
-    if profile in PROFILES:
-        requests += [{"method": "POST", "path": "/__fixture/reset", "identity": None}]
-        if profile == "synthetic-ai-v1":
-            requests += [{"method": "POST", "path": "/sessions/reset", "identity": case.get("identity")}]
-            if case.get("oracle", {}).get("kind") == "no_unauthorized_commit":
-                requests += [{"method": "POST", "path": "/__fixture/instrument", "identity": None}]
-        if profile == "synthetic-web-v1" and case["path"] == "/auth/logout":
-            requests += [{"method": "POST", "path": "/auth/login", "identity": None},
-                         {"method": "GET", "path": "/orders/order-a", "identity": "session:login"},
-                         {"method": "POST", "path": "/auth/logout", "identity": "session:login"}]
-    else:
-        config = _profile(profile)
-        if config is None:
-            raise ValueError("Unknown trusted target adapter")
-        for key in ("reset", "session_reset", "setup", "cleanup", "collector_requests"):
-            requests += [{"method": step["method"], "path": step["path"], "identity": step.get("identity")}
-                         for step in config.get(key, [])]
+    requests += [{"method": s["method"], "path": s["path"], "identity": s["identity"]} for s in fixture_lifecycle(profile, case)]
     return list({(r["method"], r["path"], r["identity"]): r for r in requests}.values())
 
 
