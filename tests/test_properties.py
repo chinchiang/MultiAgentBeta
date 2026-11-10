@@ -7,8 +7,10 @@ from urllib.parse import quote
 import pytest
 from hypothesis import example, given, settings, strategies as st
 
-from vibe_audit import adapters, snapshot
-from vibe_audit.adapters import AdapterBlocked, _one_of, _origin, _pinned_address, _unmapped, case_headers_allowed, format_origin, parse_origin, secret_forms, target_ip_refused
+from vibe_audit import snapshot
+from vibe_audit.adapters import AdapterBlocked, _origin, _pinned_address, _unmapped, format_origin, parse_origin, secret_forms, target_ip_refused
+from vibe_audit import request_rules
+from vibe_audit.request_rules import _one_of, case_headers_allowed
 from vibe_audit.lease import canonical_hash
 from vibe_audit.messages import PATTERNS, STATUS_ZH, ZH, zh
 from vibe_audit.policy import sealed
@@ -157,6 +159,6 @@ def test_route_extraction_is_bounded_and_well_formed(content, path):
 @given(st.dictionaries(st.from_regex(r"[A-Za-z][A-Za-z0-9-]{0,15}", fullmatch=True), st.text(st.characters(min_codepoint=32, max_codepoint=126), max_size=64), max_size=6))
 def test_operator_headers_pass_unless_forbidden(headers):
     allowed = case_headers_allowed(headers)
-    forbidden = any(name.lower() in adapters._FORBIDDEN_HEADERS or name.lower() in adapters.RELAY_HEADERS for name in headers)
+    forbidden = any(name.lower() in request_rules._FORBIDDEN_HEADERS or name.lower() in request_rules.RELAY_HEADERS for name in headers)
     assert allowed == (not forbidden)
     assert case_headers_allowed({**headers, "X-Flag": "a\tb"}) is False

@@ -7,7 +7,8 @@ import sys
 import pytest
 
 from vibe_audit import adapters, request_rules
-from vibe_audit.adapters import AdapterBlocked, _prepare_request, canonical_model_headers, case_headers_allowed
+from vibe_audit.adapters import AdapterBlocked, _prepare_request
+from vibe_audit.request_rules import canonical_model_headers, case_headers_allowed
 
 # Every value of the fixed model vocabulary that these tests use, as an operator would list it for an endpoint.
 LISTED = {"accept": {"application/json", "text/html", "*/*"}, "accept-language": {"zh-TW"},
@@ -35,7 +36,7 @@ def test_model_header_names_have_one_spelling_and_one_order(headers, allowed):
 
 
 def test_model_header_vocabulary_reads_only_valid_operator_lists():
-    from vibe_audit.adapters import model_header_vocabulary
+    from vibe_audit.request_rules import model_header_vocabulary
     entry = lambda lists: {"method": "GET", "path": "/a", "model_headers": lists}
     # Two entries for one endpoint add up; method letter case does not matter.
     manifest = {"allowed_requests": [entry({"Accept": ["text/html"]}), entry({"Accept": ["*/*"], "If-None-Match": ["*"]})]}

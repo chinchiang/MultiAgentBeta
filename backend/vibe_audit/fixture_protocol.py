@@ -13,9 +13,9 @@ import re
 from typing import Protocol
 from urllib.parse import urlsplit
 
-from .adapters import case_headers_allowed, evaluate_oracle
+from .adapters import evaluate_oracle
 from .effect_collector import EffectCollector, EffectGateway
-from .request_rules import RequestRefused, match_request
+from .request_rules import RequestRefused, case_headers_allowed, match_request
 from .settings import fixture_config
 
 CONTROL = {"X-Fixture-Control": "local-synthetic-control"}
@@ -115,7 +115,9 @@ def fixture_lifecycle(profile, case):
 
 
 def fixture_requests(profile, case):
-    """Compute explicit scope before the controller seals the case hash."""
+    """Every request a fixture case sends, once: the run scope (allowed_requests) an operator lists for it.
+
+    The case itself carries them in its request plan (fixture_lifecycle); this is the method, path and identity view."""
     requests = [{"method": case.get("method", "GET"), "path": case["path"], "identity": case.get("identity")}]
     requests += [{"method": p.get("method", "GET"), "path": p["path"], "identity": p.get("identity")}
                  for p in case.get("preconditions", []) if isinstance(p, dict)]

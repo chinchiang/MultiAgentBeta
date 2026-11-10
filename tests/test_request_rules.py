@@ -331,3 +331,60 @@ def test_an_own_step_that_does_not_say_it_reads_is_a_write():
     post = case(method="POST", path="/chat", body={"q": "hi"})
     assert read_only({**post, "request_plan": {"version": 1, "steps": [{"id": "case", "phase": "case"}]}}) is False
     assert read_only({**post, "request_plan": {"version": 1, "steps": [{"id": "case", "phase": "case", "read_only": True}]}}) is True
+
+
+RULE_DEFINITIONS = {
+    # The vocabularies and rule functions themselves.
+    "a header vocabulary or rule": r"^(_FORBIDDEN_HEADERS|RELAY_HEADERS|MODEL_CASE_HEADER_NAMES|MODEL_CASE_HEADERS|SAFE_METHODS|_MODEL_HEADER_VALUES)\s*=|"
+                                   r"^def (state_changing|case_headers_allowed|model_header_vocabulary|canonical_model_headers|model_header_list_error|request_path_problem|model_body_denied)\b",
+    # The body rule: only an endpoint the operator marked model_body takes a model's body or write.
+    "the model_body rule": r"""get\(\s*["']model_body["']\s*\)\s*is\s+True""",
+    # The run scope: the method and path pairs the operator allows.
+    "the run scope": r"""for\s+r\s+in\s+[\w.\[\]"']*get\(\s*["']allowed_requests["']""",
+}
+
+
+def test_every_request_rule_is_defined_only_in_the_request_rules_module():
+    import re
+    from pathlib import Path
+    backend = Path(__file__).resolve().parents[1] / "backend" / "vibe_audit"
+    found = []
+    for module in sorted(backend.glob("*.py")):
+        if module.name == "request_rules.py":
+            continue
+        text = module.read_text(encoding="utf8")
+        found += [f"{module.name}: {rule}" for rule, pattern in RULE_DEFINITIONS.items() if re.search(pattern, text, re.M)]
+    assert found == []
+
+
+def test_no_module_reads_a_request_rule_from_the_transport_module():
+    # The transport reads the rules it applies from request_rules; it no longer passes them on.
+    import re
+    from pathlib import Path
+    from vibe_audit import request_rules
+    rules = {name for name in vars(request_rules) if not name.startswith("__")} - {"annotations", "re"}
+    backend = Path(__file__).resolve().parents[1] / "backend" / "vibe_audit"
+    found = []
+    for module in sorted(backend.glob("*.py")):
+        for names in re.findall(r"from \.?adapters import \(?([^)\n]*(?:\n[^)\n]*)*?)\)?\s*(?:#.*)?$", module.read_text(encoding="utf8"), re.M):
+            found += [f"{module.name}: {name}" for name in re.findall(r"\w+", names) if name in rules]
+    assert found == []
+
+
+def test_with_the_manifest_a_case_sealed_before_request_plans_has_its_own_step_rebuilt():
+    # A model POST to an endpoint the operator did not mark model_body: a write that may carry no body in a live run.
+    scope = manifest(allowed_requests=[{"method": "POST", "path": "/chat"}])
+    legacy = case(designed_by="model", method="POST", path="/chat", body={"q": "hi"}, identity=None, preconditions=[])
+    assert own_step(legacy) is None
+    step = own_step(legacy, scope)
+    assert (step["id"], step["source"], step["read_only"], step["body_permitted"]) == ("case", "model", False, False)
+    assert own_step(legacy, manifest(allowed_requests=[{"method": "POST", "path": "/chat", "model_body": True}]))["body_permitted"] is True
+    # An unlisted case is the engine's, so its POST is a write; one the operator listed may declare it a read.
+    unlisted = {**legacy, "id": "C9", "designed_by": None}
+    assert (own_step(unlisted, scope)["source"], own_step(unlisted, scope)["read_only"]) == ("engine", False)
+    assert own_step({**unlisted, "id": "C1"}, scope)["read_only"] is True
+    # A sealed plan is read as sealed, the manifest notwithstanding; nothing is written back.
+    assert own_step(sealed_case(), scope)["source"] == "operator"
+    assert "request_plan" not in legacy
+    # The case's own step, not the control the plan lists before it.
+    assert own_step(case(), manifest())["id"] == "case"

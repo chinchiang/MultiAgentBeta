@@ -15,8 +15,10 @@ import pytest
 
 from vibe_audit import adapters
 from vibe_audit.adapters import (AdapterBlocked, ResponseLimitError, _origin, _pinned_address, _prepare_request,
-                                 _request, _result, case_headers_allowed, evaluate_oracle, execute_case, secret_forms,
-                                 state_changing, target_credential_origins, unbound_target_credentials)
+                                 _request, _result, evaluate_oracle, execute_case, secret_forms,
+                                 target_credential_origins, unbound_target_credentials)
+from vibe_audit import request_rules
+from vibe_audit.request_rules import case_headers_allowed, state_changing
 
 HEADERS = {"Accept": "application/json", "Accept-Encoding": "identity", "Connection": "close"}
 ORIGINS = adapters.TARGET_CREDENTIAL_ORIGINS_ENV
@@ -396,7 +398,7 @@ def test_a_case_without_a_method_is_a_get_for_the_side_effect_check():
 
 
 def test_model_header_lists_are_checked_with_their_exact_reasons():
-    error = adapters.model_header_list_error
+    error = request_rules.model_header_list_error
     assert error(5) == "model_headers must map header names to lists of values"
     names = "model_headers names must be one of Accept, Accept-Language, Content-Type, If-Match, If-None-Match, X-Requested-With"
     assert error({"Foo": ["x"]}) == names and error({5: ["*"]}) == names
@@ -405,10 +407,10 @@ def test_model_header_lists_are_checked_with_their_exact_reasons():
     assert error({"Accept": ["*/*"], "If-Match": ["*"]}) is None
     # An entry without a method lists GET; one for another endpoint adds nothing.
     manifest = {"allowed_requests": [{"path": "/a", "model_headers": {"Accept": ["*/*"]}}, {"method": "GET", "path": "/b", "model_headers": {"Accept": ["text/html"]}}]}
-    assert adapters.model_header_vocabulary(manifest, "GET", "/a") == {"accept": frozenset({"*/*"})}
-    assert adapters.model_header_vocabulary({}, "GET", "/a") == {}
+    assert request_rules.model_header_vocabulary(manifest, "GET", "/a") == {"accept": frozenset({"*/*"})}
+    assert request_rules.model_header_vocabulary({}, "GET", "/a") == {}
     with pytest.raises(ValueError, match="^A model-designed case repeats a header name$"):
-        adapters.canonical_model_headers({"Accept": "*/*", "accept": "text/html"})
+        request_rules.canonical_model_headers({"Accept": "*/*", "accept": "text/html"})
 
 
 def test_ipv4_mapped_addresses_are_read_as_their_ipv4_address():

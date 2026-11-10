@@ -21,18 +21,14 @@ import threading
 import time
 from urllib.parse import urlsplit
 
-# The rules live in request_rules. The supervisor imports this module flat inside the container (no package) and
-# the backend as vibe_audit.adapters; request_rules sits beside it either way, so this is the one import that needs both forms.
+# The transport holds each request to the request rules (request_rules), which it only reads. The supervisor imports
+# this module flat inside the container (no package) and the backend as vibe_audit.adapters; request_rules sits beside
+# it either way, so this is the one import that needs both forms.
 try:
-    from .request_rules import (  # noqa: F401  (re-exported for callers that still import them from here)
-        _FORBIDDEN_HEADERS, _HEADER_NAME, _LANGUAGES, _MEDIA_TYPES, _MODEL_HEADER_VALUES, MODEL_CASE_HEADER_NAMES,
-        MODEL_CASE_HEADERS, RELAY_HEADERS, SAFE_METHODS, _one_of, canonical_model_headers, case_headers_allowed,
-        model_header_list_error, model_header_vocabulary, read_only, request_path_problem, state_changing)
+    from .request_rules import SAFE_METHODS, case_headers_allowed, model_header_vocabulary, read_only, request_path_problem
 except ImportError:
-    from request_rules import (  # type: ignore[import-not-found,no-redef]  # noqa: F401
-        _FORBIDDEN_HEADERS, _HEADER_NAME, _LANGUAGES, _MEDIA_TYPES, _MODEL_HEADER_VALUES, MODEL_CASE_HEADER_NAMES,
-        MODEL_CASE_HEADERS, RELAY_HEADERS, SAFE_METHODS, _one_of, canonical_model_headers, case_headers_allowed,
-        model_header_list_error, model_header_vocabulary, read_only, request_path_problem, state_changing)
+    from request_rules import (  # type: ignore[import-not-found,no-redef]
+        SAFE_METHODS, case_headers_allowed, model_header_vocabulary, read_only, request_path_problem)
 
 MAX_RESPONSE_BYTES = 256 * 1024
 MAX_REQUEST_BYTES = 64 * 1024

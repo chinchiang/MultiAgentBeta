@@ -322,11 +322,11 @@ class Supervisor:
                 "hard_deadline_unix":time.time()+self.spec["timeout_seconds"]}
 
     def allowed_request(self,request):
-        from adapters import SAFE_METHODS, _prepare_request  # type: ignore[import-not-found]  # flat import inside the container
-        from request_rules import CASE_PHASES, RequestRefused, match_request
+        from adapters import _prepare_request  # type: ignore[import-not-found]  # flat import inside the container
+        from request_rules import CASE_PHASES, RequestRefused, in_scope, match_request
         method=request.get("method")
         path=request.get("path")
-        if (method,path) not in {(r.get("method","GET").upper(),r.get("path")) for r in self.manifest.get("allowed_requests",[])}:
+        if not in_scope(self.manifest,method,path):
             raise ValueError("Request outside authorized method/path scope")
         cases=self.spec.get("cases",[])
         case_id=request.get("case_id") or (cases[0].get("id") if len(cases)==1 else None)
@@ -382,9 +382,9 @@ class Supervisor:
             elif step.get("body") is not None:
                 raise ValueError("Sealed request body is missing")
         model_step=planned["source"]=="model"
-        # The controller's rule (service.model_body_denied): a model request that carries a body, or is not a read.
-        if model_step and (raw or method not in SAFE_METHODS) and not any(r.get("model_body") is True and (r.get("method","GET").upper(),r.get("path"))==(method,path)
-                                                                          for r in self.manifest.get("allowed_requests",[])):
+        # The plan's body rule, as the controller reads it too: a model request that carries a body, or is not a read,
+        # goes only to an endpoint the operator marked model_body. The body sent is the sealed step's (checked above).
+        if not planned["body_permitted"]:
             raise ValueError("A model-written request that carries a body or is not a read goes only to an endpoint the operator marked model_body")
         # Transport-generated headers are not part of the reviewed request.
         headers=dict(step.get("headers",{}))
