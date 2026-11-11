@@ -57,7 +57,7 @@ flowchart TB
 | FastAPI：session／CSRF／scope | `api.py`、`workspace_api.py` |
 | 指揮與 LangGraph 階段 | `service.py`（`STAGES`，每個階段一個圖節點） |
 | 模型閘道・每個代理的 profile | `stage_answers.py`（`StageAnswers`：角色由誰回答、答案通過階段檢查才保留、續跑沿用）、`answers.py`（`ModelAnswers`：保留額度、計量、驗證與有界重試、操作者設定的備援）、`providers.py`（`LiteLLMPort`：經 LiteLLM 送出一次，無隱性 fallback） |
-| 確定性閘門 | `policy.py`（manifest、whitebox、threat、case 閘門與 `authorize`）、`contracts.py`、`domain.py`；請求規則（header、路徑、身分、scope、來源與請求計畫）在 `request_rules.py`；標準 ID 目錄在 `catalog.py`，目錄與 benchmark 檔案的 JSON schema 在 `schemas.py` |
+| 確定性閘門 | `policy.py`（manifest、whitebox、threat、case 閘門與 `authorize`）、`contracts.py`、`domain.py`；請求規則（header、路徑、身分、執行範圍、來源與請求計畫）在 `request_rules.py`，封存後的 `authorize`、supervisor 與 fixture 序列都比對案例的請求計畫；標準 ID 目錄在 `catalog.py`，目錄與 benchmark 檔案的 JSON schema 在 `schemas.py` |
 | 獨立 supervisor ＋ 持久 lease | `worker_runtime.py`、`lease.py`；IP 釘選傳輸與 oracle 在 `adapters.py` |
 | 獨立 effect collector | `effect_collector.py`，經 `fixture_protocol.py` 使用 |
 | 證據寫入與 job 帳本 | `store.py`、`traceability.py`；報告匯出在 `service.py` |
@@ -97,6 +97,8 @@ PostgreSQL 儲存 job 與 lease 記錄以及 LangGraph checkpoint。Resume 不�
 ZAP 只執行經審查的 requestor/passive 計畫。Schemathesis 使用明確的 schema 範例。Playwright 使用其 API client。promptfoo 使用本機自訂的 provider／eval 斷言；PyRIT 使用受控制的目標。工具不會自行擴充目標或產生任意程式。它們的 artifact 僅供輔助：安全 oracle 依賴 supervisor 的 observations 與獨立的收執。
 
 內建的 TS Web 與 Python AI 目標是合成且確定性的。AI 試驗會重置 session／fixture 五次。Collector 事件區分 proposed → denied/allowed → invoked → committed；mock sink 收執只證明合成的 sink 效果。通用目標 profile 需要操作者宣告的生命週期步驟，以及另外註冊的受信任 collector 綁定。目標回傳的文字無法註冊綁定，也無法偽造受信任的來源證明。
+
+送往目標的每個請求都依 `request_rules.py` 的請求規則判斷。案例封存時寫進它的請求計畫：案例本身、正向控制與引擎加的 fixture 生命週期，每一步記下方法、路徑、身分、header、本文與來源（模型、操作者或引擎）。案例閘門以同一套規則產生計畫；封存之後，`authorize`、supervisor 與 fixture 序列都只比對計畫，不再從案例欄位推算。模型寫的步驟受最嚴的規則約束：header 只能用固定詞彙裡操作者為該端點列出的值、身分只能是可選的，本文或寫入只送往操作者標記 `model_body` 的端點；POST 只有操作者自己的案例能宣告沒有副作用。supervisor 是目標前最後一個受信任的節點，送出前照樣以計畫重驗。
 
 每個階段向模型要的都是一次模型回答，由 `answers.py` 的 `ModelAnswers` 處理：送出前預扣保留額度，經「送出一次」的 port 送出，在本機驗證，不合格時再問一次；每位 Agent 作答結束時結清它的用量與保留額度。成功或已計量的失敗就釋放保留額度；取消時把整筆計為已用；用量不明時保留下來並停止之後的付費呼叫，控制器重啟時也看得到。每次重試在活動紀錄留一筆 warning，只記 Agent、階段、第幾次與驗證位置；位置只用 schema 宣告過的欄位名稱，模型寫的文字不會進紀錄。各階段不自己計量，也不自己歸零保留額度。
 
@@ -166,7 +168,7 @@ Each node above maps to code in `backend/vibe_audit/` (or the named directory). 
 | FastAPI: session / CSRF / scope | `api.py`, `workspace_api.py` |
 | Commander and LangGraph stages | `service.py` (`STAGES`, one graph node per stage) |
 | Model gateway · per-agent profiles | `stage_answers.py` (`StageAnswers`: who answers a role, an answer kept only once it passes the stage's checks and reused on resume), `answers.py` (`ModelAnswers`: reservation, metering, validation and the bounded retry, the operator's fallback), `providers.py` (`LiteLLMPort`: one send through LiteLLM, no implicit fallback) |
-| Deterministic gates | `policy.py` (manifest, whitebox, threat and case gates and `authorize`), `contracts.py`, `domain.py`; the request rules (headers, path, identity, scope, provenance and the request plan) in `request_rules.py`; the standards ID catalog in `catalog.py`, the JSON schemas of catalog and benchmark files in `schemas.py` |
+| Deterministic gates | `policy.py` (manifest, whitebox, threat and case gates and `authorize`), `contracts.py`, `domain.py`; the request rules (headers, path, identity, run scope, source and the request plan) in `request_rules.py`, and after sealing `authorize`, the supervisor and the fixture sequence all match the case's request plan; the standards ID catalog in `catalog.py`, the JSON schemas of catalog and benchmark files in `schemas.py` |
 | Independent supervisor + persistent lease | `worker_runtime.py`, `lease.py`; IP-pinned transport and oracles in `adapters.py` |
 | Independent effect collector | `effect_collector.py`, used through `fixture_protocol.py` |
 | Evidence writer and job ledger | `store.py`, `traceability.py`; report export in `service.py` |
@@ -206,6 +208,8 @@ PostgreSQL stores job and lease records and the LangGraph checkpoints. Resume do
 ZAP executes only the reviewed requestor/passive plan. Schemathesis uses an explicit schema example. Playwright uses its API client. promptfoo uses local custom provider/eval assertions; PyRIT uses a controlled target. Tools do not independently expand targets or generate arbitrary programs. Their artifacts are auxiliary: security oracles rely on supervisor observations and independent receipts.
 
 Built-in TS Web and Python AI targets are synthetic and deterministic. AI trials reset session/fixtures five times. Collector events distinguish proposed → denied/allowed → invoked → committed; a mock sink receipt proves only the synthetic sink effect. Generic target profiles require operator-declared lifecycle steps and a separately registered trusted collector binding. Text returned by the target cannot register a binding or forge trusted provenance.
+
+Every request to the target is judged by the request rules in `request_rules.py`. A case is sealed with its request plan: its own request, its positive controls and the fixture lifecycle the engine adds, each step with its method, path, identity, headers, body and source (the model, the operator or the engine). The case gate builds the plan by the same rules; after sealing, `authorize`, the supervisor and the fixture sequence match only the plan rather than working it out from the case's fields. A step the model wrote is held to the strictest rules: only header values the operator lists for that endpoint from the fixed vocabulary, only selectable identities, and a body or a write only to an endpoint the operator marked `model_body`; only an operator's own case may declare a POST free of side effects. The supervisor, the last trusted hop before the target, checks against the plan again before sending.
 
 What every stage asks a model for is one model answer, handled by `ModelAnswers` in `answers.py`: it holds a reservation before sending, sends through a send-once port, validates locally, asks again once if the answer is invalid, and settles each Agent's usage and reservation when its attempt ends. A success or a metered failure releases the reservation; a cancellation charges all of it as used; unknown usage keeps it and stops further paid calls, which a controller restart also sees. Each retry leaves one warning in the activity log naming only the Agent, stage, attempt and validation site; the site names only fields the schema declares, so nothing the model wrote reaches the record. No stage meters usage or clears the reservation itself.
 
