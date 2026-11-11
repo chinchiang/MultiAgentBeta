@@ -68,6 +68,14 @@ def test_refuse_unbounded_or_credential_inputs(change):
         compile_tool("playwright", {**case(), **change})
 
 
+@pytest.mark.parametrize("change", [{"path": "/orders#top"}, {"path": "/orders private"}, {"path": "/caf\u00e9"},
+                                    {"path": "/a\x7f"}, {"method": "get"}, {"method": "CONNECT"}])
+def test_a_tool_request_is_held_to_the_same_method_and_path_grammar_and_says_so(change):
+    # Any of the seven methods may be sealed, so the refusal names no two of them.
+    with pytest.raises(ToolInputError, match="^A sealed exact HTTP method and origin-relative path are required$"):
+        compile_tool("playwright", {**case(), **change})
+
+
 def test_exit_zero_without_evidence_is_never_pass():
     result = parse_tool_result("playwright", {"status":"completed", "exit_code":0, "cleanup_confirmed":True, "artifacts":{}}, case_id="case-one")
     assert result["status"] == "execution_error" and result["security_status"] == "inconclusive"

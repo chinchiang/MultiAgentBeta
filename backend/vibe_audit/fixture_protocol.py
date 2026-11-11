@@ -11,11 +11,10 @@ import hashlib
 import json
 import re
 from typing import Protocol
-from urllib.parse import urlsplit
 
 from .adapters import evaluate_oracle
 from .effect_collector import EffectCollector, EffectGateway
-from .request_rules import RequestRefused, case_headers_allowed, match_request
+from .request_rules import RequestRefused, case_headers_allowed, check_request, match_request
 from .settings import fixture_config
 
 CONTROL = {"X-Fixture-Control": "local-synthetic-control"}
@@ -52,11 +51,12 @@ def register_target_adapter(name, profile):
         for step in steps:
             if not isinstance(step, dict) or set(step) - {"id", "method", "path", "identity", "body", "headers", "expected_status", "required_text", "capture_session"}:
                 raise ValueError("Invalid target adapter step")
-            path = step.get("path", "")
-            parsed = urlsplit(path)
-            if (step.get("method") not in {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"} or not path.startswith("/") or path.startswith("//")
-                    or parsed.netloc or parsed.scheme or parsed.fragment or "\\" in path or any(ord(c) < 32 for c in path)):
-                raise ValueError("Target adapter requires exact relative method/path")
+            # The transport's own method and path grammar, every method written out: a step it would never send is
+            # refused here rather than halfway through a sequence.
+            try:
+                check_request(step, explicit_method=True)
+            except RequestRefused:
+                raise ValueError("Target adapter requires exact relative method/path") from None
             # The supervisor holds every lifecycle step to these header rules when it sends it; refused here, a
             # sequence never stops halfway, after its reset was already sent.
             headers = step.get("headers", {})

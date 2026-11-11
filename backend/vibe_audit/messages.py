@@ -202,6 +202,7 @@ ZH.update({
     "Supervisor failed; task cannot be replayed": "supervisor 失敗；工作無法重播",
     "Worker cleanup could not be confirmed": "無法確認 worker 清理",
     "Positive controls failed before tool dispatch": "positive control 在派發工具前就失敗",
+    "A sealed exact HTTP method and origin-relative path are required": "需要封存的確切 HTTP 方法與相對於 origin 的路徑",
     "Worker sequence incomplete": "worker 的步驟序列不完整",
     # service.py: blocked cases
     "A model-written request body goes only to an endpoint the operator marked model_body in allowed_requests": "模型撰寫的請求本文只能送往操作者在 allowed_requests 標為 model_body 的端點",

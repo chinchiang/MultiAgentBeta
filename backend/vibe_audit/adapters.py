@@ -25,10 +25,11 @@ from urllib.parse import urlsplit
 # this module flat inside the container (no package) and the backend as vibe_audit.adapters; request_rules sits beside
 # it either way, so this is the one import that needs both forms.
 try:
-    from .request_rules import SAFE_METHODS, case_headers_allowed, model_header_vocabulary, read_only, request_path_problem
+    from .request_rules import (SAFE_METHODS, RequestRefused, case_headers_allowed, check_request, model_header_vocabulary,
+                                read_only)
 except ImportError:
     from request_rules import (  # type: ignore[import-not-found,no-redef]
-        SAFE_METHODS, case_headers_allowed, model_header_vocabulary, read_only, request_path_problem)
+        SAFE_METHODS, RequestRefused, case_headers_allowed, check_request, model_header_vocabulary, read_only)
 
 MAX_RESPONSE_BYTES = 256 * 1024
 MAX_REQUEST_BYTES = 64 * 1024
@@ -351,16 +352,22 @@ def _put_header(headers, name, value):
     return {(name if key.lower() == lower else key): (value if key.lower() == lower else old) for key, old in headers.items()}
 
 
+# What the transport says when a request breaks the method and path grammar (request_rules.check_request).
+TRANSPORT_REFUSALS = {
+    "path": "Case path must be origin-relative and must not contain control characters.",
+    "path_ascii": "Case path must use ASCII URL encoding.",
+    "method": "Unsupported HTTP method.",
+}
+
+
 def _prepare_request(manifest, case, *, transport_headers=None):
     """transport_headers are added by trusted transport code (the supervisor's Content-Type for a body it forwards):
     they are not a model's choice, so they skip the per-endpoint model vocabulary but keep the same wire order."""
-    method = case.get("method", "GET")
-    if method not in {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}:
-        raise AdapterBlocked("Unsupported HTTP method.")
     path = case.get("path", "/")
-    problem = request_path_problem(path)
-    if problem:
-        raise AdapterBlocked(problem)
+    try:
+        method = check_request({**case, "path": path})
+    except RequestRefused as refused:
+        raise AdapterBlocked(TRANSPORT_REFUSALS[refused.rule]) from None
     headers = {"Accept": "application/json", "Accept-Encoding": "identity", "Connection": "close"}
     supplied = case.get("headers") or {}
     model_designed = case.get("designed_by") == "model"

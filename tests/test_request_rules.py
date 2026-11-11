@@ -3,7 +3,7 @@ import copy
 
 import pytest
 
-from vibe_audit.request_rules import RequestRefused, match_request, own_step, plan_case, read_only
+from vibe_audit.request_rules import RequestRefused, check_request, match_request, own_step, plan_case, read_only
 from vibe_audit.request_rules import body_permitted as step_body_permitted
 
 
@@ -337,11 +337,15 @@ def test_an_own_step_that_does_not_say_it_reads_is_a_write():
 RULE_DEFINITIONS = {
     # The vocabularies and rule functions themselves.
     "a header vocabulary or rule": r"^(_FORBIDDEN_HEADERS|RELAY_HEADERS|MODEL_CASE_HEADER_NAMES|MODEL_CASE_HEADERS|SAFE_METHODS|_MODEL_HEADER_VALUES)\s*=|"
-                                   r"^def (state_changing|case_headers_allowed|model_header_vocabulary|canonical_model_headers|model_header_list_error|request_path_problem|model_body_denied)\b",
+                                   r"^def (state_changing|case_headers_allowed|model_header_vocabulary|canonical_model_headers|model_header_list_error|request_path_problem|check_request|model_body_denied)\b",
     # The body rule: only an endpoint the operator marked model_body takes a model's body or write.
     "the model_body rule": r"""get\(\s*["']model_body["']\s*\)\s*is\s+True""",
     # The run scope: the method and path pairs the operator allows.
     "the run scope": r"""for\s+r\s+in\s+[\w.\[\]"']*get\(\s*["']allowed_requests["']""",
+    # The methods a request may use, written out as a set of more than the safe ones.
+    "the method list": r"""\{\s*["']GET["']\s*,\s*["']POST["']\s*,\s*["']PUT["']""",
+    # The path grammar: a second slash naming another host, or a fragment in the target.
+    "the path grammar": r"""startswith\(\s*["']//["']\s*\)|\bparsed\.fragment\b|\bp\.fragment\b""",
 }
 
 
@@ -399,3 +403,39 @@ def test_a_step_may_carry_a_body_only_where_its_plan_says_so():
     # A step that does not say so, or no step at all, carries none.
     for step in ({"id": "case", "body_permitted": "yes"}, {"id": "case"}, {}, None):
         assert step_body_permitted(step) is False
+
+
+def grammar_refusal(request, **flags):
+    with pytest.raises(RequestRefused) as refused:
+        check_request(request, **flags)
+    return refused.value.rule
+
+
+@pytest.mark.parametrize("path", ["/a", "/orders/a?x=1&y=%20", "/", "/a;b", "/a{b}"])
+def test_a_request_with_a_known_method_and_an_origin_relative_ascii_path_passes(path):
+    assert check_request({"method": "PATCH", "path": path}) == "PATCH"
+
+
+@pytest.mark.parametrize("path", ["a", "//host/a", "/a\\b", "/a#", "/a#b", "/a b", "/a\tb", "/a\nb", "/a\x7f", "", None, 7])
+def test_a_path_that_is_not_one_exact_origin_relative_target_is_refused(path):
+    assert grammar_refusal({"method": "GET", "path": path}) == "path"
+
+
+def test_a_path_outside_ascii_is_refused_as_that():
+    assert grammar_refusal({"method": "GET", "path": "/café"}) == "path_ascii"
+
+
+@pytest.mark.parametrize("method", ["get", "CONNECT", "TRACE", "", None, 1, ["GET"], {"GET": 1}])
+def test_a_method_outside_the_http_methods_in_their_one_spelling_is_refused(method):
+    assert grammar_refusal({"method": method, "path": "/a"}) == "method"
+
+
+def test_a_request_naming_no_method_is_a_get_unless_the_method_must_be_written():
+    assert check_request({"path": "/a"}) == "GET"
+    assert grammar_refusal({"path": "/a"}, explicit_method=True) == "method"
+    assert check_request({"method": "DELETE", "path": "/a"}, explicit_method=True) == "DELETE"
+
+
+def test_the_path_is_checked_before_the_method():
+    # What an operator gets back for a scope entry with both wrong, as the run input has always said it.
+    assert grammar_refusal({"method": "get", "path": "a"}) == "path"

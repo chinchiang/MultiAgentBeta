@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import re
 
+# The methods a request to the target may use, each in its one spelling.
+HTTP_METHODS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 # The method of a request or scope entry that names none.
 DEFAULT_METHOD = "GET"  # pragma: no mutate (every comparison upper-cases it, so any spelling is the same method)
@@ -178,17 +180,6 @@ def read_only(case):
     return not state_changing(case, operator_case=case.get("designed_by") != "model")
 
 
-def request_path_problem(path):
-    """Why the transport would never send this path, or None. The operator's scope is held to the same rule, so a scope
-    entry is refused as input rather than listing a path no request can ever take."""
-    if (not isinstance(path, str) or not path.startswith("/") or path.startswith("//")
-            or "\\" in path or "#" in path or any(ord(c) < 33 for c in path)):
-        return "Case path must be origin-relative and must not contain control characters."
-    if not path.isascii():
-        return "Case path must use ASCII URL encoding."
-    return None
-
-
 class RequestRefused(ValueError):
     """A request rule a case breaks. rule is a stable code each caller maps to its own message and exception type;
     step is the id of the plan step that breaks it."""
@@ -197,6 +188,27 @@ class RequestRefused(ValueError):
         super().__init__(rule)
         self.rule = rule
         self.step = step
+
+
+def check_request(request, *, explicit_method=False):
+    """The method of a request whose method and path any checkpoint may send; RequestRefused otherwise.
+
+    The path must be one exact origin-relative target in ASCII: no second slash to name another host, no backslash or
+    fragment, no space, control character or DEL (rule path), nothing beyond ASCII (rule path_ascii); a query is part
+    of it. The method must be one of HTTP_METHODS as written (rule method); naming none is a GET unless
+    explicit_method, where the operator states every method. The path is checked first."""
+    path = request.get("path")
+    if (not isinstance(path, str) or not path.startswith("/") or path.startswith("//")
+            or "\\" in path or "#" in path or any(ord(c) < 33 or ord(c) == 127 for c in path)):
+        raise RequestRefused("path")
+    if not path.isascii():
+        raise RequestRefused("path_ascii")
+    if "method" not in request and not explicit_method:
+        return DEFAULT_METHOD
+    method = request.get("method")
+    if not isinstance(method, str) or method not in HTTP_METHODS:
+        raise RequestRefused("method")
+    return method
 
 
 def _source(manifest, case):

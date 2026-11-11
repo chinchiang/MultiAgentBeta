@@ -12,7 +12,8 @@ import json
 import re
 import xml.etree.ElementTree as ET
 from xml.parsers import expat
-from urllib.parse import urlsplit
+
+from .request_rules import RequestRefused, check_request
 
 VERSIONS = {"schemathesis": "4.28.0", "playwright": "1.63.0", "promptfoo": "0.124.1", "pyrit": "1.1.0", "zap": "2.17.0"}
 DOCS = {
@@ -54,12 +55,12 @@ def _json(value):
 
 
 def _request(case):
-    method = case.get("method", "GET")
     path = case.get("path", "/")
-    p = urlsplit(path)
-    if (method not in {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"} or not path.startswith("/") or path.startswith("//")
-            or p.scheme or p.netloc or p.fragment or "\\" in path or any(ord(c) < 32 for c in path)):
-        raise ToolInputError("A sealed exact GET/POST relative path is required")
+    try:
+        # The transport's own method and path grammar: a tool never sends what the native HTTP executor would refuse.
+        method = check_request({**case, "path": path})
+    except RequestRefused:
+        raise ToolInputError("A sealed exact HTTP method and origin-relative path are required") from None
     if not isinstance(case.get("id"), str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", case["id"]):
         raise ToolInputError("Invalid case identifier")
     headers = dict(case.get("headers") or {})
