@@ -335,7 +335,8 @@ def test_an_own_step_that_does_not_say_it_reads_is_a_write():
 
 
 RULE_DEFINITIONS = {
-    # The vocabularies and rule functions themselves.
+    # The vocabularies and rule functions themselves. A name no module defines any more (request_path_problem, which
+    # check_request replaced) stays listed, so a second definition of it anywhere fails here.
     "a header vocabulary or rule": r"^(_FORBIDDEN_HEADERS|RELAY_HEADERS|MODEL_CASE_HEADER_NAMES|MODEL_CASE_HEADERS|SAFE_METHODS|_MODEL_HEADER_VALUES)\s*=|"
                                    r"^def (state_changing|case_headers_allowed|model_header_vocabulary|canonical_model_headers|model_header_list_error|request_path_problem|check_request|model_body_denied)\b",
     # The body rule: only an endpoint the operator marked model_body takes a model's body or write.
@@ -344,8 +345,8 @@ RULE_DEFINITIONS = {
     "the run scope": r"""for\s+r\s+in\s+[\w.\[\]"']*get\(\s*["']allowed_requests["']""",
     # The methods a request may use, written out as a set of more than the safe ones.
     "the method list": r"""\{\s*["']GET["']\s*,\s*["']POST["']\s*,\s*["']PUT["']""",
-    # The path grammar: a second slash naming another host, or a fragment in the target.
-    "the path grammar": r"""startswith\(\s*["']//["']\s*\)|\bparsed\.fragment\b|\bp\.fragment\b""",
+    # The path grammar: a second slash naming another host, a fragment in the target, or control characters in a path.
+    "the path grammar": r"""startswith\(\s*["']//["']\s*\)|\bparsed\.fragment\b|\bp\.fragment\b|ord\(c\)\s*<\s*3[23]\s+for\s+c\s+in\s+path\b""",
 }
 
 
@@ -439,3 +440,55 @@ def test_a_request_naming_no_method_is_a_get_unless_the_method_must_be_written()
 def test_the_path_is_checked_before_the_method():
     # What an operator gets back for a scope entry with both wrong, as the run input has always said it.
     assert grammar_refusal({"method": "get", "path": "a"}) == "path"
+
+
+def checkpoint_answers(request):
+    """Whether each checkpoint that takes a request's method and path accepts this one: the run's scope entries, the
+    transport, a fixture profile's lifecycle steps and a tool's request, each through its own interface."""
+    from vibe_audit.adapters import AdapterBlocked, _prepare_request
+    from vibe_audit.domain import RunInput
+    from vibe_audit.fixture_protocol import register_target_adapter
+    from vibe_audit.tool_runners import ToolInputError, compile_tool
+    tool_case = {"id": "case-one", "hash": "sealed", "threat_model_hash": "threat", "identity": "tenant-a",
+                 "headers": {}, "body": None, **request}
+    gates = {
+        "scope": lambda: RunInput(name="grammar", mode="demo", allowed_requests=[request]),
+        "transport": lambda: _prepare_request({"target_url": "http://127.0.0.1:8"}, dict(request)),
+        "fixture": lambda: register_target_adapter("grammar-check", {
+            "setup": [{"id": "step", **request, "expected_status": 200}],
+            "cleanup": [{"id": "cleanup", "method": "POST", "path": "/cleanup", "expected_status": 200}]}),
+        "tool": lambda: compile_tool("playwright", tool_case),
+    }
+    answers = {}
+    for name, gate in gates.items():
+        try:
+            gate()
+            answers[name] = True
+        except (ValueError, AdapterBlocked, ToolInputError):
+            answers[name] = False
+    return answers
+
+
+ALL = {"scope": True, "transport": True, "fixture": True, "tool": True}
+NONE = {"scope": False, "transport": False, "fixture": False, "tool": False}
+
+
+@pytest.mark.parametrize("request_value,expected", [
+    ({"method": "GET", "path": "/orders/a?page=2"}, ALL),
+    ({"method": "DELETE", "path": "/orders/a"}, ALL),
+    ({"method": "GET", "path": "/orders#top"}, NONE),
+    ({"method": "GET", "path": "/orders a"}, NONE),
+    ({"method": "GET", "path": "/café"}, NONE),
+    ({"method": "GET", "path": "/a\x7f"}, NONE),
+    ({"method": "GET", "path": "/a\tb"}, NONE),
+    ({"method": "GET", "path": "//outside.invalid/a"}, NONE),
+    ({"method": "GET", "path": "/a\\b"}, NONE),
+    ({"method": "GET", "path": None}, NONE),
+    ({"method": "get", "path": "/a"}, NONE),
+    ({"method": "CONNECT", "path": "/a"}, NONE),
+    ({"method": None, "path": "/a"}, NONE),
+    # Only the operator writes every method out: a scope entry and a profile step name one, a sealed request may not.
+    ({"path": "/a"}, {"scope": False, "transport": True, "fixture": False, "tool": True}),
+])
+def test_every_checkpoint_gives_the_same_answer_for_the_same_method_and_path(request_value, expected):
+    assert checkpoint_answers(request_value) == expected
