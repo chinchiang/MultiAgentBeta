@@ -478,6 +478,12 @@ def test_prepared_request_refusals(case, message):
     blocked(TARGET, case, message)
 
 
+def test_the_transport_holds_a_path_to_the_same_grammar_as_every_other_checkpoint():
+    # A DEL is a control character to the transport too; so is any other spelling of a method.
+    blocked(TARGET, {"path": "/a\x7f"}, "Case path must be origin-relative and must not contain control characters.")
+    blocked(TARGET, {"method": "get"}, "Unsupported HTTP method.")
+
+
 def test_request_body_may_fill_the_limit_exactly():
     body = _prepare_request({}, {"method": "POST", "body": {"k": "x" * (adapters.MAX_REQUEST_BYTES - 9)}})[3]
     assert len(body) == adapters.MAX_REQUEST_BYTES

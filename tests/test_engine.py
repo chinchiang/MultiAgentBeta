@@ -1732,6 +1732,21 @@ def test_a_scope_path_the_transport_could_never_send_is_refused_as_input(path):
     RunInput(name="Scope",mode="demo",allowed_requests=[{"method":"GET","path":"/orders/caf%C3%A9?page=2"}])
 
 
+def test_a_scope_path_carrying_del_is_refused_as_input_like_any_control_character():
+    # A DEL in a URL path is never sent as is: it is percent-encoded, as the header values hold it to 32..126 too.
+    with pytest.raises(ValueError,match="Scope requires an exact relative HTTP path"):
+        RunInput(name="Scope",mode="demo",allowed_requests=[{"method":"GET","path":"/a\x7f"}])
+
+
+def test_a_scope_entry_naming_no_method_or_another_spelling_of_one_is_refused_as_input():
+    for entry in ({"path":"/a"},{"method":"get","path":"/a"},{"method":"CONNECT","path":"/a"}):
+        with pytest.raises(ValueError,match="Scope requires an explicit HTTP method"):
+            RunInput(name="Scope",mode="demo",allowed_requests=[entry])
+    # Both wrong: the path is reported, as it always was.
+    with pytest.raises(ValueError,match="Scope requires an exact relative HTTP path"):
+        RunInput(name="Scope",mode="demo",allowed_requests=[{"method":"get","path":"a"}])
+
+
 def sid_of(client):
     return client.cookies.get("vibeaudit_session")
 

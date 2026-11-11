@@ -118,6 +118,16 @@ async def test_real_login_logout_session_held_by_supervisor(tmp_path, monkeypatc
         runtime.leases.close()
 
 
+@pytest.mark.parametrize("step", [{"method": "GET", "path": "/a#top"}, {"method": "GET", "path": "/a b"},
+                                  {"method": "GET", "path": "/caf\u00e9"}, {"method": "GET", "path": "/a\x7f"},
+                                  {"method": "get", "path": "/a"}, {"path": "/a"}, {"method": "GET", "path": None}])
+def test_a_lifecycle_step_is_held_to_the_same_method_and_path_grammar_as_every_request(step):
+    # A step the transport would never send is refused when the profile is registered, not halfway through a sequence.
+    profile = {"cleanup": [{"id": "cleanup", "method": "POST", "path": "/test/cleanup", "body": {}, "expected_status": 200}], "repetitions": 1}
+    with pytest.raises(ValueError, match="Target adapter requires exact relative method/path"):
+        register_target_adapter("bad-grammar", {**profile, "setup": [{**step, "expected_status": 200}]})
+
+
 def test_generic_profiles_validate_and_add_scope_before_sealing():
     profile = {"reset": [{"id": "reset", "method": "POST", "path": "/test/reset", "body": {}, "expected_status": 200}],
         "cleanup": [{"id": "cleanup", "method": "POST", "path": "/test/cleanup", "body": {}, "expected_status": 200}], "repetitions": 5}

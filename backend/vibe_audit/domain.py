@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-from .request_rules import model_header_list_error, request_path_problem
+from .request_rules import RequestRefused, check_request, model_header_list_error
 from .adapters import RESERVED_ENV, format_origin, parse_origin, target_ip_refused
 from .contracts import OperatorCase, SecurityRequirement
 
@@ -100,6 +100,16 @@ StaticTool = Literal["semgrep", "osv", "gitleaks"]
 STATIC_TOOLS: tuple[StaticTool, ...] = ("semgrep", "osv", "gitleaks")
 
 
+# What run input says when a scope entry breaks the method and path grammar (request_rules.check_request). Like every
+# other run input error it reaches the operator inside pydantic's validation error, not through the message table, so
+# it is not one of the *_REFUSALS tables tests/test_error_messages.py holds to Chinese wording.
+SCOPE_GRAMMAR_ERRORS = {
+    "path": "Scope requires an exact relative HTTP path",
+    "path_ascii": "Scope requires an exact relative HTTP path",
+    "method": "Scope requires an explicit HTTP method",
+}
+
+
 class RunInput(StrictModel):
     schema_version: Literal[2] = 2
     name: str = Field(default="Security review", min_length=1, max_length=160)
@@ -188,11 +198,14 @@ class RunInput(StrictModel):
                 if primary.role == "reviewer" and fallback.family.casefold() in {p.family.casefold() for p in primaries.values() if p.role == "reviewer" and p.id != agent_id}:
                     raise ValueError("A reviewer's fallback must be a model family none of the other reviewers use")
         for request in self.allowed_requests:
-            # The path is held to the transport's own rule: a scope entry no request could ever be sent to is refused here.
-            if set(request)-{"method","path","model_body","model_headers"} or not isinstance(request.get("model_body",False),bool) or request_path_problem(request.get("path")):
+            if set(request)-{"method","path","model_body","model_headers"} or not isinstance(request.get("model_body",False),bool):
                 raise ValueError("Scope requires an exact relative HTTP path")
-            if request.get("method") not in {"GET","POST","PUT","PATCH","DELETE","HEAD","OPTIONS"}:
-                raise ValueError("Scope requires an explicit HTTP method")
+            # The path and method are held to the transport's own grammar: a scope entry no request could ever be sent
+            # to is refused here, and the operator writes every method out.
+            try:
+                check_request(request,explicit_method=True)
+            except RequestRefused as refused:
+                raise ValueError(SCOPE_GRAMMAR_ERRORS[refused.rule]) from None
             if "model_headers" in request:
                 problem=model_header_list_error(request["model_headers"])
                 if problem:
