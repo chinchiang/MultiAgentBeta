@@ -9,6 +9,7 @@ tests/test_doc_refs.py only checks that each lands inside its file; this compare
 merge base and follows the referenced lines to where they are now. A reference counts as left behind only if the doc
 still says what it said at the base while the lines it named moved; one an author already changed is theirs. Lines
 rewritten where they stood leave nothing to follow, so they are listed for a person to check, and do not fail --check.
+A reference followed by a commit in parentheses, such as app.py:12（c7ae273）, names that commit's lines and is left alone.
 Only the standard library is used, so CI runs this without installing anything.
 """
 from __future__ import annotations
@@ -26,6 +27,7 @@ DOCS = ["docs/threat-model.yaml", "docs/VIBESEC_ADVISORIES.md"]
 SEARCH = ["backend/vibe_audit", "", "scripts", "tests", "fixtures/web-api", "fixtures/ai-agent", "frontend/src", "frontend/scripts"]
 NUM = r"\d+(?:-\d+)?"
 REF = re.compile(r"((?:[\w/-]+/)?[\w-]+\.(?:py|ts|tsx|mjs|cjs)):(" + NUM + r"(?:(?:、|, )" + NUM + r")*)")
+PINNED = re.compile(r"`?\s*[（(][0-9a-f]{7,40}\b")
 
 
 def resolve(root, name, search=SEARCH):
@@ -51,7 +53,8 @@ class Found:
 
 
 def _git(root, *args):
-    return subprocess.run(["git", *args], cwd=root, capture_output=True, text=True)
+    # Git writes file content as it is stored, UTF-8 here; the platform's own encoding (cp1252 on Windows) would garble it.
+    return subprocess.run(["git", *args], cwd=root, capture_output=True, text=True, encoding="utf-8")
 
 
 def _at(root, commit, path):
@@ -82,7 +85,8 @@ def _follow(token, lines):
 
 
 def _refs(text):
-    return [(m.group(0), m.start(), m.end(), m.group(1), m.group(2)) for m in REF.finditer(text)]
+    return [(m.group(0), m.start(), m.end(), m.group(1), m.group(2)) for m in REF.finditer(text)
+            if not PINNED.match(text, m.end())]
 
 
 def reanchor(root, docs=DOCS, *, base="origin/main", search=SEARCH, write=False):

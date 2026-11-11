@@ -96,9 +96,9 @@ flowchart TB
 | ② whitebox | `stage_answers.py`、`answers.py`、`snapshot.py`、`sandbox.py`、`worker_runtime.py` | 3 位 reviewer 並行審同一份脫敏快照並各自封存；Semgrep／Gitleaks／OSV 同時在隔離 worker 掃描 raw staging；`policy.whitebox_gate` |
 | ③ adjudication | `service.py`、`stage_answers.py`、`answers.py` | 保留所有主張的聯集、核對原始碼引用、至多 1 輪 challenger；不以多數票決定 |
 | ④ threat_model | `service.py`、`stage_answers.py`、`answers.py`、`policy.py`、`catalog.py` | 建立資產、信任邊界、資料流、威脅與 Requirement；`policy.threat_gate` 比對標準 ID 與版本 |
-| ⑤ case_design | `stage_answers.py`、`answers.py`、`contracts.py`、`adapters.py`、`fixture_protocol.py`、`policy.py` | 操作者自填或模型設計的固定案例；header 名稱正規化；`policy.case_gate` 檢查追溯、oracle、範圍與身分 |
+| ⑤ case_design | `stage_answers.py`、`answers.py`、`contracts.py`、`request_rules.py`、`fixture_protocol.py`、`policy.py` | 操作者自填或模型設計的固定案例；header 名稱正規化；封存時寫入請求計畫（每一步的方法、路徑、身分、header、本文與來源）；`policy.case_gate` 檢查追溯、oracle、執行範圍與身分 |
 | 核准 | `api.py`（approve-cases） | live 且有模型設計案例時停在「待核准案例」；操作者核准這組封存案例後才送出第一個請求 |
-| ⑥ blackbox | `policy.py`、`worker_runtime.py`、`lease.py`、`worker_entry.py`、`tool_runners.py`、`adapters.py`、`fixture_protocol.py`、`effect_collector.py` | 每個請求都經 supervisor 檢查 lease、方法／路徑、身分、IP 與預算才送往目標；結果分為 pass／fail／inconclusive／blocked／execution_error／outcome_unknown |
+| ⑥ blackbox | `policy.py`、`request_rules.py`、`worker_runtime.py`、`lease.py`、`worker_entry.py`、`tool_runners.py`、`adapters.py`、`fixture_protocol.py`、`effect_collector.py` | 每個請求都要是案例請求計畫裡的一步，並經 supervisor 檢查 lease、方法／路徑、身分、IP 與預算才送往目標；結果分為 pass／fail／inconclusive／blocked／execution_error／outcome_unknown |
 | ⑦ report | `service.py`、`stage_answers.py`、`answers.py`、`store.py`、`traceability.py` | 驗證證據雜湊；選用 reporter 只能重新排序既有發現；API 匯出 JSON、Markdown（中／英）與 SARIF |
 
 ### 整體目錄結構
@@ -303,9 +303,9 @@ flowchart TB
 | ② whitebox | `stage_answers.py`, `answers.py`, `snapshot.py`, `sandbox.py`, `worker_runtime.py` | 3 reviewers read the same redacted snapshot in parallel and each review is sealed; Semgrep / Gitleaks / OSV scan the raw staging in isolated workers at the same time; `policy.whitebox_gate` |
 | ③ adjudication | `service.py`, `stage_answers.py`, `answers.py` | Keeps the union of all claims, checks source citations, at most 1 challenger round; no majority vote |
 | ④ threat_model | `service.py`, `stage_answers.py`, `answers.py`, `policy.py`, `catalog.py` | Builds assets, trust boundaries, data flows, threats and Requirements; `policy.threat_gate` checks standard IDs and versions |
-| ⑤ case_design | `stage_answers.py`, `answers.py`, `contracts.py`, `adapters.py`, `fixture_protocol.py`, `policy.py` | Fixed cases written by the operator or designed by a model; header names are canonicalized; `policy.case_gate` checks traceability, oracles, scope and identities |
+| ⑤ case_design | `stage_answers.py`, `answers.py`, `contracts.py`, `request_rules.py`, `fixture_protocol.py`, `policy.py` | Fixed cases written by the operator or designed by a model; header names are canonicalized; each case is sealed with its request plan (every step's method, path, identity, headers, body and source); `policy.case_gate` checks traceability, oracles, run scope and identities |
 | Approval | `api.py` (approve-cases) | A live run with model-designed cases stops at awaiting approval; the first request goes out only after the operator approves that sealed set |
-| ⑥ blackbox | `policy.py`, `worker_runtime.py`, `lease.py`, `worker_entry.py`, `tool_runners.py`, `adapters.py`, `fixture_protocol.py`, `effect_collector.py` | Every request is checked by the supervisor for lease, method/path, identity, IP and budget before it reaches the target; results are pass / fail / inconclusive / blocked / execution_error / outcome_unknown |
+| ⑥ blackbox | `policy.py`, `request_rules.py`, `worker_runtime.py`, `lease.py`, `worker_entry.py`, `tool_runners.py`, `adapters.py`, `fixture_protocol.py`, `effect_collector.py` | Every request must be a step of its case's request plan and is checked by the supervisor for lease, method/path, identity, IP and budget before it reaches the target; results are pass / fail / inconclusive / blocked / execution_error / outcome_unknown |
 | ⑦ report | `service.py`, `stage_answers.py`, `answers.py`, `store.py`, `traceability.py` | Verifies evidence hashes; an optional reporter can only reorder existing findings; the API exports JSON, Markdown (Chinese or English) and SARIF |
 
 ### Repository Layout

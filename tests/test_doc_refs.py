@@ -4,6 +4,7 @@ This cannot prove a reference names the right line, only that it still lands in 
 scripts/reanchor-doc-refs.py follows the lines a reference names to where the code moved them (CI runs its --check)."""
 import importlib.util
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -50,17 +51,16 @@ def test_every_line_reference_lands_inside_its_file(doc):
 
 def repo_with_moved_code(tmp_path):
     """A git repository whose doc names lines of app.py; the working tree then moves those lines down by two."""
-    import subprocess
     def git(*args):
         subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True)
     git("init", "-q")
     git("config", "user.email", "test@example.invalid")
     git("config", "user.name", "test")
-    (tmp_path / "app.py").write_text("def a():\n    return 1\n\n\ndef b():\n    return 2\n")
-    (tmp_path / "doc.yaml").write_text("a lives at app.py:1-2; b at app.py:5-6 and app.py:6\n")
+    (tmp_path / "app.py").write_text("def a():\n    return 1\n\n\ndef b():\n    return 2\n", encoding="utf-8")
+    (tmp_path / "doc.yaml").write_text("a lives at app.py:1-2; b at app.py:5-6 and app.py:6\n", encoding="utf-8")
     git("add", ".")
     git("commit", "-q", "-m", "base")
-    (tmp_path / "app.py").write_text("import os\n\ndef a():\n    return 1\n\n\ndef b():\n    return 2\n")
+    (tmp_path / "app.py").write_text("import os\n\ndef a():\n    return 1\n\n\ndef b():\n    return 2\n", encoding="utf-8")
     return tmp_path
 
 
@@ -70,7 +70,7 @@ def test_a_reference_left_behind_by_moved_code_is_found_and_re_anchored(tmp_path
     found = reanchor.reanchor(root, ["doc.yaml"], base="HEAD", search=[""], write=False)
     assert [(f.ref, f.expected) for f in found.stale] == [("app.py:1-2", "app.py:3-4"), ("app.py:5-6", "app.py:7-8"), ("app.py:6", "app.py:8")]
     reanchor.reanchor(root, ["doc.yaml"], base="HEAD", search=[""], write=True)
-    assert (root / "doc.yaml").read_text() == "a lives at app.py:3-4; b at app.py:7-8 and app.py:8\n"
+    assert (root / "doc.yaml").read_text(encoding="utf-8") == "a lives at app.py:3-4; b at app.py:7-8 and app.py:8\n"
     # Once re-anchored, nothing is left behind.
     assert reanchor.reanchor(root, ["doc.yaml"], base="HEAD", search=[""], write=False).stale == []
 
@@ -79,10 +79,19 @@ def test_a_reference_someone_already_moved_or_whose_lines_were_rewritten_is_not_
     reanchor = REANCHOR
     root = repo_with_moved_code(tmp_path)
     # Pointed elsewhere by hand: the author's choice stands.
-    (root / "doc.yaml").write_text("a lives at app.py:3-4; b at app.py:5-6 and app.py:6\n")
+    (root / "doc.yaml").write_text("a lives at app.py:3-4; b at app.py:5-6 and app.py:6\n", encoding="utf-8")
     assert [f.ref for f in reanchor.reanchor(root, ["doc.yaml"], base="HEAD", search=[""], write=False).stale] == ["app.py:5-6", "app.py:6"]
     # Lines rewritten where they stood: no line of them survives to follow, so it is for a person to check.
-    (root / "app.py").write_text("def a():\n    return 1\n\n\ndef c():\n    return 3\n")
-    (root / "doc.yaml").write_text("b at app.py:5-6\n")
+    (root / "app.py").write_text("def a():\n    return 1\n\n\ndef c():\n    return 3\n", encoding="utf-8")
+    (root / "doc.yaml").write_text("b at app.py:5-6\n", encoding="utf-8")
     found = reanchor.reanchor(root, ["doc.yaml"], base="HEAD", search=[""], write=False)
     assert found.stale == [] and [f.ref for f in found.rewritten] == ["app.py:5-6"]
+
+
+def test_a_reference_pinned_to_a_commit_names_that_commit_and_is_never_moved(tmp_path):
+    # The advisory triage records where a scanner found something at a given commit; those lines stay as found.
+    root = repo_with_moved_code(tmp_path)
+    (root / "doc.yaml").write_text("found at app.py:1-2（c7ae273）, `app.py:5`（5a59458） and app.py:5 (5a59458), now at app.py:6\n", encoding="utf-8")
+    subprocess.run(["git", "commit", "-qam", "pin"], cwd=root, check=True, capture_output=True)
+    (root / "app.py").write_text("import os\n\n" + (root / "app.py").read_text(encoding="utf-8"), encoding="utf-8")
+    assert [f.ref for f in REANCHOR.reanchor(root, ["doc.yaml"], base="HEAD", search=[""], write=False).stale] == ["app.py:6"]
