@@ -86,3 +86,13 @@ def test_a_reference_someone_already_moved_or_whose_lines_were_rewritten_is_not_
     (root / "doc.yaml").write_text("b at app.py:5-6\n")
     found = reanchor.reanchor(root, ["doc.yaml"], base="HEAD", search=[""], write=False)
     assert found.stale == [] and [f.ref for f in found.rewritten] == ["app.py:5-6"]
+
+
+def test_a_reference_pinned_to_a_commit_names_that_commit_and_is_never_moved(tmp_path):
+    # The advisory triage records where a scanner found something at a given commit; those lines stay as found.
+    root = repo_with_moved_code(tmp_path)
+    (root / "doc.yaml").write_text("found at app.py:1-2（c7ae273）, `app.py:5`（5a59458） and app.py:5 (5a59458), now at app.py:6\n")
+    import subprocess
+    subprocess.run(["git", "commit", "-qam", "pin"], cwd=root, check=True, capture_output=True)
+    (root / "app.py").write_text("import os\n\n" + (root / "app.py").read_text())
+    assert [f.ref for f in REANCHOR.reanchor(root, ["doc.yaml"], base="HEAD", search=[""], write=False).stale] == ["app.py:6"]
