@@ -53,7 +53,8 @@ class Found:
 
 
 def _git(root, *args):
-    return subprocess.run(["git", *args], cwd=root, capture_output=True, text=True)
+    # Git writes file content as it is stored, UTF-8 here; the platform's own encoding (cp1252 on Windows) would garble it.
+    return subprocess.run(["git", *args], cwd=root, capture_output=True, text=True, encoding="utf-8")
 
 
 def _at(root, commit, path):
