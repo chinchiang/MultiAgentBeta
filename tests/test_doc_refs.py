@@ -4,6 +4,7 @@ This cannot prove a reference names the right line, only that it still lands in 
 scripts/reanchor-doc-refs.py follows the lines a reference names to where the code moved them (CI runs its --check)."""
 import importlib.util
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -50,7 +51,6 @@ def test_every_line_reference_lands_inside_its_file(doc):
 
 def repo_with_moved_code(tmp_path):
     """A git repository whose doc names lines of app.py; the working tree then moves those lines down by two."""
-    import subprocess
     def git(*args):
         subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True)
     git("init", "-q")
@@ -92,7 +92,6 @@ def test_a_reference_pinned_to_a_commit_names_that_commit_and_is_never_moved(tmp
     # The advisory triage records where a scanner found something at a given commit; those lines stay as found.
     root = repo_with_moved_code(tmp_path)
     (root / "doc.yaml").write_text("found at app.py:1-2（c7ae273）, `app.py:5`（5a59458） and app.py:5 (5a59458), now at app.py:6\n")
-    import subprocess
     subprocess.run(["git", "commit", "-qam", "pin"], cwd=root, check=True, capture_output=True)
     (root / "app.py").write_text("import os\n\n" + (root / "app.py").read_text())
     assert [f.ref for f in REANCHOR.reanchor(root, ["doc.yaml"], base="HEAD", search=[""], write=False).stale] == ["app.py:6"]

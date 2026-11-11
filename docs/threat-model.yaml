@@ -242,7 +242,7 @@ threats:
       `; charset=utf-8` 一種寫法）、
       If-Match／If-None-Match 只能是 *（模型看不到目標回應，沒有真的 ETag）、X-Requested-With 只能是 XMLHttpRequest
       （request_rules.py:53-62）。2026-10-07 起再收窄：模型設計的請求只能用操作者在 allowed_requests[].model_headers 為該 method
-      與 path 明列的值，清單只能是上述詞彙的子集（request_rules.py:65-93；RunInput 驗證 domain.py:164-167）；沒有清單的端點，
+      與 path 明列的值，清單只能是上述詞彙的子集（request_rules.py:65-93；RunInput 驗證 domain.py:196-199）；沒有清單的端點，
       模型設計的請求不能帶任何 header，所以預設沒有 header 選擇。清單由 case_gate 與 supervisor 依請求的 method 與 path 檢查；不受信任的 worker 拿到的 manifest 不含 allowed_requests，只檢查固定詞彙，不是這道控制的一環。supervisor 為本文補上的 Content-Type 屬傳輸層，不算模型選擇
       （adapters.py:354-419；worker_entry.py:389-397）。header 名稱只有一種拼法（Accept、Accept-Language…），大小寫不同的重複名稱在設計階段即拒絕，
       依名稱排序送出（request_rules.py:30-31、96-110；service.py:791-801）：大小寫、重複與順序都不再是模型的選擇。
@@ -386,7 +386,7 @@ threats:
       資料庫 all.zip 內的紀錄 ID；其他一律記為 unrecognized-rule 並列為缺口（sandbox.py:82-139、202-204；worker_runtime.py:624-625；
       resource_manifest.py:19）。發現先去重並依檔案、行號、規則排序，順序與重複不帶資訊（sandbox.py:198-201）。檔案路徑須在
       staging 清單內並經遮罩，行號不得超過 staging 副本中該檔的行數（副本雜湊不符即不採計），否則整筆不匯入並記為缺口，證據也只
-      保存收斂後的結果（service.py:490-510；staging.py:146-159；service.py:733-744）。
+      保存收斂後的結果（service.py:490-510；staging.py:146-159；service.py:658-665）。
       殘留：沒有自訂 seccomp 或 AppArmor profile、
       未要求 userns；/tmp tmpfs 可執行；kernel 漏洞仍可逃逸。容器內的程式仍可藉由選擇回報哪些「檔案、行號、已知規則」組合帶出資訊：
       每個 scanner 至多 1000 筆、以集合計，數百個檔案、每檔數百行時約為每次掃描數 KB，足以帶出一份小型 .env。

@@ -27,8 +27,6 @@ DOCS = ["docs/threat-model.yaml", "docs/VIBESEC_ADVISORIES.md"]
 SEARCH = ["backend/vibe_audit", "", "scripts", "tests", "fixtures/web-api", "fixtures/ai-agent", "frontend/src", "frontend/scripts"]
 NUM = r"\d+(?:-\d+)?"
 REF = re.compile(r"((?:[\w/-]+/)?[\w-]+\.(?:py|ts|tsx|mjs|cjs)):(" + NUM + r"(?:(?:、|, )" + NUM + r")*)")
-# A reference followed by a commit in parentheses names the lines at that commit (the advisory triage records where a
-# scanner found something), so it stays as written whatever the code does since.
 PINNED = re.compile(r"`?\s*[（(][0-9a-f]{7,40}\b")
 
 
