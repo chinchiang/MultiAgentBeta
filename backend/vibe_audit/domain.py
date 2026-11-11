@@ -7,8 +7,8 @@ import re
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-from .request_rules import RequestRefused, check_request, model_header_list_error
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator
+from .request_rules import HTTP_METHODS, RequestRefused, check_request, model_header_list_error
 from .adapters import RESERVED_ENV, format_origin, parse_origin, target_ip_refused
 from .contracts import OperatorCase, SecurityRequirement
 
@@ -110,6 +110,32 @@ SCOPE_GRAMMAR_ERRORS = {
 }
 
 
+class ScopeEntry(StrictModel):
+    """One method and exact path of the operator's run scope, and what a model-written request to it may carry."""
+    method: str = Field(json_schema_extra={"enum": list(HTTP_METHODS)})
+    path: str
+    model_body: bool = False
+    model_headers: dict[str, list[str]] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def as_the_transport_reads_it(cls, value):
+        # Checked before the field types, so each refusal keeps the words run input has always used.
+        if not isinstance(value, dict) or set(value)-{"method","path","model_body","model_headers"} or not isinstance(value.get("model_body",False),bool):
+            raise ValueError("Scope requires an exact relative HTTP path")
+        # The path and method are held to the transport's own grammar: a scope entry no request could ever be sent
+        # to is refused here, and the operator writes every method out.
+        try:
+            check_request(value,explicit_method=True)
+        except RequestRefused as refused:
+            raise ValueError(SCOPE_GRAMMAR_ERRORS[refused.rule]) from None
+        if "model_headers" in value:
+            problem=model_header_list_error(value["model_headers"])
+            if problem:
+                raise ValueError(problem)
+        return value
+
+
 class RunInput(StrictModel):
     schema_version: Literal[2] = 2
     name: str = Field(default="Security review", min_length=1, max_length=160)
@@ -120,7 +146,7 @@ class RunInput(StrictModel):
     data_policy: Literal["local_only", "cloud_allowed"] = "local_only"
     allowed_model_origins: list[str] = Field(default_factory=list)
     allowed_target_ips: list[str] = Field(default_factory=list)
-    allowed_requests: list[dict] = Field(default_factory=list, max_length=100)
+    allowed_requests: list[ScopeEntry] = Field(default_factory=list, max_length=100)
     budget: Budget = Field(default_factory=Budget)
     models: list[ModelProfile] = Field(default_factory=list)
     auth_profiles: list[AuthProfile] = Field(default_factory=list)
@@ -170,6 +196,11 @@ class RunInput(StrictModel):
         # Whoever submits the run states these, so none is model-derived; the threat gate then insists each is mapped.
         return [r.model_copy(update={"source_kind": "operator"}) if r.source_kind == "derived" else r for r in value]
 
+    @field_serializer("allowed_requests")
+    def scope_as_written(self, scope):
+        # The manifest holds each entry as the operator wrote it: a default left out would change it and its hash.
+        return [entry.model_dump(exclude_unset=True) for entry in scope]
+
     @model_validator(mode="after")
     def validate_live(self):
         if self.parent_finding_ids and not self.parent_run_id:
@@ -197,19 +228,6 @@ class RunInput(StrictModel):
                 # The whitebox gate needs three families; a fallback that repeats another reviewer's could never pass it.
                 if primary.role == "reviewer" and fallback.family.casefold() in {p.family.casefold() for p in primaries.values() if p.role == "reviewer" and p.id != agent_id}:
                     raise ValueError("A reviewer's fallback must be a model family none of the other reviewers use")
-        for request in self.allowed_requests:
-            if set(request)-{"method","path","model_body","model_headers"} or not isinstance(request.get("model_body",False),bool):
-                raise ValueError("Scope requires an exact relative HTTP path")
-            # The path and method are held to the transport's own grammar: a scope entry no request could ever be sent
-            # to is refused here, and the operator writes every method out.
-            try:
-                check_request(request,explicit_method=True)
-            except RequestRefused as refused:
-                raise ValueError(SCOPE_GRAMMAR_ERRORS[refused.rule]) from None
-            if "model_headers" in request:
-                problem=model_header_list_error(request["model_headers"])
-                if problem:
-                    raise ValueError(problem)
         if self.mode == "live":
             if "budget" not in self.model_fields_set:
                 raise ValueError("Live runs require an explicit request, time and model-usage budget")

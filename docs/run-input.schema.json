@@ -202,6 +202,50 @@
       "title": "ModelProfile",
       "type": "object"
     },
+    "ScopeEntry": {
+      "additionalProperties": false,
+      "description": "One method and exact path of the operator's run scope, and what a model-written request to it may carry.",
+      "properties": {
+        "method": {
+          "enum": [
+            "GET",
+            "POST",
+            "PUT",
+            "PATCH",
+            "DELETE",
+            "HEAD",
+            "OPTIONS"
+          ],
+          "title": "Method",
+          "type": "string"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "model_body": {
+          "default": false,
+          "title": "Model Body",
+          "type": "boolean"
+        },
+        "model_headers": {
+          "additionalProperties": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "title": "Model Headers",
+          "type": "object"
+        }
+      },
+      "required": [
+        "method",
+        "path"
+      ],
+      "title": "ScopeEntry",
+      "type": "object"
+    },
     "SecurityRequirement": {
       "additionalProperties": false,
       "properties": {
@@ -323,8 +367,7 @@
     },
     "allowed_requests": {
       "items": {
-        "additionalProperties": true,
-        "type": "object"
+        "$ref": "#/$defs/ScopeEntry"
       },
       "maxItems": 100,
       "title": "Allowed Requests",

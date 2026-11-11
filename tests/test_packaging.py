@@ -177,6 +177,15 @@ def test_provisioning_writes_nothing_for_a_worker_without_a_digest_pinned_base(t
     assert json.loads(out.with_suffix(".images.json").read_text())["worker"]["base_image_label"] == DIGEST
 
 
+def test_the_published_schema_says_what_a_scope_entry_may_hold():
+    import json
+    schema = json.loads((ROOT / "docs" / "run-input.schema.json").read_text(encoding="utf-8"))
+    entry = schema["$defs"][schema["properties"]["allowed_requests"]["items"]["$ref"].rsplit("/", 1)[-1]]
+    assert entry["additionalProperties"] is False and entry["required"] == ["method", "path"]
+    assert set(entry["properties"]) == {"method", "path", "model_body", "model_headers"}
+    assert entry["properties"]["method"]["enum"] == ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
+
+
 def test_published_run_input_schema_is_what_the_code_validates():
     import json
     from vibe_audit.domain import RunInput

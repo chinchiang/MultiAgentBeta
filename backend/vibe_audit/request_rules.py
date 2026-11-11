@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import re
 
-# The methods a request to the target may use, each in its one spelling.
-HTTP_METHODS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
+# The methods a request to the target may use, each in its one spelling, in the order a schema lists them.
+HTTP_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS")
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 # The method of a request or scope entry that names none.
 DEFAULT_METHOD = "GET"  # pragma: no mutate (every comparison upper-cases it, so any spelling is the same method)

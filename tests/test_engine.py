@@ -1345,7 +1345,7 @@ def test_operator_model_header_lists_can_only_narrow_the_vocabulary(model_header
     from vibe_audit.domain import RunInput
     make=lambda: RunInput(name="Header lists",allowed_requests=[{"method":"GET","path":"/a","model_headers":model_headers}])
     if ok:
-        assert make().allowed_requests[0]["model_headers"]==model_headers
+        assert make().model_dump()["allowed_requests"][0]["model_headers"]==model_headers
     else:
         with pytest.raises(ValidationError,match="model_headers"):
             make()
@@ -1714,6 +1714,41 @@ async def test_model_fixture_body_goes_only_to_an_operator_marked_endpoint(engin
     else:
         assert sent==[] and run["executions"][0]["status"]=="blocked"
         assert "model_body" in run["executions"][0]["reason"]
+
+
+def test_a_run_manifest_keeps_each_scope_entry_as_the_operator_wrote_it():
+    from vibe_audit.domain import new_run
+    written=[{"method":"GET","path":"/orders"},{"method":"POST","path":"/chat","model_body":True,"model_headers":{"Accept":["application/json"]}}]
+    run=new_run("r",RunInput(name="Scope",mode="demo",allowed_requests=written))
+    # No default the operator left out appears, so the manifest and its hash are what was submitted.
+    assert run["manifest"]["allowed_requests"]==written
+
+
+def test_a_stored_manifest_is_valid_run_input_again_as_a_retest_reads_it():
+    from vibe_audit.domain import new_run
+    written=[{"method":"GET","path":"/orders"},{"method":"POST","path":"/chat","model_body":True}]
+    manifest=new_run("r",RunInput(name="Scope",mode="demo",allowed_requests=written))["manifest"]
+    # A retest validates the parent's manifest again; what was stored reads back to the same scope.
+    assert RunInput.model_validate(manifest).model_dump()["allowed_requests"]==written
+    # One stored before DEL was refused no longer passes, with the path's own words.
+    with pytest.raises(ValueError,match="Scope requires an exact relative HTTP path"):
+        RunInput.model_validate({**manifest,"allowed_requests":[{"method":"GET","path":"/a\x7f"}]})
+
+
+@pytest.mark.parametrize("entry,message",[
+    ("/orders","Scope requires an exact relative HTTP path"),
+    ({"method":"GET","path":"/a","writable":True},"Scope requires an exact relative HTTP path"),
+    ({"method":"GET","path":"/a","model_body":1},"Scope requires an exact relative HTTP path"),
+    ({"method":"GET","path":7},"Scope requires an exact relative HTTP path"),
+    ({"method":"GET"},"Scope requires an exact relative HTTP path"),
+    ({"path":"/a"},"Scope requires an explicit HTTP method"),
+    ({"method":"GET","path":"/a","model_headers":None},"model_headers must map header names to lists of values"),
+])
+def test_a_scope_entry_is_refused_in_the_words_run_input_has_always_used(entry,message):
+    from pydantic import ValidationError
+    with pytest.raises(ValidationError) as refused:
+        RunInput(name="Scope",mode="demo",allowed_requests=[entry])
+    assert [error["msg"] for error in refused.value.errors()]==["Value error, "+message]
 
 
 def test_scope_entries_accept_only_a_boolean_model_body_flag():
