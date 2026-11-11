@@ -35,7 +35,7 @@ _避免_：steps（operator 案例的欄位名）、allowed_requests（舊案例
 _避免_：designed_by（案例的欄位，不等於每一步的來源）、作者、provenance（另指證據的來源證明）
 
 **執行範圍（run scope）**：
-操作者為一次 run 允許的方法與確切路徑清單。它只是外框：每一步請求都必須在裡面，哪一步能送、以什麼身分送，由請求計畫決定。
+操作者為一次 run 允許的方法與確切路徑清單，每一項還可以註明模型寫的請求能不能帶本文、能用哪些 header 值。它只是外框：每一步請求都必須在裡面，哪一步能送、以什麼身分送，由請求計畫決定。
 _避免_：allowlist、白名單
 
 ---
@@ -77,5 +77,5 @@ Who wrote one step of a request plan: the model, the operator or the engine. Onl
 _Avoid_: designed_by (a case's field, not each step's source), author, provenance (the evidence's proof of origin)
 
 **Run scope**:
-The methods and exact paths the operator allows for one run. It is only the outer bound: every request step must be inside it, and which step may be sent, as which identity, the request plan decides.
+The methods and exact paths the operator allows for one run, each of which may also say whether a model-written request may carry a body and which header values it may use. It is only the outer bound: every request step must be inside it, and which step may be sent, as which identity, the request plan decides.
 _Avoid_: allowlist, whitelist
