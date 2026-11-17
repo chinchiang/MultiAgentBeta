@@ -82,9 +82,10 @@ def listen():
         listener.close()
 
 
-def fetch(listener, method="GET", path="/", body=None, timeout=2.0, scheme="http", host="127.0.0.1"):
+def fetch(listener, method="GET", path="/", body=None, timeout=2.0, scheme="http", host="127.0.0.1",
+          max_response_bytes=target_transport.MAX_RESPONSE_BYTES):
     return send_pinned_request(scheme, host, listener.port, "127.0.0.1", method, path, HEADERS, body,
-                               timeout=timeout, max_response_bytes=adapters.MAX_RESPONSE_BYTES)
+                               timeout=timeout, max_response_bytes=max_response_bytes)
 
 
 def test_complete_response_is_returned_with_its_size(listen):
@@ -128,14 +129,13 @@ def test_chunked_and_unsized_bodies_are_joined_in_order(listen):
 
 
 def test_declared_length_is_bounded_and_must_be_met(listen):
-    with patch.object(adapters, "MAX_RESPONSE_BYTES", 32):
-        assert fetch(listen(response(200, b"A" * 32)))["bytes"] == 32
-        assert fetch(listen(response(204, b"")))["bytes"] == 0
-        for length, sent in [(33, 40), (-1, 40), (-1, 5)]:
-            server = listen(f"HTTP/1.1 200 X\r\nContent-Length: {length}\r\nConnection: close\r\n\r\n".encode() + b"A" * sent)
-            with pytest.raises(TransportRefused) as refused:
-                fetch(server)
-            assert adapters.RESPONSE_LIMIT_REFUSALS[refused.value.rule] == "Response exceeds the configured byte limit."
+    assert fetch(listen(response(200, b"A" * 32)), max_response_bytes=32)["bytes"] == 32
+    assert fetch(listen(response(204, b"")), max_response_bytes=32)["bytes"] == 0
+    for length, sent in [(33, 40), (-1, 40), (-1, 5)]:
+        server = listen(f"HTTP/1.1 200 X\r\nContent-Length: {length}\r\nConnection: close\r\n\r\n".encode() + b"A" * sent)
+        with pytest.raises(TransportRefused) as refused:
+            fetch(server, max_response_bytes=32)
+        assert adapters.RESPONSE_LIMIT_REFUSALS[refused.value.rule] == "Response exceeds the configured byte limit."
     with pytest.raises(TransportRefused) as refused:
         fetch(listen(b"HTTP/1.1 200 X\r\nContent-Length: abc\r\nConnection: close\r\n\r\nxyz"))
     assert adapters.RESPONSE_LIMIT_REFUSALS[refused.value.rule] == "Invalid response length; no oracle was evaluated."
@@ -145,11 +145,10 @@ def test_declared_length_is_bounded_and_must_be_met(listen):
 
 
 def test_unsized_body_is_bounded_by_the_same_limit(listen):
-    with patch.object(adapters, "MAX_RESPONSE_BYTES", 32):
-        assert fetch(listen(b"HTTP/1.1 200 X\r\nConnection: close\r\n\r\n" + b"B" * 32))["bytes"] == 32
-        with pytest.raises(TransportRefused) as refused:
-            fetch(listen(b"HTTP/1.1 200 X\r\nConnection: close\r\n\r\n" + b"B" * 33))
-        assert adapters.RESPONSE_LIMIT_REFUSALS[refused.value.rule] == "Response exceeds the configured byte limit."
+    assert fetch(listen(b"HTTP/1.1 200 X\r\nConnection: close\r\n\r\n" + b"B" * 32), max_response_bytes=32)["bytes"] == 32
+    with pytest.raises(TransportRefused) as refused:
+        fetch(listen(b"HTTP/1.1 200 X\r\nConnection: close\r\n\r\n" + b"B" * 33), max_response_bytes=32)
+    assert adapters.RESPONSE_LIMIT_REFUSALS[refused.value.rule] == "Response exceeds the configured byte limit."
 
 
 def test_compressed_and_non_utf8_responses_are_refused_but_an_empty_encoding_is_identity(listen):
@@ -191,9 +190,9 @@ def test_body_reads_are_given_the_remaining_time_and_a_bounded_size(listen):
         chunk = real_read1(self, size)
         sizes.append((size, len(chunk)))
         return chunk
-    with patch.object(adapters, "MAX_RESPONSE_BYTES", 8192 * 2 + 5), patch.object(socket.socket, "settimeout", lambda s, v: timeouts.append(v) or real_settimeout(s, v)), \
+    with patch.object(socket.socket, "settimeout", lambda s, v: timeouts.append(v) or real_settimeout(s, v)), \
             patch.object(http.client.HTTPResponse, "read1", read1):
-        assert fetch(listen(response(200, b"C" * (8192 * 2 + 5))), timeout=2.0)["bytes"] == 8192 * 2 + 5
+        assert fetch(listen(response(200, b"C" * (8192 * 2 + 5))), timeout=2.0, max_response_bytes=8192 * 2 + 5)["bytes"] == 8192 * 2 + 5
     # With Connection: close the response owns the socket; it still gets the time the deadline leaves before each read.
     remaining = [value for value in timeouts if value != 2]  # the listener's own socket timeout is 2
     assert len(remaining) >= 3 and all(0 < value <= 2.0 for value in remaining)

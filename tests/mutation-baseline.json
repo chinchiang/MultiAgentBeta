@@ -1,24 +1,19 @@
 {
   "modules": {
     "src/vibe_audit/policy.py": 14,
-    "src/vibe_audit/adapters.py": 32,
+    "src/vibe_audit/adapters.py": 15,
     "src/vibe_audit/catalog.py": 3,
     "src/vibe_audit/lease.py": 8,
     "src/vibe_audit/snapshot.py": 12,
     "src/vibe_audit/messages.py": 0,
-    "src/vibe_audit/request_rules.py": 4
+    "src/vibe_audit/request_rules.py": 4,
+    "src/vibe_audit/target_transport.py": 0
   },
   "functions": {
     "vibe_audit.adapters.x__origin": 3,
     "vibe_audit.adapters.x__prepare_request": 4,
-    "vibe_audit.adapters.x__request": 4,
-    "vibe_audit.adapters.x_bound_model_credentials": 2,
     "vibe_audit.adapters.x_control_plane_target": 3,
-    "vibe_audit.adapters.x_execute_case": 6,
-    "vibe_audit.adapters.x_secret_forms": 1,
     "vibe_audit.adapters.x_unbound_target_credentials": 5,
-    "vibe_audit.adapters.xǁ_PinnedHTTPConnectionǁconnect": 3,
-    "vibe_audit.adapters.xǁ_PinnedHTTPSConnectionǁconnect": 1,
     "vibe_audit.catalog.xǁCatalogRegistryǁ__init__": 2,
     "vibe_audit.catalog.xǁCatalogRegistryǁentries": 1,
     "vibe_audit.lease.x_canonical_hash": 2,

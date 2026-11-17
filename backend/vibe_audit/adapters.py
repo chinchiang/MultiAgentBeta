@@ -12,7 +12,6 @@ import hashlib
 import ipaddress
 import json
 import os
-import re
 import shutil
 from urllib.parse import urlsplit
 
@@ -28,12 +27,12 @@ except ImportError:
     from request_rules import (  # type: ignore[import-not-found,no-redef]
         SAFE_METHODS, RequestRefused, case_headers_allowed, check_request, model_header_vocabulary, read_only)
 
-MAX_RESPONSE_BYTES = 256 * 1024
+MAX_RESPONSE_BYTES = _target_transport.MAX_RESPONSE_BYTES
 MAX_REQUEST_BYTES = 64 * 1024
-REQUEST_TIMEOUT_SECONDS = 10.0
+REQUEST_TIMEOUT_SECONDS = _target_transport.REQUEST_TIMEOUT_SECONDS
 MAX_REPETITIONS = 20
 _TRUSTED = {"adapter.http", "fixture.local", "collector.local"}
-_CREDENTIAL_ENV = re.compile(r"^VIBEAUDIT_[A-Z0-9_]+$")
+_CREDENTIAL_ENV = _target_transport._CREDENTIAL_ENV
 TARGET_CREDENTIAL_ORIGINS_ENV = "VIBEAUDIT_TARGET_CREDENTIAL_ORIGINS"
 
 
@@ -391,8 +390,6 @@ async def execute_case(manifest: dict, case: dict, *, cancel_event, request_hook
         return _result("blocked", "Run was cancelled before a request.")
     requests = 0
     observations = []
-    current_method = "GET"  # pragma: no mutate (every request sets it before any transport error can be raised)
-    current_delivered = False  # pragma: no mutate (every dispatch resets it before any transport call)
     try:
         scheme, host, port = _origin(manifest)
         # Validate the main request before allowing even positive-control I/O.
@@ -420,9 +417,8 @@ async def execute_case(manifest: dict, case: dict, *, cancel_event, request_hook
             controls.append((control, request))
 
         async def dispatch(request):
-            nonlocal requests, current_method, current_delivered
-            method, path, headers, body, secrets = _prepare_request(manifest, request)
-            current_method = method
+            nonlocal requests
+            method, path, headers, body, _ = _prepare_request(manifest, request)
             try:
                 # Resolution is bounded separately. The connected numeric IP cannot
                 # be changed by a second DNS lookup or proxy environment variables.
@@ -457,8 +453,9 @@ async def execute_case(manifest: dict, case: dict, *, cancel_event, request_hook
                         raise TimeoutError from None
                     raise
                 requests += 1
-                current_delivered = True
                 if exc.rule == "timeout":
+                    if method not in SAFE_METHODS:
+                        raise OutcomeUnknown("Target transport timed out; no success was inferred.") from None
                     raise TimeoutError from None
                 if exc.rule == "deployment_changed":
                     reason = TARGET_REFUSALS["deployment_changed"]
@@ -472,17 +469,18 @@ async def execute_case(manifest: dict, case: dict, *, cancel_event, request_hook
                     raise AdapterBlocked(TARGET_REFUSALS["redirect"]) from None
                 if exc.rule in RESPONSE_LIMIT_REFUSALS:
                     raise ResponseLimitError(RESPONSE_LIMIT_REFUSALS[exc.rule]) from None
+                if method not in SAFE_METHODS:
+                    raise OutcomeUnknown("Target transport failed; no success was inferred.") from None
                 raise
             requests += 1
             if _cancelled(cancel_event):
                 raise asyncio.CancelledError
-            response = {"status_code": raw["status_code"], "body": raw["body"], "complete": True,
-                        "bytes": raw["bytes"], "peer_ip": raw["peer_ip"]}
-            return response, secrets
+            return {"status_code": raw["status_code"], "body": raw["body"], "complete": True,
+                    "bytes": raw["bytes"], "peer_ip": raw["peer_ip"]}
 
         for repeat in range(repetitions):
             for control, request in controls:
-                response, _ = await dispatch(request)
+                response = await dispatch(request)
                 matched = (response.get("complete") is True and response.get("status_code") == control["expected_status"]
                            and all(text in response["body"] for text in control["required_text"]))
                 observations.append({"kind": "precondition", "name": control["name"], "value": matched,
@@ -491,7 +489,7 @@ async def execute_case(manifest: dict, case: dict, *, cancel_event, request_hook
                                      "matched_text_sha256": [hashlib.sha256(text.encode()).hexdigest() for text in control["required_text"]] if matched else []})
                 if not matched:
                     return _result("inconclusive", "A positive control did not establish its required fixture; the main request was not sent.", observations, requests)
-            response, _ = await dispatch(case)
+            response = await dispatch(case)
             response["forbidden_text_sha256_observed"] = [hashlib.sha256(text.encode()).hexdigest()
                 for text in (case.get("oracle") or {}).get("forbidden_text", [])
                 if isinstance(text, str) and text and text in response["body"]]
@@ -516,11 +514,11 @@ async def execute_case(manifest: dict, case: dict, *, cancel_event, request_hook
     except asyncio.CancelledError:
         return _result("outcome_unknown" if requests else "blocked", "Execution was cancelled; dispatched requests are not automatically replayed.", observations, requests)
     except TimeoutError:
-        return _result("outcome_unknown" if current_delivered and current_method not in SAFE_METHODS else "execution_error", "Target transport timed out; no success was inferred.", observations, requests)
+        return _result("execution_error", "Target transport timed out; no success was inferred.", observations, requests)
     except Exception:
         # Provider/HTTP exception strings may include request material. Never
         # return their text or traceback through an API or report.
-        return _result("outcome_unknown" if current_delivered and current_method not in SAFE_METHODS else "execution_error", "Target transport failed; no success was inferred.", observations, requests)
+        return _result("execution_error", "Target transport failed; no success was inferred.", observations, requests)
 
 
 def tool_capabilities() -> list[dict]:
