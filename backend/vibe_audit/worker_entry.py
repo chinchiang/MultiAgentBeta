@@ -12,7 +12,6 @@ import copy
 import hashlib
 import http.client
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-import ipaddress
 import json
 import os
 from pathlib import Path
@@ -20,7 +19,6 @@ import re
 import signal
 import socket
 import socketserver
-import ssl
 import subprocess
 import sys
 import threading
@@ -29,6 +27,10 @@ import uuid
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0,str(HERE))
+try:
+    from . import target_transport as _target_transport
+except ImportError:
+    import target_transport as _target_transport  # type: ignore[import-not-found,no-redef]
 # Two copies (the worker's claim and the supervisor's record) of a task's bounded responses must fit.
 MAX_FRAME = 64*1024*1024
 # A broker request carries at most a 64 KiB body; nothing larger is buffered before the token check.
@@ -167,6 +169,28 @@ class Unusable(ValueError):
     def __init__(self,reason,status_code=None):
         super().__init__(reason)
         self.status_code=status_code
+
+
+BROKER_REFUSALS={
+    "invalid_allowed_ips":"Target address could not be resolved within the allowed IPs",
+    "no_allowed_ips":"Target address could not be resolved within the allowed IPs",
+    "refused_ip":"Target address could not be resolved within the allowed IPs",
+    "dns_failed":"Target address could not be resolved within the allowed IPs",
+    "unlisted_ip":"Target address could not be resolved within the allowed IPs",
+    "revoked":"Egress revoked before the request was sent",
+    "connect_timeout":"The request deadline passed before the request was sent",
+    "connect_failed":"Target connection failed before the request was sent",
+    "timeout":"Target response was incomplete",
+    "protocol_error":"Target response was incomplete",
+    "deployment_changed":"Deployment identity changed or was not present",
+    "redirect":"Target answered with a redirect; redirects are never followed",
+    "compressed":"Compressed response denied",
+    "invalid_length":"Response size denied",
+    "declared_too_large":"Response size denied",
+    "body_too_large":"Incomplete or oversized response",
+    "incomplete_body":"Incomplete or oversized response",
+    "invalid_utf8":"Response body is not UTF-8",
+}
 
 
 # What execute_case and evaluate_oracle read from a case (adapters.py), and what the sequence worker reads from a
@@ -408,79 +432,32 @@ class Supervisor:
         return case_id,step,method,path,headers,raw,secrets
 
     def forward(self,method,path,headers,body,deadline=None):
-        from adapters import _origin,_pinned_address
+        from adapters import _origin
         from lease import LeaseError
         scheme,host,port=_origin(self.manifest)
-        try: pinned=_pinned_address(host,port,self.manifest.get("allowed_target_ips",[]))
-        except Exception: raise NotSent("Target address could not be resolved within the allowed IPs") from None
+        try: pinned=_target_transport.resolve_pinned_ip(host,port,self.manifest.get("allowed_target_ips",[]))
+        except _target_transport.TransportRefused as exc: raise NotSent(BROKER_REFUSALS[exc.rule]) from None
         try: self.lease.validate(self.cap,self.worker_id)
         except LeaseError: raise NotSent("Run lease is no longer valid") from None
-        address=ipaddress.ip_address(pinned)
-        sock=socket.socket(socket.AF_INET6 if address.version==6 else socket.AF_INET,socket.SOCK_STREAM)
-        sock.settimeout(5)
-        with self.socket_lock:
-            if self.revoked.is_set(): sock.close();raise NotSent("Egress revoked before the request was sent")
-            self.sockets.add(sock)
-        conn=None
-        expired=threading.Event()
-        def expire():
-            # Per-operation timeouts let a target trickle bytes forever; the deadline bounds the whole exchange.
-            expired.set()
-            with self.socket_lock:
-                try: sock.shutdown(socket.SHUT_RDWR)
-                except OSError: pass
-        remaining=(deadline or time.monotonic()+BROKER_DEADLINE)-time.monotonic()
-        if remaining<=0:
-            with self.socket_lock: self.sockets.discard(sock)
-            sock.close();raise NotSent("The request deadline passed before the request was sent")
-        # A connect cannot outlast the deadline either; a shutdown before it connects would not stop it.
-        sock.settimeout(min(5,remaining))
-        watchdog=threading.Timer(remaining,expire);watchdog.daemon=True
-        watchdog.start()
+        remaining=BROKER_DEADLINE if deadline is None else deadline-time.monotonic()
         try:
-            try:
-                sock.connect((pinned,port))
-                if scheme=="https":
-                    secure=ssl.create_default_context().wrap_socket(sock,server_hostname=host,do_handshake_on_connect=False)
-                    with self.socket_lock:
-                        self.sockets.discard(sock);sock=secure
-                        if self.revoked.is_set(): sock.close();raise NotSent("Egress revoked before the request was sent")
-                        self.sockets.add(sock)
-                    secure.do_handshake()
-                sock.settimeout(5)
-            except OSError:
-                raise NotSent("Target connection failed before the request was sent") from None
-            if expired.is_set():
-                # The deadline passed while connecting; nothing has been sent yet.
-                raise NotSent("The request deadline passed before the request was sent")
-            conn=http.client.HTTPConnection(host,port,timeout=5)
-            # The TLS socket is set by hand, so the Host header must not name the default HTTPS port.
-            conn.default_port=443 if scheme=="https" else 80
-            conn.sock=sock
-            conn.request(method,path,body=body or None,headers=headers)
-            response=conn.getresponse()
-            deployment_header=self.manifest.get("deployment_header")
-            if deployment_header and response.getheader(deployment_header)!=self.manifest.get("deployment_id"):
-                self.policy_blocked="Deployment identity changed or was not present"
+            response=_target_transport.send_pinned_request(
+                scheme,host,port,pinned,method,path,headers,body,
+                timeout=remaining,max_response_bytes=MAX_BODY,
+                deployment_header=self.manifest.get("deployment_header"),
+                deployment_id=self.manifest.get("deployment_id"),
+                egress=(self.sockets,self.socket_lock,self.revoked),
+            )
+        except _target_transport.TransportRefused as exc:
+            reason=BROKER_REFUSALS[exc.rule]
+            if not exc.delivered:
+                raise NotSent(reason) from None
+            if exc.rule=="deployment_changed":
+                self.policy_blocked=reason
                 self.deployment_changed=True
-                raise Unusable(self.policy_blocked,response.status)
-            if 300<=response.status<400: raise Unusable("Target answered with a redirect; redirects are never followed",response.status)
-            if response.getheader("Content-Encoding","identity").lower() not in {"","identity"}: raise Unusable("Compressed response denied",response.status)
-            length=response.getheader("Content-Length")
-            if length is not None and (not length.isdigit() or int(length)>MAX_BODY): raise Unusable("Response size denied",response.status)
-            # A HEAD answer and these statuses carry no body, whatever Content-Length announces.
-            bodiless=method=="HEAD" or response.status in {204,304}
-            data=b"" if bodiless else response.read(MAX_BODY+1)
-            if len(data)>MAX_BODY or (not bodiless and length is not None and len(data)!=int(length)): raise Unusable("Incomplete or oversized response",response.status)
-            try: text=data.decode("utf-8")
-            except UnicodeDecodeError: raise Unusable("Response body is not UTF-8",response.status) from None
-            return {"status_code":response.status,"body":text,"complete":True,"peer_ip":pinned,
-                    "headers":{"Content-Type":response.getheader("Content-Type","application/json")}}
-        finally:
-            watchdog.cancel()
-            if conn: conn.close()
-            with self.socket_lock: self.sockets.discard(sock)
-            sock.close()
+            raise Unusable(reason,exc.status_code) from None
+        return {"status_code":response["status_code"],"body":response["body"],"complete":True,"peer_ip":response["peer_ip"],
+                "headers":{"Content-Type":response["content_type"]}}
 
     def broker_request(self,request):
         deadline=time.monotonic()+BROKER_DEADLINE
@@ -541,14 +518,8 @@ class Supervisor:
                     secrets.append(value)
                     result["capture_success"]=True
             secrets.extend(self.sessions.values())
-            # A target may reflect another identity's credential; the sandboxed tool must not see that either.
-            from adapters import credential_env_allowed,secret_forms
-            for profile in self.manifest.get("auth_profiles",[]):
-                key=profile.get("credential_env","")
-                if credential_env_allowed(key) and os.environ.get(key):
-                    secrets.append(os.environ[key])
-            for secret in sorted({form for value in secrets for form in secret_forms(value)},key=len,reverse=True):
-                result["body"]=result["body"].replace(secret,"[REDACTED_CREDENTIAL]")
+            # A target may reflect another identity's or model's credential; the sandboxed tool must not see that either.
+            result["body"]=_target_transport.redact_credentials(result["body"],self.manifest,extra_secrets=secrets)
             self.lease.finish_dispatch(self.cap,self.worker_id,rid,sealed_dispatch,result)
             self.broker_observations.append({**record,"status_code":result["status_code"],"body":result["body"],"peer_ip":result["peer_ip"],"complete":True,"capture_success":result.get("capture_success") is True,"body_sha256":hashlib.sha256(result["body"].encode()).hexdigest()})
         except Exception:

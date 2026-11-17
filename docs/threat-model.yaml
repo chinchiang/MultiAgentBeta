@@ -72,7 +72,7 @@ assets:
   - id: a-target-creds
     name: 目標認證（auth_profiles 引用的 VIBEAUDIT_* 環境變數）
     sensitivity: secret
-    store: 只在 host 上黑箱任務的 supervisor 環境（worker_runtime.py:76-99、473-482）；白箱任務的 supervisor 不帶，也不進任何容器
+    store: 只在 host 上黑箱任務的 supervisor 環境（worker_runtime.py:76-99、458-467）；白箱任務的 supervisor 不帶，也不進任何容器
   - id: a-model-keys
     name: 模型 API 金鑰（model profile 引用的 VIBEAUDIT_* 環境變數）
     sensitivity: secret
@@ -96,7 +96,7 @@ assets:
   - id: a-docker
     name: Docker daemon 存取（等同 host root）
     sensitivity: secret
-    store: 控制帳號與 supervisor（/var/run/docker.sock，worker_entry.py:66-76）
+    store: 控制帳號與 supervisor（/var/run/docker.sock，worker_entry.py:64-74）
 
 components:
   - { id: c-operator,     name: 操作者瀏覽器（React 工作台）,                                         kind: browser,          zone: z-operator }
@@ -104,7 +104,7 @@ components:
   - { id: c-db,           name: PostgreSQL（job／lease 帳本、checkpoint、證據）,                        kind: db,               zone: z-control }
   - { id: c-supervisor,   name: 獨立 supervisor／broker（持有目標憑證、IP 釘選、dispatch 帳本、lease）, kind: worker,           zone: z-control }
   - { id: c-collector,    name: effect collector／mock sink（在控制台處理程序內執行，目標以 bearer capability 送事件；effect_collector.py:188-225）,         kind: worker,           zone: z-control }
-  - { id: c-docker,       name: Docker Engine（supervisor 建立與清理 worker；控制台查詢 /info 與映像，worker_runtime.py:291-337）, kind: tool,             zone: z-host }
+  - { id: c-docker,       name: Docker Engine（supervisor 建立與清理 worker；控制台查詢 /info 與映像，worker_runtime.py:276-322）, kind: tool,             zone: z-host }
   - { id: c-wb-worker,    name: whitebox worker（semgrep、gitleaks、OSV；唯讀 /src、UID 65532、network none）, kind: worker,  zone: z-sandbox }
   - { id: c-bb-worker,    name: blackbox worker（ZAP、Schemathesis、Playwright、promptfoo、PyRIT；UID 65533、network none、Unix socket relay）, kind: worker, zone: z-sandbox }
   - { id: c-target,       name: 操作者提供的 staging 目標（target_url + allowed_target_ips）,          kind: external_service, zone: z-target }
@@ -201,7 +201,7 @@ agents:
   - id: c-test-designer
     accesses_private_data: true          # 整份威脅模型、target_url、操作者備註（service.py:785）。威脅模型由讀過整份快照的 threat_modeler 寫成：source_refs／control_evidence 是與快照逐字相符的引用（每則至多 2000 字），invariant、impact、assumptions、需求敘述等其他自由文字不經逐字核對（contracts.py:22-25、54-109；service.py:702-703）
     exposed_to_untrusted_content: true   # 間接：威脅模型由讀過受測 repo 的模型產生（repo → reviewers → threat_modeler → test_designer）
-    can_communicate_externally: true     # 它設計的案例經 case_gate、authorize 與 supervisor 後真的送到目標（service.py:785-792、policy.py:122-205、worker_entry.py:324-407）
+    can_communicate_externally: true     # 它設計的案例經 case_gate、authorize 與 supervisor 後真的送到目標（service.py:785-792、policy.py:122-205、worker_entry.py:344-427）
     tools: []                            # 沒有函式工具；「送出」發生在確定性程式依它的輸出派發請求
     high_impact_tools: [sealed_case_http_dispatch]   # 它設計的封存案例由確定性程式派發為送往目標的 HTTP 請求；live 時須經操作者核准（service.py:809-812、policy.py:191-193）
     # 設計上的控制（見 t-indirect-injection、t-model-identity）：method/path（含 query）須完全符合操作者的 allowed_requests；
@@ -244,11 +244,11 @@ threats:
       （request_rules.py:55-64）。2026-10-07 起再收窄：模型設計的請求只能用操作者在 allowed_requests[].model_headers 為該 method
       與 path 明列的值，清單只能是上述詞彙的子集（request_rules.py:67-95；RunInput 驗證 domain.py:132-135）；沒有清單的端點，
       模型設計的請求不能帶任何 header，所以預設沒有 header 選擇。清單由 case_gate 與 supervisor 依請求的 method 與 path 檢查；不受信任的 worker 拿到的 manifest 不含 allowed_requests，只檢查固定詞彙，不是這道控制的一環。supervisor 為本文補上的 Content-Type 屬傳輸層，不算模型選擇
-      （adapters.py:363-426；worker_entry.py:389-397）。header 名稱只有一種拼法（Accept、Accept-Language…），大小寫不同的重複名稱在設計階段即拒絕，
+      （adapters.py:363-426；worker_entry.py:409-417）。header 名稱只有一種拼法（Accept、Accept-Language…），大小寫不同的重複名稱在設計階段即拒絕，
       依名稱排序送出（request_rules.py:32-33、98-112；service.py:791-801）：大小寫、重複與順序都不再是模型的選擇。
       case_gate 先擋（request_rules.py:300-304）；目標前最後一個受信任的節點 supervisor 依請求計畫裡這一步的來源，再以模型詞彙與操作者清單重驗
-      （worker_entry.py:384-403），不只靠不受信任容器內的檢查。fixture 路徑上，模型撰寫的本文只送往操作者在 allowed_requests
-      標 model_body 的端點（規則只在 request_rules.py:283-288，記進請求計畫每一步的 body_permitted；service.py:844 依案例那一步擋下；supervisor 再擋一次，worker_entry.py:385-389）。整組封存案例須經操作者
+      （worker_entry.py:404-423），不只靠不受信任容器內的檢查。fixture 路徑上，模型撰寫的本文只送往操作者在 allowed_requests
+      標 model_body 的端點（規則只在 request_rules.py:283-288，記進請求計畫每一步的 body_permitted；service.py:844 依案例那一步擋下；supervisor 再擋一次，worker_entry.py:405-409）。整組封存案例須經操作者
       核准（核准綁定案例雜湊收據），之後才發出第一個請求（service.py:197-211、809-812）；執行 capability 本身也要求這份核准
       （policy.py:191-193），不只靠 black-box 階段的順序。身分只能是 model_selectable 的測試身分
       （見 t-model-identity）。
@@ -312,7 +312,7 @@ threats:
       引用），以及與它同值的變數，都不能當測試身分的憑證；預檢、supervisor 環境與送出前都會拒絕（adapters.py:77-88、129-144、404-405）。
       測試身分的憑證也比照辦理：run 自己指定 target_url，所以憑證只送往操作者在 VIBEAUDIT_TARGET_CREDENTIAL_ORIGINS 綁定的
       origin，預設不綁定；預檢列出未綁定的變數並拒絕（service.py:398-403），supervisor 環境不帶未綁定的值、只帶綁定設定本身
-      （worker_runtime.py:81-99），送出前再以環境的綁定核對一次（adapters.py:90-117、407-408）；該變數也列為保留設定（adapters.py:41-47）。
+      （worker_runtime.py:81-100），送出前再以環境的綁定核對一次（adapters.py:90-117、407-408）；該變數也列為保留設定（adapters.py:41-47）。
       2026-10-06 第 6 次 G4 identity 審查指出原本只綁定模型金鑰，已補上（行為變更，2026-10-06 @chinchiang 確認保留）。
       殘留：持有 session 的人仍可在已綁定的 origin 使用金鑰（耗用額度），也可用已綁定的測試身分對該 origin 送出 allowed_requests 內的請求。
     status: mitigated
@@ -328,7 +328,7 @@ threats:
       live 預檢拒絕同名或同值（service.py:382-385，shared_credentials 見 adapters.py:129-144）；環境綁定為模型金鑰的變數一律算模型
       憑證，不論本 run 的模型是否引用（adapters.py:77-88）。送出前再擋（adapters.py:404-405）：supervisor 收到的 manifest 帶有模型
       憑證的名稱（不含值），所以這一層在送到目標前的最後一個受信任節點也有效（worker_runtime.py:66-73）；supervisor 的環境也不帶
-      與模型金鑰同值的目標憑證（worker_runtime.py:81-99）。
+      與模型金鑰同值的目標憑證（worker_runtime.py:81-100）。
     status: mitigated
     gate: G4
   - id: t-target-internal
@@ -378,12 +378,12 @@ threats:
       raw staging（含機密檔），把內容寫進掃描結果，經控制台送進模型輸入與匯出。
     mitigation: >-
       UID 65532、--cap-drop ALL、no-new-privileges、--read-only、network none、pids／記憶體／CPU 限制、不掛 docker socket、
-      --pull never（worker_runtime.py:243-271）。白箱任務不啟動 broker、不掛 /broker，其 supervisor 也不帶目標範圍、測試身分與憑證
-      （worker_entry.py:604、worker_runtime.py:76-79、257、473-482），解析惡意 repo 的容器沒有可連的 supervisor 請求通道。Docker daemon 沒有套用 seccomp profile（或為 unconfined）時 runtime 拒絕上線，
-      並把 AppArmor、userns、rootless 等安全選項記入 run（worker_runtime.py:305-312）。掃描結果只是聲明：標題由 harness 依自己的規則檔
+      --pull never（worker_runtime.py:228-256）。白箱任務不啟動 broker、不掛 /broker，其 supervisor 也不帶目標範圍、測試身分與憑證
+      （worker_entry.py:573、worker_runtime.py:76-79、242、458-467），解析惡意 repo 的容器沒有可連的 supervisor 請求通道。Docker daemon 沒有套用 seccomp profile（或為 unconfined）時 runtime 拒絕上線，
+      並把 AppArmor、userns、rootless 等安全選項記入 run（worker_runtime.py:290-297）。掃描結果只是聲明：標題由 harness 依自己的規則檔
       或固定文字產生，不採用容器回傳的訊息。rule ID 只接受 harness 列得出來的名稱：semgrep 是 harness 規則集內的規則，gitleaks 是
       釘選映像 8.30.1 的 222 條預設規則（fixtures/gitleaks-default-rule-ids.txt，納入 tool manifest 雜湊），OSV 是已驗證雜湊的離線
-      資料庫 all.zip 內的紀錄 ID；其他一律記為 unrecognized-rule 並列為缺口（sandbox.py:82-139、202-204；worker_runtime.py:624-625；
+      資料庫 all.zip 內的紀錄 ID；其他一律記為 unrecognized-rule 並列為缺口（sandbox.py:82-139、202-204；worker_runtime.py:609-610；
       resource_manifest.py:19）。發現先去重並依檔案、行號、規則排序，順序與重複不帶資訊（sandbox.py:198-201）。檔案路徑須在
       staging 清單內並經遮罩，行號不得超過 staging 副本中該檔的行數（副本雜湊不符即不採計），否則整筆不匯入並記為缺口，證據也只
       保存收斂後的結果（service.py:490-510；staging.py:146-159；service.py:658-665）。
@@ -399,20 +399,20 @@ threats:
     category: MAESTRO-L4
     target: c-bb-worker
     description: >-
-      受測 repo 的作者也可能掌控目標：目標回應經 supervisor 原樣交回黑箱容器（worker_entry.py:571-573），由 ZAP、Schemathesis、
+      受測 repo 的作者也可能掌控目標：目標回應經 supervisor 原樣交回黑箱容器（worker_entry.py:540-542），由 ZAP、Schemathesis、
       Playwright、promptfoo、PyRIT 解析（tool_runners.py:154-225），可能利用解析器漏洞在容器內執行程式；容器的結果與 base64
-      artifact 再回到控制台被解碼解析，含 XML（worker_runtime.py:222-240、593、tool_runners.py:228-287；格式錯誤的結果判 execution_error，仍保留 supervisor 紀錄）。
+      artifact 再回到控制台被解碼解析，含 XML（worker_runtime.py:207-225、578、tool_runners.py:228-287；格式錯誤的結果判 execution_error，仍保留 supervisor 紀錄）。
     mitigation: >-
       黑箱容器沿用 whitebox 的隔離設定，並只能經 broker 與 supervisor 通訊（見 t-container-escape、t-broker-token）。容器結果只是聲明：
-      控制台只採信 supervisor 自己記錄的欄位（SUPERVISED_FIELDS，worker_runtime.py:125-129）；工具 XML 先以 expat 掃描，
+      控制台只採信 supervisor 自己記錄的欄位（SUPERVISED_FIELDS，worker_runtime.py:110-114）；工具 XML 先以 expat 掃描，
       任何編碼下有 DTD 或 entity 宣告即拒絕（tool_runners.py:32-50、261-263）。http_case 由 supervisor 固定請求序列：依序送各 positive control，再送案例本身，每個 task 一次；
-      control 未達成就停止，順序與次數都不是容器的選擇（worker_entry.py:279-289、338-344、557-563）。http_case 的容器只拿到送出與
+      control 未達成就停止，順序與次數都不是容器的選擇（worker_entry.py:299-309、358-364、526-532）。http_case 的容器只拿到送出與
       判定所需的欄位（method、path、headers、body、identity、oracle、control 的 required_text，以及請求計畫裡案例自己那一步，
       用來判斷會不會改變狀態），不含標題、威脅與需求 ID，control
       名稱改為 control-N；fixture 路徑的 request_sequence 由 supervisor 與控制台判定，容器只拿案例 ID 與各 step 的請求（method、path、
       headers、identity、body），標籤改為 step-N，不含 oracle，也不含 step 的預期狀態與 required_text；supervisor 在未達成的 step
       停止並以 502 拒絕下一個請求，控制台再依 supervisor 的紀錄逐步重驗，容器自報的 completed 不能讓失敗的 reset／cleanup 過關
-      （worker_entry.py:174-177、291-317、606、798；worker_runtime.py:173-207）。tool 任務只跑操作者自填的案例，照原樣交給容器。
+      （worker_entry.py:194-197、311-337、575、767；worker_runtime.py:158-192）。tool 任務只跑操作者自填的案例，照原樣交給容器。
       模型寫的 forbidden_text 與 required_text 每項至多 120 字（contracts.py:182）。
       殘留：(1) 容器逃逸同 t-container-escape（已接受）。(2) 若目標回應攻陷了 http_case 的容器，容器內的程式仍知道模型寫的 oracle 與
       control 文字（每個案例至多約 26 KB）；fixture 路徑的容器只知道會送出的 step 請求（本文即送往 model_body 端點的內容）。兩者都可藉
@@ -479,7 +479,7 @@ threats:
     category: STRIDE-S
     target: c-bb-worker
     description: >-
-      broker socket 為 0666，broker token 放在工具可讀的 0444 task 檔（worker_entry.py:484-606），容器內任何處理程序都能向
+      broker socket 為 0666，broker token 放在工具可讀的 0444 task 檔（worker_entry.py:458-575），容器內任何處理程序都能向
       supervisor 送請求。
     mitigation: supervisor 對每個請求比對 sealed case 的 method、path、header、body 與身分，並檢查 lease 與預算；token 不是防線。
     status: mitigated
