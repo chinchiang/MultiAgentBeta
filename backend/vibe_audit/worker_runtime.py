@@ -100,24 +100,9 @@ def _client_env(manifest):
 
 
 def redact_credentials(value,manifest):
-    """Remove every configured target and model credential, raw or JSON-escaped, from a worker result."""
-    found=set()
-    for profile in [*manifest.get("auth_profiles",[]),*manifest.get("models",[])]:
-        key=profile.get("credential_env","")
-        if isinstance(key,str) and re.fullmatch(r"VIBEAUDIT_[A-Z0-9_]+",key) and os.environ.get(key):
-            from .adapters import secret_forms
-            found.update(secret_forms(os.environ[key]))
-    # Longest first, so a credential that contains another is not left half visible.
-    values=sorted(found,key=len,reverse=True)
-    def redact(item):
-        if isinstance(item,str):
-            for secret in values: item=item.replace(secret,"[REDACTED_CREDENTIAL]")
-        elif isinstance(item,bytes):
-            for secret in values: item=item.replace(secret.encode(),b"[REDACTED_CREDENTIAL]")
-        elif isinstance(item,list): return [redact(v) for v in item]
-        elif isinstance(item,dict): return {k:redact(v) for k,v in item.items()}
-        return item
-    return redact(value) if values else value
+    """Remove every configured target, model and environment-bound credential from a worker result."""
+    from .target_transport import redact_credentials as _redact
+    return _redact(value,manifest)
 
 
 # Set by the supervisor or controller. Any other key in a worker result is only the worker's claim,

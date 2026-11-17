@@ -169,3 +169,11 @@ def test_chinese_report_shows_the_run_error_in_chinese():
     run["error"] = "Model call budget exhausted"
     assert "錯誤：模型呼叫預算已用完" in report_markdown(run, "zh-Hant")
     assert "Error: Model call budget exhausted" in report_markdown(run, "en")
+
+
+def test_broker_refusals_have_traditional_chinese_wording():
+    from vibe_audit.worker_entry import BROKER_REFUSALS
+    assert len(BROKER_REFUSALS) == 18
+    for rule, message in BROKER_REFUSALS.items():
+        chinese = zh(message)
+        assert chinese is not None and CJK.search(chinese), (rule, message, chinese)

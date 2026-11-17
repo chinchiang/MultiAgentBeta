@@ -439,11 +439,12 @@ async def test_pre_send_revocation_is_known_not_unknown(runtime,monkeypatch):
     revocation or lease expiry before the request is sent stays a known outcome."""
     import sys
     import vibe_audit.adapters as adapters_module
-    from vibe_audit import lease as lease_module
+    from vibe_audit import lease as lease_module, target_transport as transport_module
     from vibe_audit.worker_entry import NotSent,Supervisor
     monkeypatch.setitem(sys.modules,"adapters",adapters_module)
     # The worker runs these modules flat in production; map them so the same class objects are compared here.
     monkeypatch.setitem(sys.modules,"lease",lease_module)
+    monkeypatch.setitem(sys.modules,"target_transport",transport_module)
     sup=Supervisor.__new__(Supervisor)
     sup.manifest=manifest()
     sup.lease=runtime.leases
@@ -872,10 +873,11 @@ def test_a_runtime_profile_cannot_select_the_unisolated_process_backend(tmp_path
 def test_a_trickling_target_cannot_hold_a_request_past_its_deadline(runtime,monkeypatch):
     """Each read gets a fresh 5s socket timeout, so only an overall deadline stops a target sending a byte every few seconds."""
     import vibe_audit.adapters as adapters_module
-    from vibe_audit import lease as lease_module
+    from vibe_audit import lease as lease_module, target_transport as transport_module
     from vibe_audit.worker_entry import Supervisor
     monkeypatch.setitem(sys.modules,"adapters",adapters_module)
     monkeypatch.setitem(sys.modules,"lease",lease_module)
+    monkeypatch.setitem(sys.modules,"target_transport",transport_module)
     stop=threading.Event()
     class Slow(BaseHTTPRequestHandler):
         def log_message(self,*args):pass
@@ -931,3 +933,142 @@ def test_docker_api_version_is_negotiated_with_the_daemon(monkeypatch,server,exp
     else:
         module.docker_api("GET","/info");module.docker_api("GET","/info")
         assert calls==["/version",expected,expected]
+
+
+def test_supervisor_forward_delegates_to_target_transport_and_refuses_non_ascii_length(runtime,monkeypatch):
+    import vibe_audit.adapters as adapters_module
+    from vibe_audit import lease as lease_module, target_transport as transport_module
+    from vibe_audit.target_transport import TransportRefused
+    from vibe_audit.worker_entry import BROKER_REFUSALS, NotSent, Supervisor, Unusable
+    monkeypatch.setitem(sys.modules,"adapters",adapters_module)
+    monkeypatch.setitem(sys.modules,"lease",lease_module)
+    monkeypatch.setitem(sys.modules,"target_transport",transport_module)
+
+    raw_listener=socket.socket()
+    raw_listener.bind(("127.0.0.1",0))
+    raw_listener.listen()
+    port=raw_listener.getsockname()[1]
+    replies=[
+        "HTTP/1.1 200 OK\r\nContent-Length: ۱۲\r\nConnection: close\r\n\r\n123456789012".encode("utf-8"),
+        b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Type: text/plain\r\nX-Deploy: v1\r\nConnection: close\r\n\r\nok",
+        b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok",
+    ]
+
+    def serve_raw():
+        for wire in replies:
+            try:
+                conn,_=raw_listener.accept()
+            except OSError:
+                return
+            with conn:
+                conn.settimeout(2)
+                try:
+                    conn.recv(4096)
+                    conn.sendall(wire)
+                except OSError:
+                    pass
+
+    threading.Thread(target=serve_raw,daemon=True).start()
+    try:
+        sup=Supervisor.__new__(Supervisor)
+        sup.manifest={**manifest(f"http://127.0.0.1:{port}"),"deployment_header":"X-Deploy","deployment_id":"v1"}
+        sup.lease=runtime.leases;sup.worker_id="w"
+        sup.policy_blocked=None;sup.deployment_changed=False
+        sup.socket_lock=threading.Lock();sup.sockets=set();sup.revoked=threading.Event()
+        sup.cap=runtime.leases.issue(run_id="fwd-tt",case_hash="case",threat_hash="threat",manifest_hash="m",
+                                     max_requests=5,ttl_seconds=5,max_seconds=30,operation="http_case",repetition=0,spec_hash="s")
+        runtime.leases.claim(sup.cap,"w")
+
+        # Non-ASCII digit Content-Length ("۱۲", where str.isdigit() is True) is refused once X-Deploy matches;
+        # first test without deployment_header so Content-Length is reached directly.
+        sup.manifest=manifest(f"http://127.0.0.1:{port}")
+        with pytest.raises(Unusable) as non_ascii_exc:
+            sup.forward("GET","/private",{},b"")
+        assert (str(non_ascii_exc.value),non_ascii_exc.value.status_code)==("Response size denied",200)
+
+        # Matching deployment_header returns the supervisor response shape.
+        sup.manifest={**manifest(f"http://127.0.0.1:{port}"),"deployment_header":"X-Deploy","deployment_id":"v1"}
+        ok=sup.forward("GET","/private",{},b"")
+        assert ok=={"status_code":200,"body":"ok","complete":True,"peer_ip":"127.0.0.1","headers":{"Content-Type":"text/plain"}}
+
+        # Missing deployment_header sets policy_blocked and deployment_changed before raising Unusable.
+        with pytest.raises(Unusable) as dep_exc:
+            sup.forward("GET","/private",{},b"")
+        assert (str(dep_exc.value),dep_exc.value.status_code)==("Deployment identity changed or was not present",200)
+        assert sup.policy_blocked=="Deployment identity changed or was not present"
+        assert sup.deployment_changed is True
+
+        # Every TransportRefused rule maps deterministically to NotSent (pre-send) or Unusable (post-send).
+        pre_send={"invalid_allowed_ips","no_allowed_ips","refused_ip","dns_failed","unlisted_ip","revoked","connect_timeout","connect_failed"}
+        post_send={"timeout","protocol_error","deployment_changed","redirect","compressed","invalid_length","declared_too_large","body_too_large","incomplete_body","invalid_utf8"}
+        assert set(BROKER_REFUSALS)==pre_send|post_send
+        for rule in pre_send - {"invalid_allowed_ips","no_allowed_ips","refused_ip","dns_failed","unlisted_ip"}:
+            monkeypatch.setattr(transport_module,"send_pinned_request",
+                                lambda *a,**k: (_ for _ in ()).throw(TransportRefused(rule,delivered=False)))
+            with pytest.raises(NotSent) as exc_info:
+                sup.forward("GET","/private",{},b"")
+            assert str(exc_info.value)==BROKER_REFUSALS[rule]
+        for rule in ("invalid_allowed_ips","no_allowed_ips","refused_ip","dns_failed","unlisted_ip"):
+            monkeypatch.setattr(transport_module,"resolve_pinned_ip",
+                                lambda *a,**k: (_ for _ in ()).throw(TransportRefused(rule,delivered=False)))
+            with pytest.raises(NotSent) as exc_info:
+                sup.forward("GET","/private",{},b"")
+            assert str(exc_info.value)==BROKER_REFUSALS[rule]
+        monkeypatch.setattr(transport_module,"resolve_pinned_ip",lambda *a,**k:"127.0.0.1")
+        for rule in post_send:
+            status=None if rule in {"timeout","protocol_error"} else 206
+            monkeypatch.setattr(transport_module,"send_pinned_request",
+                                lambda *a,**k: (_ for _ in ()).throw(TransportRefused(rule,delivered=True,status_code=status)))
+            with pytest.raises(Unusable) as exc_info:
+                sup.forward("GET","/private",{},b"")
+            assert (str(exc_info.value),exc_info.value.status_code)==(BROKER_REFUSALS[rule],status)
+    finally:
+        raw_listener.close()
+
+
+def test_worker_runtime_and_supervisor_redaction_cover_bound_models_and_skip_reserved_settings(monkeypatch):
+    import vibe_audit.adapters as adapters_module
+    from vibe_audit import request_rules as rules_module, target_transport as transport_module
+    from vibe_audit.worker_entry import Supervisor
+    from vibe_audit.worker_runtime import redact_credentials
+    monkeypatch.setitem(sys.modules,"adapters",adapters_module)
+    monkeypatch.setitem(sys.modules,"request_rules",rules_module)
+    monkeypatch.setitem(sys.modules,"target_transport",transport_module)
+    monkeypatch.setenv("VIBEAUDIT_OPENAI_API_KEY","sk-bound-openai")
+    monkeypatch.setenv("VIBEAUDIT_EXTRA_MODEL","nim-bound/secret")
+    monkeypatch.setenv("VIBEAUDIT_MODEL_CREDENTIAL_ORIGINS","VIBEAUDIT_EXTRA_MODEL=https://llm.example")
+    monkeypatch.setenv("VIBEAUDIT_DATA_DIR","/var/lib/vibeaudit")
+
+    scope={"auth_profiles":[{"id":"reserved","credential_env":"VIBEAUDIT_DATA_DIR"}],"models":[]}
+    redacted=redact_credentials({"body":"leak sk-bound-openai and nim-bound%2Fsecret at /var/lib/vibeaudit"},scope)
+    assert redacted=={"body":"leak [REDACTED_CREDENTIAL] and [REDACTED_CREDENTIAL] at /var/lib/vibeaudit"}
+
+    sup=Supervisor.__new__(Supervisor)
+    case={"id":"C1","adapter":"http","method":"GET","path":"/private","identity":None,"headers":{},"body":None,"designed_by":"operator"}
+    sup.spec={"operation":"http_case","cases":[case],"run_id":"r"}
+    sup.manifest={"mode":"live","target_url":"http://127.0.0.1:9","allowed_target_ips":["127.0.0.1"],
+                  "allowed_requests":[{"method":"GET","path":"/private"}],**scope}
+    sup.task={"broker_token":"t"}
+    sup.cap={"ttl_seconds":5}
+    sup.worker_id="w"
+    sup.revoked=threading.Event()
+    sup.dispatch_lock,sup.grant_lock=threading.Lock(),threading.Lock()
+    sup.grants,sup.sessions,sup.broker_observations={},{("C1","slot"):"sess/tok-1"},[]
+    sup.sequence,sup.sequence_stopped=0,False
+    sup.policy_blocked,sup.unknown_dispatch=None,False
+    finished=[]
+
+    class DummyLease:
+        def validate(self,*a): pass
+        def reserve_dispatch(self,*a): pass
+        def finish_dispatch(self,*a): finished.append(a[-1])
+
+    sup.lease=DummyLease()
+    sup.emit=lambda value: (sup.grants[value["request_id"]].__setitem__(1,True),sup.grants[value["request_id"]][0].set()) if value.get("kind")=="request" else None
+    sup.forward=lambda *a,**k: {"status_code":200,"body":"echo sk-bound-openai nim-bound\\/secret sess%2Ftok-1 /var/lib/vibeaudit",
+                                "complete":True,"peer_ip":"127.0.0.1","headers":{"Content-Type":"text/plain"}}
+    out=sup.broker_request({"broker_token":"t","case_id":"C1","method":"GET","path":"/private","identity":None,"headers":{},"body_b64":""})
+    expected_body="echo [REDACTED_CREDENTIAL] [REDACTED_CREDENTIAL] [REDACTED_CREDENTIAL] /var/lib/vibeaudit"
+    assert out["body"]==expected_body
+    assert finished[0]["body"]==expected_body
+    assert sup.broker_observations[0]["body"]==expected_body

@@ -6,7 +6,7 @@ import sys
 
 import pytest
 
-from vibe_audit import adapters, request_rules
+from vibe_audit import adapters, request_rules, target_transport
 from vibe_audit.adapters import AdapterBlocked, _prepare_request
 from vibe_audit.request_rules import canonical_model_headers, case_headers_allowed
 
@@ -97,6 +97,7 @@ def test_model_header_choices_that_mean_the_same_look_the_same():
 def model_supervisor(monkeypatch, *, model_body=False, designed_by="model", headers=None, model_headers=None, bodiless=False):
     monkeypatch.setitem(sys.modules, "adapters", adapters)
     monkeypatch.setitem(sys.modules, "request_rules", request_rules)
+    monkeypatch.setitem(sys.modules, "target_transport", target_transport)
     instance = Supervisor.__new__(Supervisor)
     listed = {"Accept": ["application/json"]} if model_headers is None else model_headers
     entry = {"method": "POST", "path": "/chat", **({"model_body": True} if model_body else {}),
@@ -155,6 +156,7 @@ def test_supervisor_sends_the_sealed_body_not_the_worker_spelling_of_it(monkeypa
 def test_supervisor_applies_the_header_list_to_model_steps_of_a_sequence_only(monkeypatch):
     monkeypatch.setitem(sys.modules, "adapters", adapters)
     monkeypatch.setitem(sys.modules, "request_rules", request_rules)
+    monkeypatch.setitem(sys.modules, "target_transport", target_transport)
     supervisor = Supervisor.__new__(Supervisor)
     supervisor.manifest = {"auth_profiles": [], "allowed_requests": [
         {"method": "GET", "path": "/fixture"}, {"method": "GET", "path": "/private", "model_headers": {"Accept": ["text/html"]}}]}
@@ -184,6 +186,7 @@ def planned_sequence_supervisor(monkeypatch, steps):
     """A request_sequence supervisor for a model case with one control on /fixture, where the engine also probes /fixture."""
     monkeypatch.setitem(sys.modules, "adapters", adapters)
     monkeypatch.setitem(sys.modules, "request_rules", request_rules)
+    monkeypatch.setitem(sys.modules, "target_transport", target_transport)
     supervisor = Supervisor.__new__(Supervisor)
     supervisor.manifest = {"auth_profiles": [], "allowed_requests": [
         {"method": "GET", "path": "/fixture"}, {"method": "GET", "path": "/leak"},
@@ -434,6 +437,7 @@ def sequence_supervisor(monkeypatch, *, results):
     import threading
     monkeypatch.setitem(sys.modules, "adapters", adapters)
     monkeypatch.setitem(sys.modules, "request_rules", request_rules)
+    monkeypatch.setitem(sys.modules, "target_transport", target_transport)
     instance = Supervisor.__new__(Supervisor)
     controls = [{"name": f"secret control name {n}", "method": "GET", "path": f"/fixture{n}", "identity": None,
                  "expected_status": 200, "required_text": ["CANARY"]} for n in (1, 2)]

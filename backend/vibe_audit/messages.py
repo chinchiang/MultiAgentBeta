@@ -443,6 +443,20 @@ ZH.update({
     "Threat references an unknown graph object": "威脅引用了不存在的資產或資料流",
 })
 
+# Supervisor broker refusals (worker_entry.py BROKER_REFUSALS).
+ZH.update({
+    "Target address could not be resolved within the allowed IPs": "目標位址無法在允許的 IP 範圍內解析",
+    "Egress revoked before the request was sent": "請求送出前已撤銷對外連線權限",
+    "Target connection failed before the request was sent": "請求送出前連線至目標失敗",
+    "Target response was incomplete": "目標回應不完整",
+    "Deployment identity changed or was not present": "部署識別已變更或未提供",
+    "Target answered with a redirect; redirects are never followed": "目標以轉址回應；系統一律不跟隨轉址",
+    "Compressed response denied": "已拒絕壓縮的回應",
+    "Response size denied": "已拒絕回應大小",
+    "Incomplete or oversized response": "回應不完整或超過大小上限",
+    "Response body is not UTF-8": "回應本文不是 UTF-8",
+})
+
 PATTERNS = [
     (r"Challenger: dropped (\d+) challenge\(s\) naming a finding that does not exist", "反證審查員：捨棄 {0} 項指向不存在發現的反證"),
     (r"Model request failed \(([A-Za-z0-9_ <-]+)\); response and error body withheld; billed usage may be unknown", "模型請求失敗（{0}）；回應與錯誤內容不予顯示；計費用量可能不明"),

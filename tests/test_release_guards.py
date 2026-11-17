@@ -8,7 +8,7 @@ import sys
 import pytest
 
 from fakes import FakePort, answer_with
-from vibe_audit import adapters, request_rules
+from vibe_audit import adapters, request_rules, target_transport
 from vibe_audit.domain import RunInput
 from vibe_audit.policy import PolicyError
 from vibe_audit.service import Engine, report_markdown
@@ -19,6 +19,7 @@ from vibe_audit.worker_entry import Supervisor, without_host_paths
 def supervisor(monkeypatch):
     monkeypatch.setitem(sys.modules, "adapters", adapters)
     monkeypatch.setitem(sys.modules, "request_rules", request_rules)
+    monkeypatch.setitem(sys.modules, "target_transport", target_transport)
     instance = Supervisor.__new__(Supervisor)
     instance.manifest = {"allowed_requests":[{"method":"POST","path":"/resource"}],"auth_profiles":[]}
     instance.spec = {"operation":"tool","cases":[{"id":"C1","method":"POST","path":"/resource",
