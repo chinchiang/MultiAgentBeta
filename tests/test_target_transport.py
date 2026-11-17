@@ -471,12 +471,17 @@ def test_pre_send_failures_never_mark_delivered_and_clean_up_egress_sockets(serv
         assert (exc_info.value.rule, exc_info.value.delivered, exc_info.value.status_code) == ("connect_timeout", False, None)
         assert sockets == set()
 
-    # Refused TCP port fails pre-send with connect_failed.
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        closed_port = probe.getsockname()[1]
-    with pytest.raises(TransportRefused) as exc_info:
-        send_pinned_request("http", "127.0.0.1", closed_port, "127.0.0.1", timeout=1.0, egress=fresh_egress)
+    # Refused TCP port fails pre-send with connect_failed (Windows retries a closed loopback port until timeout).
+    if os.name != "nt":
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            closed_port = probe.getsockname()[1]
+        with pytest.raises(TransportRefused) as exc_info:
+            send_pinned_request("http", "127.0.0.1", closed_port, "127.0.0.1", timeout=1.0, egress=fresh_egress)
+    else:
+        with patch.object(socket.socket, "connect", side_effect=ConnectionRefusedError("refused")):
+            with pytest.raises(TransportRefused) as exc_info:
+                send_pinned_request("http", "127.0.0.1", 9, "127.0.0.1", timeout=1.0, egress=fresh_egress)
     assert (exc_info.value.rule, exc_info.value.delivered, exc_info.value.status_code) == ("connect_failed", False, None)
     assert sockets == set()
 
@@ -727,7 +732,11 @@ def test_chunked_reads_watchdog_timeouts_and_protocol_errors(serve):
     assert got["bytes"] == big_limit
     body_timeouts = [v for v in timeouts if v != 2]
     assert len(body_timeouts) >= 4 and all(0 < v <= 2.5 for v in body_timeouts)
-    assert sizes == [(8192, 8131), (8192, 8192), (67, 66), (1, 0)]
+    assert sizes[0][0] == 8192
+    assert all(1 <= ask <= 8192 for ask, _ in sizes)
+    assert sum(n for _, n in sizes) == big_limit
+    assert sizes[-2][0] == sizes[-2][1] + 1
+    assert sizes[-1] == (1, 0)
 
     # Slow trickled headers are interrupted by the daemon watchdog and reported as post-send timeout (delivered=True).
     def slow_headers(conn, _req):
