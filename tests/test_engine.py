@@ -1057,7 +1057,7 @@ async def test_unknown_provider_usage_persists_and_blocks_resume_after_restart(e
 @pytest.mark.parametrize("control_permission",[None,"POST","GET"])
 async def test_positive_control_needs_exact_scope_and_sealed_case_authorization(engine,monkeypatch,control_permission):
     """Exercise service→adapter→policy with synthetic HTTP, never a real target."""
-    from vibe_audit import adapters
+    from vibe_audit import adapters, target_transport
     run=await finished_demo(engine)
     run.update(mode="live",status="running",stage="blackbox",executions=[])
     manifest=run["manifest"]
@@ -1086,12 +1086,13 @@ async def test_positive_control_needs_exact_scope_and_sealed_case_authorization(
     run["usage"]["requests"]=0
     arm_attempt(engine,run)
     dispatched=[]
-    def synthetic_request(scheme,host,port,pinned,method,path,*rest):
+    def synthetic_request(scheme,host,port,pinned,method="GET",path="/",*rest,**kwargs):
         dispatched.append((method,path))
-        return {"complete":True,"status_code":200 if path=="/fixture-private" else 403,
-                "body":"B-PRIVATE-CANARY" if path=="/fixture-private" else "Forbidden"}
-    monkeypatch.setattr(adapters,"_request",synthetic_request)
-    monkeypatch.setattr(adapters,"_pinned_address",lambda *args:"127.0.0.1")
+        body="B-PRIVATE-CANARY" if path=="/fixture-private" else "Forbidden"
+        return {"status_code":200 if path=="/fixture-private" else 403,"body":body,"bytes":len(body),
+                "peer_ip":pinned,"content_type":"text/plain"}
+    monkeypatch.setattr(target_transport,"send_pinned_request",synthetic_request)
+    monkeypatch.setattr(target_transport,"resolve_pinned_ip",lambda *args:"127.0.0.1")
     class ContractRuntime:
         async def run_case(self,manifest,case,**kwargs):
             kwargs.pop("repetition",None)
@@ -1155,14 +1156,14 @@ def approve(run):
 
 @pytest.mark.parametrize("provenance",["model","retest","operator"])
 async def test_model_designed_post_cannot_declare_itself_read_only(engine,monkeypatch,provenance):
-    from vibe_audit import adapters
+    from vibe_audit import adapters, target_transport
     run=await live_post_case(engine,adapter="http",provenance=provenance)
     dispatched=[]
-    def synthetic_request(scheme,host,port,pinned,method,path,*rest):
+    def synthetic_request(scheme,host,port,pinned,method="GET",path="/",*rest,**kwargs):
         dispatched.append((method,path))
-        return {"complete":True,"status_code":403,"body":"Forbidden"}
-    monkeypatch.setattr(adapters,"_request",synthetic_request)
-    monkeypatch.setattr(adapters,"_pinned_address",lambda *args:"127.0.0.1")
+        return {"status_code":403,"body":"Forbidden","bytes":9,"peer_ip":pinned,"content_type":"text/plain"}
+    monkeypatch.setattr(target_transport,"send_pinned_request",synthetic_request)
+    monkeypatch.setattr(target_transport,"resolve_pinned_ip",lambda *args:"127.0.0.1")
     class ContractRuntime:
         async def run_case(self,manifest,case,**kwargs):
             kwargs.pop("repetition",None)

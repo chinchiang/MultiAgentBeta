@@ -9,7 +9,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator
 from .request_rules import HTTP_METHODS, RequestRefused, check_request, model_header_list_error
-from .adapters import RESERVED_ENV, format_origin, parse_origin, target_ip_refused
+from .adapters import format_origin, parse_origin
+from .target_transport import RESERVED_ENV, target_ip_refused
 from .contracts import OperatorCase, SecurityRequirement
 
 

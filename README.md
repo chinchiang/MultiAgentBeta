@@ -121,7 +121,7 @@ MultiAgentBeta/
 │   ├── catalog.py                 #   標準 ID 與來源釘選
 │   ├── contracts.py / policy.py   #   案例契約；manifest、白箱、威脅、案例閘門與 authorize
 │   ├── domain.py / schemas.py     #   資料模型與 JSON schema
-│   ├── adapters.py                #   受控 HTTP 傳輸、IP 釘選、oracle 評估
+│   ├── adapters.py                #   origin 與憑證綁定、請求組裝、有界案例執行與 oracle 評估
 │   ├── target_transport.py        #   鎖定數值 IP 的單跳 HTTP(S) 傳輸與統一憑證遮罩
 │   ├── request_rules.py           #   請求規則：送往目標的請求能長什麼樣、能不能送出（header、路徑、身分、scope、來源）
 │   ├── fixture_protocol.py        #   reset／setup／cleanup 協定、測試身分
@@ -329,7 +329,7 @@ MultiAgentBeta/
 │   ├── catalog.py                 #   standard IDs and source pins
 │   ├── contracts.py / policy.py   #   case contract; manifest, white-box, threat and case gates, authorize
 │   ├── domain.py / schemas.py     #   data model and JSON schemas
-│   ├── adapters.py                #   controlled HTTP transport, IP pinning, oracle evaluation
+│   ├── adapters.py                #   origin and credential bindings, request assembly, bounded case execution and oracle evaluation
 │   ├── target_transport.py        #   IP-pinned single-hop HTTP(S) transport and credential redaction
 │   ├── request_rules.py           #   request rules: what a request to the target may look like and whether it may be sent (headers, path, identity, scope, provenance)
 │   ├── fixture_protocol.py        #   reset/setup/cleanup protocol, test identities

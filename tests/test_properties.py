@@ -8,7 +8,8 @@ import pytest
 from hypothesis import example, given, settings, strategies as st
 
 from vibe_audit import snapshot
-from vibe_audit.adapters import AdapterBlocked, _origin, _pinned_address, _unmapped, format_origin, parse_origin, secret_forms, target_ip_refused
+from vibe_audit.adapters import AdapterBlocked, PIN_REFUSALS, _origin, format_origin, parse_origin
+from vibe_audit.target_transport import TransportRefused, resolve_pinned_ip, secret_forms, target_ip_refused, unmapped_ip
 from vibe_audit import request_rules
 from vibe_audit.request_rules import _one_of, case_headers_allowed
 from vibe_audit.lease import canonical_hash
@@ -79,16 +80,18 @@ def test_canonical_hashes_ignore_key_order_and_notice_every_change(mapping, key,
 @given(st.ip_addresses())
 def test_literal_targets_are_dialled_as_themselves_or_refused(address):
     text = str(address)
-    assert _unmapped(_unmapped(address)) == _unmapped(address)
+    assert unmapped_ip(unmapped_ip(address)) == unmapped_ip(address)
     if address.version == 4:
         assert target_ip_refused(ipaddress.ip_address(f"::ffff:{text}")) == target_ip_refused(address)
     if target_ip_refused(address):
-        with pytest.raises(AdapterBlocked, match="metadata, link-local, unspecified or multicast"):
-            _pinned_address(text, 80, [text])
+        with pytest.raises(TransportRefused) as exc_info:
+            resolve_pinned_ip(text, 80, [text])
+        assert "metadata, link-local, unspecified or multicast" in PIN_REFUSALS[exc_info.value.rule]
     else:
-        assert _pinned_address(text, 80, [text]) == text
-        with pytest.raises(AdapterBlocked, match="outside the exact target IP allowlist"):
-            _pinned_address(text, 80, ["203.0.113.254" if text != "203.0.113.254" else "203.0.113.253"])
+        assert resolve_pinned_ip(text, 80, [text]) == text
+        with pytest.raises(TransportRefused) as exc_info:
+            resolve_pinned_ip(text, 80, ["203.0.113.254" if text != "203.0.113.254" else "203.0.113.253"])
+        assert "outside the exact target IP allowlist" in PIN_REFUSALS[exc_info.value.rule]
 
 
 @st.composite

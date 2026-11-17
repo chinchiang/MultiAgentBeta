@@ -10,7 +10,7 @@ import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import patch
 
-from vibe_audit import adapters, request_rules
+from vibe_audit import adapters, request_rules, target_transport
 
 
 def case_template():
@@ -451,8 +451,8 @@ class TargetAddressTests(unittest.TestCase):
                    "64:ff9b::a9fe:a9fe", "64:ff9b:1::a9fe:a9fe", "2002:a9fe:a9fe::1"]
         allowed = ["127.0.0.1", "127.0.0.2", "::1", "::ffff:127.0.0.1", "10.0.0.5", "192.168.1.5", "172.16.0.9",
                    "100.64.0.1", "93.184.216.34", "2001:db8::1", "fd12:3456::1", "64:ff9b::5db8:d822"]
-        self.assertEqual([a for a in refused if not adapters.target_ip_refused(ipaddress.ip_address(a))], [])
-        self.assertEqual([a for a in allowed if adapters.target_ip_refused(ipaddress.ip_address(a))], [])
+        self.assertEqual([a for a in refused if not target_transport.target_ip_refused(ipaddress.ip_address(a))], [])
+        self.assertEqual([a for a in allowed if target_transport.target_ip_refused(ipaddress.ip_address(a))], [])
 
     def test_control_plane_target_names_the_endpoint_without_secrets(self):
         console = ["http://127.0.0.1:8000", "http://localhost:8000", "http://[::1]:8000"]
@@ -482,20 +482,23 @@ class TargetAddressTests(unittest.TestCase):
         def fake_getaddrinfo(host, port, **kwargs):
             calls.append((host, port, kwargs))
             return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("203.0.113.5", port))]
-        with patch.object(adapters.socket, "getaddrinfo", fake_getaddrinfo):
-            self.assertEqual(adapters._pinned_address("example.test", 443, ["203.0.113.5", "203.0.113.6"]), "203.0.113.5")
-            with self.assertRaisesRegex(adapters.AdapterBlocked, "outside the exact target IP allowlist"):
-                adapters._pinned_address("example.test", 443, ["203.0.113.6"])
+        with patch.object(target_transport.socket, "getaddrinfo", fake_getaddrinfo):
+            self.assertEqual(target_transport.resolve_pinned_ip("example.test", 443, ["203.0.113.5", "203.0.113.6"]), "203.0.113.5")
+            with self.assertRaises(target_transport.TransportRefused) as ctx:
+                target_transport.resolve_pinned_ip("example.test", 443, ["203.0.113.6"])
+            self.assertRegex(adapters.PIN_REFUSALS[ctx.exception.rule], "outside the exact target IP allowlist")
         self.assertEqual(calls, [("example.test", 443, {"type": socket.SOCK_STREAM})] * 2)
         # A literal address never touches DNS, and the lowest address of a set is the one dialled.
-        with patch.object(adapters.socket, "getaddrinfo", side_effect=AssertionError("no DNS for a literal")):
-            self.assertEqual(adapters._pinned_address("10.0.0.5", 80, ["10.0.0.5"]), "10.0.0.5")
-            with self.assertRaisesRegex(adapters.AdapterBlocked, "outside the exact target IP allowlist"):
-                adapters._pinned_address("10.0.0.7", 80, ["10.0.0.5"])
+        with patch.object(target_transport.socket, "getaddrinfo", side_effect=AssertionError("no DNS for a literal")):
+            self.assertEqual(target_transport.resolve_pinned_ip("10.0.0.5", 80, ["10.0.0.5"]), "10.0.0.5")
+            with self.assertRaises(target_transport.TransportRefused) as ctx:
+                target_transport.resolve_pinned_ip("10.0.0.7", 80, ["10.0.0.5"])
+            self.assertRegex(adapters.PIN_REFUSALS[ctx.exception.rule], "outside the exact target IP allowlist")
         for allowed, message in [("10.0.0.5", "explicit IP addresses"), ([10], "explicit IP addresses"), (["10.0.0.0/8"], "explicit IP addresses"),
                                  ([], "No target IP addresses"), (["169.254.169.254"], "cloud metadata")]:
-            with self.assertRaisesRegex(adapters.AdapterBlocked, message):
-                adapters._pinned_address("10.0.0.5", 80, allowed)
+            with self.assertRaises(target_transport.TransportRefused) as ctx:
+                target_transport.resolve_pinned_ip("10.0.0.5", 80, allowed)
+            self.assertRegex(adapters.PIN_REFUSALS[ctx.exception.rule], message)
 
     def test_one_of_matches_whole_listed_values_only(self):
         pattern = request_rules._one_of(["a", "b.c"])

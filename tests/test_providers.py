@@ -147,7 +147,7 @@ def test_credential_origin_bindings_and_defaults(monkeypatch):
         with pytest.raises(providers.ProviderError) as err:
             providers.credential_origins({"VIBEAUDIT_MODEL_CREDENTIAL_ORIGINS": raw})
         assert err.value.code == "invalid_credential_binding"
-    from vibe_audit.adapters import credential_env_allowed
+    from vibe_audit.target_transport import credential_env_allowed
     assert not credential_env_allowed("VIBEAUDIT_MODEL_CREDENTIAL_ORIGINS", {})
 
 

@@ -9,25 +9,22 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import http.client
 import ipaddress
 import json
 import os
 import re
 import shutil
-import socket
-import ssl
-import threading
-import time
 from urllib.parse import urlsplit
 
-# The transport holds each request to the request rules (request_rules), which it only reads. The supervisor imports
-# this module flat inside the container (no package) and the backend as vibe_audit.adapters; request_rules sits beside
-# it either way, so this is the one import that needs both forms.
+# The transport holds each request to the request rules (request_rules) and pinned target transport (target_transport).
+# The supervisor imports this module flat inside the container (no package) and the backend as vibe_audit.adapters;
+# both modules sit beside it either way, so these imports accept both forms.
 try:
+    from . import target_transport as _target_transport
     from .request_rules import (SAFE_METHODS, RequestRefused, case_headers_allowed, check_request, model_header_vocabulary,
                                 read_only)
 except ImportError:
+    import target_transport as _target_transport  # type: ignore[import-not-found,no-redef]
     from request_rules import (  # type: ignore[import-not-found,no-redef]
         SAFE_METHODS, RequestRefused, case_headers_allowed, check_request, model_header_vocabulary, read_only)
 
@@ -37,57 +34,10 @@ REQUEST_TIMEOUT_SECONDS = 10.0
 MAX_REPETITIONS = 20
 _TRUSTED = {"adapter.http", "fixture.local", "collector.local"}
 _CREDENTIAL_ENV = re.compile(r"^VIBEAUDIT_[A-Z0-9_]+$")
-# The tool's own settings share the prefix. A profile naming one would send it to a model or target.
-RESERVED_ENV = frozenset({
-    "VIBEAUDIT_DATABASE_URL", "VIBEAUDIT_SESSION_TOKEN", "VIBEAUDIT_DATA_DIR", "VIBEAUDIT_SOURCE_ROOTS",
-    "VIBEAUDIT_UI_ORIGINS", "VIBEAUDIT_RUNTIME_CONFIG", "VIBEAUDIT_FIXTURE_CONFIG", "VIBEAUDIT_CATALOG_ROOT",
-    "VIBEAUDIT_PYTHON", "VIBEAUDIT_RELAY_ORIGIN", "VIBEAUDIT_POSTGRES_PASSWORD", "VIBEAUDIT_POSTGRES_IMAGE",
-    "VIBEAUDIT_TEST_DATABASE_URL", "VIBEAUDIT_TEST_POSTGRES", "VIBEAUDIT_TEST_RUNTIME_CONFIG",
-    "VIBEAUDIT_MODEL_CREDENTIAL_ORIGINS", "VIBEAUDIT_TARGET_CREDENTIAL_ORIGINS", "VIBEAUDIT_BEDROCK_PROFILES",
-})
-
-
-def secret_forms(value):
-    """The raw secret and the escaped forms a target may reflect it in (JSON, JSON with \\/, URL encoding)."""
-    from urllib.parse import quote
-    escaped = json.dumps(value)[1:-1]
-    return {value, escaped, escaped.replace("/", "\\/"), quote(value, safe="")} - {""}
-
-
-def credential_env_allowed(name, environ=None):
-    """A credential reference names an operator secret, never this tool's own configuration."""
-    environ = os.environ if environ is None else environ
-    if not isinstance(name, str) or not _CREDENTIAL_ENV.fullmatch(name) or name in RESERVED_ENV:
-        return False
-    value = environ.get(name)
-    if not value:
-        return True
-    # A URL is never an API key or bearer token; database URLs are read under operator-chosen names.
-    if "://" in value:
-        return False
-    return not any(environ.get(key) == value for key in RESERVED_ENV)
-
-
-CREDENTIAL_ORIGINS_ENV = "VIBEAUDIT_MODEL_CREDENTIAL_ORIGINS"
-# The vendor keys the workbench pre-fills go to their vendors; the operator's environment can rebind them.
-DEFAULT_CREDENTIAL_ORIGINS = {"VIBEAUDIT_OPENAI_API_KEY": "https://api.openai.com",
-                              "VIBEAUDIT_ANTHROPIC_API_KEY": "https://api.anthropic.com"}
-
-
-def bound_model_credentials(environ=None):
-    """Every variable the operator's environment binds as a model key, whether or not this run's models use it.
-
-    Read from the names alone, so a malformed binding (which providers.credential_origins refuses) still counts.
-    The supervisor imports this module on its own, without the package: nothing here may import providers.
-    """
-    environ = os.environ if environ is None else environ
-    return set(DEFAULT_CREDENTIAL_ORIGINS) | set(re.findall(r"(VIBEAUDIT_[A-Z0-9_]+)\s*=", environ.get(CREDENTIAL_ORIGINS_ENV, "")))
-
-
 TARGET_CREDENTIAL_ORIGINS_ENV = "VIBEAUDIT_TARGET_CREDENTIAL_ORIGINS"
 
 
-def parse_bindings(text, parse_value, *, reserved=RESERVED_ENV):
+def parse_bindings(text, parse_value, *, reserved=_target_transport.RESERVED_ENV):
     """{name: {value}} of a credential-binding variable: NAME=value entries, comma-separated, a name repeating for
     several values. A name must be a VIBEAUDIT_ credential name that is not one of this tool's own settings, and each
     value is read by parse_value; a bad entry is a ValueError, which the caller turns into its own refusal.
@@ -137,7 +87,7 @@ def shared_credentials(manifest, environ=None):
     def names(key):
         return {p.get("credential_env") for p in manifest.get(key) or [] if isinstance(p, dict)
                 and isinstance(p.get("credential_env"), str) and p.get("credential_env")}
-    model_names = names("models") | bound_model_credentials(environ)
+    model_names = names("models") | _target_transport.bound_model_credentials(environ)
     model_values = {environ.get(name) for name in model_names} - {None, ""}
     return sorted(name for name in names("auth_profiles")
                   if name in model_names or environ.get(name) in model_values)
@@ -147,7 +97,7 @@ def literal_model_credentials(manifest, environ=None):
     """Whether a declared unredacted test literal is a model key: the snapshot would send it to the models as written."""
     environ = os.environ if environ is None else environ
     names = {p.get("credential_env") for p in manifest.get("models") or [] if isinstance(p, dict) and p.get("credential_env")}
-    values = {environ.get(name) for name in names | bound_model_credentials(environ)} - {None, ""}
+    values = {environ.get(name) for name in names | _target_transport.bound_model_credentials(environ)} - {None, ""}
     return bool(set(manifest.get("unredacted_literals") or []) & values)
 class AdapterBlocked(ValueError):
     """A policy restriction prevented a request; never include secret values."""
@@ -217,40 +167,6 @@ def _origin(manifest):
         raise AdapterBlocked("Target must be a single exact HTTP(S) origin without credentials, path or query.") from None
 
 
-# Cloud instance metadata services; the link-local check below covers the rest of 169.254.0.0/16.
-_METADATA_IPS = frozenset(ipaddress.ip_address(item) for item in ("169.254.169.254", "fd00:ec2::254", "100.100.100.200"))
-
-
-# RFC 6052 /96 prefixes, which embed the IPv4 address in the last 32 bits; other prefix lengths are not decoded.
-_NAT64 = (ipaddress.ip_network("64:ff9b::/96"), ipaddress.ip_network("64:ff9b:1::/96"))
-
-
-def _unmapped(address):
-    """The IPv4 address an IPv6 form reaches: mapped, 6to4 or a NAT64 translation of it."""
-    if address.version != 6:
-        return address
-    if address.ipv4_mapped:
-        return address.ipv4_mapped
-    if address.sixtofour:
-        return address.sixtofour
-    if any(address in network for network in _NAT64):
-        return ipaddress.IPv4Address(int(address) & 0xFFFFFFFF)
-    return address
-
-
-def target_ip_refused(address):
-    """An address no target may use, whatever the operator lists: metadata, link-local, unspecified or multicast.
-
-    Loopback and private addresses stay allowed, since local and internal staging targets use them.
-    """
-    address = _unmapped(address)
-    if (address in _METADATA_IPS or address.is_link_local or address.is_unspecified or address.is_multicast
-            or (address.version == 6 and address.is_site_local)):
-        return True
-    # 240.0.0.0/4 and the broadcast address. IPv6 "reserved" would also cover ::1, so it is not used.
-    return address.version == 4 and address.is_reserved
-
-
 def control_plane_target(manifest, endpoints):
     """The console or database endpoint (host:port) the target would reach, or None.
 
@@ -260,7 +176,7 @@ def control_plane_target(manifest, endpoints):
     """
     _, host, port = _origin(manifest)
     try:
-        ips = {_unmapped(ipaddress.ip_address(item)) for item in manifest.get("allowed_target_ips", [])}
+        ips = {_target_transport.unmapped_ip(ipaddress.ip_address(item)) for item in manifest.get("allowed_target_ips", [])}
     except (TypeError, ValueError):
         raise AdapterBlocked("Allowed target IPs must be explicit IP addresses, not hostnames or ranges.") from None
     for url in endpoints:
@@ -273,7 +189,7 @@ def control_plane_target(manifest, endpoints):
         if not other or other_port != port:
             continue
         try:
-            address = _unmapped(ipaddress.ip_address(other))
+            address = _target_transport.unmapped_ip(ipaddress.ip_address(other))
         except ValueError:
             address = None
         if other == "localhost" or (address is not None and address.is_loopback):
@@ -284,64 +200,6 @@ def control_plane_target(manifest, endpoints):
             # Never echo the URL itself: a database URL can carry its password.
             return f"[{other}]:{port}" if ":" in other else f"{other}:{port}"
     return None
-
-
-def _pinned_address(host, port, allowed_ips):
-    try:
-        if not isinstance(allowed_ips, list) or any(not isinstance(item, str) for item in allowed_ips):
-            raise ValueError
-        allowed = {ipaddress.ip_address(item) for item in allowed_ips}
-    except (ValueError, TypeError):
-        raise AdapterBlocked("Allowed target IPs must be explicit IP addresses, not hostnames or ranges.") from None
-    if not allowed:
-        raise AdapterBlocked("No target IP addresses were explicitly authorized.")
-    if any(target_ip_refused(item) for item in allowed):
-        raise AdapterBlocked("Target IPs cannot be cloud metadata, link-local, unspecified or multicast addresses.")
-    try:
-        literal = ipaddress.ip_address(host)
-    except ValueError:
-        resolved = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
-        addresses = {ipaddress.ip_address(row[4][0]) for row in resolved}
-    else:
-        addresses = {literal}
-    if not addresses or not addresses.issubset(allowed):
-        raise AdapterBlocked("DNS returned an address outside the exact target IP allowlist.")
-    # The actual socket is opened with this numeric address, never the DNS name.
-    return str(sorted(addresses, key=lambda item: (item.version, int(item)))[0])
-
-
-class _PinnedHTTPConnection(http.client.HTTPConnection):
-    def __init__(self, host, port, *, pinned_ip, timeout):
-        super().__init__(host, port, timeout=timeout)
-        self.pinned_ip = pinned_ip
-
-    def connect(self):
-        address = ipaddress.ip_address(self.pinned_ip)
-        family = socket.AF_INET6 if address.version == 6 else socket.AF_INET
-        sock = socket.socket(family, socket.SOCK_STREAM)
-        sock.settimeout(self.timeout)
-        try:
-            sock.connect((self.pinned_ip, self.port))
-            self.sock = sock
-        except BaseException:
-            sock.close()
-            raise
-
-
-class _PinnedHTTPSConnection(_PinnedHTTPConnection):
-    def connect(self):
-        deadline = time.monotonic() + self.timeout
-        super().connect()
-        try:
-            # Verify certificate and SNI against the authorized host, not its IP.
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise TimeoutError
-            self.sock.settimeout(remaining)
-            self.sock = ssl.create_default_context().wrap_socket(self.sock, server_hostname=self.host)
-        except BaseException:
-            self.sock.close()
-            raise
 
 
 def _put_header(headers, name, value):
@@ -396,7 +254,7 @@ def _prepare_request(manifest, case, *, transport_headers=None):
             raise AdapterBlocked("Case identity must reference exactly one configured authentication profile.")
         profile = profiles[0]
         env_name = profile.get("credential_env", "")
-        if not credential_env_allowed(env_name):
+        if not _target_transport.credential_env_allowed(env_name):
             raise AdapterBlocked("Credentials must reference a VIBEAUDIT_ environment variable that is not a Vibe Audit setting.")
         secret = os.environ.get(env_name)
         if not secret or len(secret) > 8192 or any(ord(c) < 33 or ord(c) > 126 for c in secret):
@@ -426,83 +284,26 @@ def _prepare_request(manifest, case, *, transport_headers=None):
     return method, path, headers, body, secrets
 
 
-def _request(scheme, host, port, pinned_ip, method, path, headers, body, timeout):
-    connection_type = _PinnedHTTPSConnection if scheme == "https" else _PinnedHTTPConnection
-    conn = connection_type(host, port, pinned_ip=pinned_ip, timeout=timeout)
-    deadline = time.monotonic() + timeout
-    watchdog = None
-    expired = threading.Event()
-    try:
-        conn.connect()
-        transport_socket = conn.sock
-        def end_transport():
-            expired.set()
-            try:
-                transport_socket.shutdown(socket.SHUT_RDWR)
-            except OSError:
-                pass
-        # Socket timeouts alone do not bound a peer sending one byte at a time.
-        # This independent deadline also interrupts slow headers and chunking.
-        watchdog = threading.Timer(max(0.001, deadline - time.monotonic()), end_transport)
-        watchdog.daemon = True
-        watchdog.start()
-        conn.request(method, path, body=body, headers=headers)
-        response = conn.getresponse()
-        # A closed socket ends the status line, the headers and the body quietly: it is a timeout, not a response.
-        if expired.is_set():
-            raise TimeoutError
-        if 300 <= response.status < 400:
-            return {"status_code": response.status, "body": "", "complete": False, "redirect_blocked": True}
-        encoding = response.getheader("Content-Encoding", "identity").lower()  # pragma: no mutate (header names and the default are compared case-insensitively)
-        if encoding not in {"", "identity"}:
-            raise ResponseLimitError("Compressed responses are unsupported; no oracle was evaluated.")
-        length = response.getheader("Content-Length")  # pragma: no mutate (header names are case-insensitive)
-        if length is not None:
-            try:
-                length = int(length)
-            except ValueError:
-                raise ResponseLimitError("Invalid response length; no oracle was evaluated.") from None
-            if length < 0 or length > MAX_RESPONSE_BYTES:
-                raise ResponseLimitError("Response exceeds the configured byte limit.")
-        chunks = []
-        size = 0
-        while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:  # pragma: no mutate (the exact instant cannot be hit; the watchdog ends the transport then)
-                raise TimeoutError
-            # With Connection: close, HTTPResponse may own the socket after
-            # HTTPConnection.sock has been cleared by getresponse().
-            sock = conn.sock
-            if sock is None and response.fp is not None:
-                sock = getattr(getattr(response.fp, "raw", None), "_sock", None)
-            if sock is not None:
-                sock.settimeout(remaining)
-            chunk = response.read1(min(8192, MAX_RESPONSE_BYTES + 1 - size))
-            if not chunk:
-                break
-            chunks.append(chunk)
-            size += len(chunk)
-            if size > MAX_RESPONSE_BYTES:
-                raise ResponseLimitError("Response exceeds the configured byte limit.")
-        raw = b"".join(chunks)
-        if expired.is_set():
-            raise TimeoutError
-        if length is not None and len(raw) != length:
-            raise ResponseLimitError("Response was incomplete; no oracle was evaluated.")
-        try:
-            text = raw.decode("utf-8", errors="strict")  # pragma: no mutate (the defaults are the same codec and strictness)
-        except UnicodeError:
-            raise ResponseLimitError("Only complete UTF-8 responses can be evaluated.") from None
-        return {"status_code": response.status, "body": text, "complete": True, "bytes": size}
-    except Exception:
-        # Whatever the cut socket made http.client raise, the deadline is what ended the exchange.
-        if expired.is_set():
-            raise TimeoutError from None
-        raise
-    finally:
-        if watchdog is not None:
-            watchdog.cancel()
-        conn.close()
+PIN_REFUSALS = {
+    "invalid_allowed_ips": "Allowed target IPs must be explicit IP addresses, not hostnames or ranges.",
+    "no_allowed_ips": "No target IP addresses were explicitly authorized.",
+    "refused_ip": "Target IPs cannot be cloud metadata, link-local, unspecified or multicast addresses.",
+    "unlisted_ip": "DNS returned an address outside the exact target IP allowlist.",
+}
+TARGET_REFUSALS = {
+    "revoked": "Run was cancelled before a request.",
+    "deployment_changed": "Deployment identity changed or was not present",
+    "redirect": "Target returned a redirect; redirects are never followed.",
+    "unsafe_redirect": "Target answered a state-changing request with a redirect; its effect is unverified and redirects are never followed.",
+}
+RESPONSE_LIMIT_REFUSALS = {
+    "compressed": "Compressed responses are unsupported; no oracle was evaluated.",
+    "invalid_length": "Invalid response length; no oracle was evaluated.",
+    "declared_too_large": "Response exceeds the configured byte limit.",
+    "body_too_large": "Response exceeds the configured byte limit.",
+    "incomplete_body": "Response was incomplete; no oracle was evaluated.",
+    "invalid_utf8": "Only complete UTF-8 responses can be evaluated.",
+}
 
 
 def _trusted_observations(case, observations):
@@ -591,6 +392,7 @@ async def execute_case(manifest: dict, case: dict, *, cancel_event, request_hook
     requests = 0
     observations = []
     current_method = "GET"  # pragma: no mutate (every request sets it before any transport error can be raised)
+    current_delivered = False  # pragma: no mutate (every dispatch resets it before any transport call)
     try:
         scheme, host, port = _origin(manifest)
         # Validate the main request before allowing even positive-control I/O.
@@ -618,32 +420,64 @@ async def execute_case(manifest: dict, case: dict, *, cancel_event, request_hook
             controls.append((control, request))
 
         async def dispatch(request):
-            nonlocal requests, current_method
+            nonlocal requests, current_method, current_delivered
             method, path, headers, body, secrets = _prepare_request(manifest, request)
             current_method = method
-            # Resolution is bounded separately. The connected numeric IP cannot
-            # be changed by a second DNS lookup or proxy environment variables.
-            pinned = await asyncio.wait_for(asyncio.to_thread(
-                _pinned_address, host, port, manifest.get("allowed_target_ips", [])), timeout=REQUEST_TIMEOUT_SECONDS)
             try:
-                await request_hook(method=method, path=path)
-            except asyncio.CancelledError:
+                # Resolution is bounded separately. The connected numeric IP cannot
+                # be changed by a second DNS lookup or proxy environment variables.
+                pinned = await asyncio.wait_for(asyncio.to_thread(
+                    _target_transport.resolve_pinned_ip, host, port, manifest.get("allowed_target_ips", [])), timeout=REQUEST_TIMEOUT_SECONDS)
+                try:
+                    await request_hook(method=method, path=path)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    raise AdapterBlocked("The request budget or lease hook refused execution.") from None
+                if _cancelled(cancel_event):
+                    raise AdapterBlocked("Run was cancelled before a request.")
+                try:
+                    raw = await asyncio.to_thread(
+                        _target_transport.send_pinned_request, scheme, host, port, pinned,
+                        method, path, headers, body,
+                        timeout=REQUEST_TIMEOUT_SECONDS, max_response_bytes=MAX_RESPONSE_BYTES,
+                        deployment_header=manifest.get("deployment_header"),
+                        deployment_id=manifest.get("deployment_id"),
+                    )
+                except asyncio.CancelledError:
+                    requests += 1
+                    raise
+            except _target_transport.TransportRefused as exc:
+                if not exc.delivered:
+                    if exc.rule == "revoked":
+                        raise AdapterBlocked(TARGET_REFUSALS["revoked"]) from None
+                    if exc.rule in PIN_REFUSALS:
+                        raise AdapterBlocked(PIN_REFUSALS[exc.rule]) from None
+                    if exc.rule == "connect_timeout":
+                        raise TimeoutError from None
+                    raise
+                requests += 1
+                current_delivered = True
+                if exc.rule == "timeout":
+                    raise TimeoutError from None
+                if exc.rule == "deployment_changed":
+                    reason = TARGET_REFUSALS["deployment_changed"]
+                    if method not in SAFE_METHODS:
+                        raise OutcomeUnknown(reason) from None
+                    raise AdapterBlocked(reason) from None
+                if exc.rule == "redirect":
+                    if method not in SAFE_METHODS:
+                        # The target processed the request before answering; do not report it as unsent.
+                        raise OutcomeUnknown(TARGET_REFUSALS["unsafe_redirect"]) from None
+                    raise AdapterBlocked(TARGET_REFUSALS["redirect"]) from None
+                if exc.rule in RESPONSE_LIMIT_REFUSALS:
+                    raise ResponseLimitError(RESPONSE_LIMIT_REFUSALS[exc.rule]) from None
                 raise
-            except Exception:
-                raise AdapterBlocked("The request budget or lease hook refused execution.") from None
-            if _cancelled(cancel_event):
-                raise AdapterBlocked("Run was cancelled before a request.")
             requests += 1
-            response = await asyncio.to_thread(_request, scheme, host, port, pinned,
-                                                method, path, headers, body, REQUEST_TIMEOUT_SECONDS)
             if _cancelled(cancel_event):
                 raise asyncio.CancelledError
-            if response.get("redirect_blocked"):
-                if method not in SAFE_METHODS:
-                    # The target processed the request before answering; do not report it as unsent.
-                    raise OutcomeUnknown("Target answered a state-changing request with a redirect; its effect is unverified and redirects are never followed.")
-                raise AdapterBlocked("Target returned a redirect; redirects are never followed.")
-            response["peer_ip"] = pinned
+            response = {"status_code": raw["status_code"], "body": raw["body"], "complete": True,
+                        "bytes": raw["bytes"], "peer_ip": raw["peer_ip"]}
             return response, secrets
 
         for repeat in range(repetitions):
@@ -657,20 +491,13 @@ async def execute_case(manifest: dict, case: dict, *, cancel_event, request_hook
                                      "matched_text_sha256": [hashlib.sha256(text.encode()).hexdigest() for text in control["required_text"]] if matched else []})
                 if not matched:
                     return _result("inconclusive", "A positive control did not establish its required fixture; the main request was not sent.", observations, requests)
-            response, secrets = await dispatch(case)
+            response, _ = await dispatch(case)
             response["forbidden_text_sha256_observed"] = [hashlib.sha256(text.encode()).hexdigest()
                 for text in (case.get("oracle") or {}).get("forbidden_text", [])
                 if isinstance(text, str) and text and text in response["body"]]
-            # Also redact other explicitly configured model/auth credentials if
-            # the target reflects them. Keep match digests for oracle replay.
-            for profile in [*manifest.get("auth_profiles", []), *manifest.get("models", [])]:
-                env_name = profile.get("credential_env", "")
-                if isinstance(env_name, str) and _CREDENTIAL_ENV.fullmatch(env_name):
-                    value = os.environ.get(env_name)
-                    if value:
-                        secrets.append(value)
-            for secret in sorted({form for value in secrets for form in secret_forms(value)}, key=len, reverse=True):
-                response["body"] = response["body"].replace(secret, "[REDACTED_CREDENTIAL]")
+            # Also redact other explicitly configured or environment-bound model/auth
+            # credentials if the target reflects them. Keep match digests for oracle replay.
+            response["body"] = _target_transport.redact_credentials(response["body"], manifest)
             response.update({"kind": "http_response", "provenance": "adapter.http", "case_id": case.get("id"),
                              "run_id": manifest.get("run_id"), "repetition": repeat + 1})
             observations.append(response)
@@ -688,12 +515,12 @@ async def execute_case(manifest: dict, case: dict, *, cancel_event, request_hook
         return _result("inconclusive", str(exc), observations, requests)
     except asyncio.CancelledError:
         return _result("outcome_unknown" if requests else "blocked", "Execution was cancelled; dispatched requests are not automatically replayed.", observations, requests)
-    except (TimeoutError, socket.timeout):
-        return _result("outcome_unknown" if requests and current_method not in SAFE_METHODS else "execution_error", "Target transport timed out; no success was inferred.", observations, requests)
+    except TimeoutError:
+        return _result("outcome_unknown" if current_delivered and current_method not in SAFE_METHODS else "execution_error", "Target transport timed out; no success was inferred.", observations, requests)
     except Exception:
         # Provider/HTTP exception strings may include request material. Never
         # return their text or traceback through an API or report.
-        return _result("outcome_unknown" if requests and current_method not in SAFE_METHODS else "execution_error", "Target transport failed; no success was inferred.", observations, requests)
+        return _result("outcome_unknown" if current_delivered and current_method not in SAFE_METHODS else "execution_error", "Target transport failed; no success was inferred.", observations, requests)
 
 
 def tool_capabilities() -> list[dict]:

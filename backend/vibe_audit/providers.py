@@ -22,7 +22,8 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from .adapters import CREDENTIAL_ORIGINS_ENV, DEFAULT_CREDENTIAL_ORIGINS, credential_env_allowed, format_origin, parse_bindings, parse_origin
+from .adapters import format_origin, parse_bindings, parse_origin
+from .target_transport import CREDENTIAL_ORIGINS_ENV, DEFAULT_CREDENTIAL_ORIGINS, credential_env_allowed
 
 MAX_ATTEMPTS = 2
 MAX_RESPONSE_BYTES = 512 * 1024
