@@ -1,4 +1,4 @@
-"""The HTTP transport, request preparation and oracle of adapters.py, one boundary at a time.
+"""The HTTP transport, request preparation and oracle of target_transport.py and adapters.py, one boundary at a time.
 
 A loopback listener answers each connection with the exact bytes the test chose, so the transport's limits, its
 deadline and the shape of what it returns are checked without a fixture application, a network or a credential.
@@ -13,12 +13,13 @@ from unittest.mock import patch
 
 import pytest
 
-from vibe_audit import adapters
-from vibe_audit.adapters import (AdapterBlocked, ResponseLimitError, _origin, _pinned_address, _prepare_request,
-                                 _request, _result, evaluate_oracle, execute_case, secret_forms,
+from vibe_audit import adapters, request_rules, target_transport
+from vibe_audit.adapters import (AdapterBlocked, _origin, _prepare_request,
+                                 _result, evaluate_oracle, execute_case,
                                  target_credential_origins, unbound_target_credentials)
-from vibe_audit import request_rules
 from vibe_audit.request_rules import case_headers_allowed, state_changing
+from vibe_audit.target_transport import (TransportRefused, resolve_pinned_ip, secret_forms,
+                                         send_pinned_request, unmapped_ip)
 
 HEADERS = {"Accept": "application/json", "Accept-Encoding": "identity", "Connection": "close"}
 ORIGINS = adapters.TARGET_CREDENTIAL_ORIGINS_ENV
@@ -81,13 +82,16 @@ def listen():
         listener.close()
 
 
-def fetch(listener, method="GET", path="/", body=None, timeout=2.0, scheme="http", host="127.0.0.1"):
-    return _request(scheme, host, listener.port, "127.0.0.1", method, path, HEADERS, body, timeout)
+def fetch(listener, method="GET", path="/", body=None, timeout=2.0, scheme="http", host="127.0.0.1",
+          max_response_bytes=target_transport.MAX_RESPONSE_BYTES):
+    return send_pinned_request(scheme, host, listener.port, "127.0.0.1", method, path, HEADERS, body,
+                               timeout=timeout, max_response_bytes=max_response_bytes)
 
 
 def test_complete_response_is_returned_with_its_size(listen):
     server = listen(response(200, b"hello"))
-    assert fetch(server) == {"status_code": 200, "body": "hello", "complete": True, "bytes": 5}
+    assert fetch(server) == {"status_code": 200, "body": "hello", "bytes": 5, "peer_ip": "127.0.0.1",
+                             "content_type": "application/json"}
     request = server.requests[0]
     assert request.startswith(b"GET / HTTP/1.1\r\n") and f"Host: 127.0.0.1:{server.port}\r\n".encode() in request
     assert b"Accept-Encoding: identity\r\n" in request and b"Connection: close\r\n" in request
@@ -102,49 +106,59 @@ def test_request_body_is_sent_as_given(listen):
 def test_every_3xx_status_is_reported_as_a_blocked_redirect_and_nothing_else_is(listen):
     for status in [300, 301, 302, 307, 399]:
         server = listen(response(status, b"moved", ["Location: http://elsewhere.invalid/"]))
-        assert fetch(server) == {"status_code": status, "body": "", "complete": False, "redirect_blocked": True}, status
+        with pytest.raises(TransportRefused) as refused:
+            fetch(server)
+        assert (refused.value.rule, refused.value.delivered, refused.value.status_code) == ("redirect", True, status)
     for status in [299, 400, 404, 500]:
-        assert fetch(listen(response(status, b"x"))) == {"status_code": status, "body": "x", "complete": True, "bytes": 1}, status
+        assert fetch(listen(response(status, b"x"))) == {
+            "status_code": status, "body": "x", "bytes": 1, "peer_ip": "127.0.0.1", "content_type": "application/json"
+        }, status
 
 
 def test_chunked_and_unsized_bodies_are_joined_in_order(listen):
     chunked = listen(b"HTTP/1.1 200 X\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n3\r\nabc\r\n3\r\ndef\r\n0\r\n\r\n")
-    assert fetch(chunked) == {"status_code": 200, "body": "abcdef", "complete": True, "bytes": 6}
+    assert fetch(chunked) == {"status_code": 200, "body": "abcdef", "bytes": 6, "peer_ip": "127.0.0.1",
+                              "content_type": "application/json"}
 
     def trickle(conn, request):
         conn.sendall(b"HTTP/1.1 200 X\r\nConnection: close\r\n\r\nfirst ")
         time.sleep(0.05)
         conn.sendall(b"second")
-    assert fetch(listen(trickle)) == {"status_code": 200, "body": "first second", "complete": True, "bytes": 12}
+    assert fetch(listen(trickle)) == {"status_code": 200, "body": "first second", "bytes": 12, "peer_ip": "127.0.0.1",
+                                      "content_type": "application/json"}
 
 
 def test_declared_length_is_bounded_and_must_be_met(listen):
-    with patch.object(adapters, "MAX_RESPONSE_BYTES", 32):
-        assert fetch(listen(response(200, b"A" * 32)))["bytes"] == 32
-        assert fetch(listen(response(204, b"")))["bytes"] == 0
-        for length, sent in [(33, 40), (-1, 40), (-1, 5)]:
-            server = listen(f"HTTP/1.1 200 X\r\nContent-Length: {length}\r\nConnection: close\r\n\r\n".encode() + b"A" * sent)
-            with pytest.raises(ResponseLimitError, match="^Response exceeds the configured byte limit.$"):
-                fetch(server)
-    with pytest.raises(ResponseLimitError, match="^Invalid response length; no oracle was evaluated.$"):
+    assert fetch(listen(response(200, b"A" * 32)), max_response_bytes=32)["bytes"] == 32
+    assert fetch(listen(response(204, b"")), max_response_bytes=32)["bytes"] == 0
+    for length, sent in [(33, 40), (-1, 40), (-1, 5)]:
+        server = listen(f"HTTP/1.1 200 X\r\nContent-Length: {length}\r\nConnection: close\r\n\r\n".encode() + b"A" * sent)
+        with pytest.raises(TransportRefused) as refused:
+            fetch(server, max_response_bytes=32)
+        assert adapters.RESPONSE_LIMIT_REFUSALS[refused.value.rule] == "Response exceeds the configured byte limit."
+    with pytest.raises(TransportRefused) as refused:
         fetch(listen(b"HTTP/1.1 200 X\r\nContent-Length: abc\r\nConnection: close\r\n\r\nxyz"))
-    with pytest.raises(ResponseLimitError, match="^Response was incomplete; no oracle was evaluated.$"):
+    assert adapters.RESPONSE_LIMIT_REFUSALS[refused.value.rule] == "Invalid response length; no oracle was evaluated."
+    with pytest.raises(TransportRefused) as refused:
         fetch(listen(b"HTTP/1.1 200 X\r\nContent-Length: 10\r\nConnection: close\r\n\r\nhello"))
+    assert adapters.RESPONSE_LIMIT_REFUSALS[refused.value.rule] == "Response was incomplete; no oracle was evaluated."
 
 
 def test_unsized_body_is_bounded_by_the_same_limit(listen):
-    with patch.object(adapters, "MAX_RESPONSE_BYTES", 32):
-        assert fetch(listen(b"HTTP/1.1 200 X\r\nConnection: close\r\n\r\n" + b"B" * 32))["bytes"] == 32
-        with pytest.raises(ResponseLimitError, match="^Response exceeds the configured byte limit.$"):
-            fetch(listen(b"HTTP/1.1 200 X\r\nConnection: close\r\n\r\n" + b"B" * 33))
+    assert fetch(listen(b"HTTP/1.1 200 X\r\nConnection: close\r\n\r\n" + b"B" * 32), max_response_bytes=32)["bytes"] == 32
+    with pytest.raises(TransportRefused) as refused:
+        fetch(listen(b"HTTP/1.1 200 X\r\nConnection: close\r\n\r\n" + b"B" * 33), max_response_bytes=32)
+    assert adapters.RESPONSE_LIMIT_REFUSALS[refused.value.rule] == "Response exceeds the configured byte limit."
 
 
 def test_compressed_and_non_utf8_responses_are_refused_but_an_empty_encoding_is_identity(listen):
-    with pytest.raises(ResponseLimitError, match="^Compressed responses are unsupported; no oracle was evaluated.$"):
+    with pytest.raises(TransportRefused) as refused:
         fetch(listen(response(200, b"x", ["Content-Encoding: gzip"])))
+    assert adapters.RESPONSE_LIMIT_REFUSALS[refused.value.rule] == "Compressed responses are unsupported; no oracle was evaluated."
     assert fetch(listen(response(200, b"x", ["Content-Encoding: "])))["body"] == "x"
-    with pytest.raises(ResponseLimitError, match="^Only complete UTF-8 responses can be evaluated.$"):
+    with pytest.raises(TransportRefused) as refused:
         fetch(listen(response(200, b"\xff\xfe")))
+    assert adapters.RESPONSE_LIMIT_REFUSALS[refused.value.rule] == "Only complete UTF-8 responses can be evaluated."
 
 
 def test_slow_headers_are_cut_at_the_deadline_and_count_as_a_timeout(listen):
@@ -157,9 +171,10 @@ def test_slow_headers_are_cut_at_the_deadline_and_count_as_a_timeout(listen):
     started = time.monotonic()
     timers = []
     real_timer = threading.Timer
-    with patch.object(adapters.threading, "Timer", lambda *a, **k: timers.append(real_timer(*a, **k)) or timers[-1]):
-        with pytest.raises(TimeoutError):
+    with patch.object(target_transport.threading, "Timer", lambda *a, **k: timers.append(real_timer(*a, **k)) or timers[-1]):
+        with pytest.raises(TransportRefused) as refused:
             fetch(listen(dribble), timeout=0.3)
+    assert (refused.value.rule, refused.value.delivered) == ("timeout", True)
     # The watchdog, not the per-byte socket timeout, ends the transport at the deadline; it never keeps the process alive.
     assert time.monotonic() - started < 0.8
     assert len(timers) == 1 and timers[0].daemon is True
@@ -175,12 +190,12 @@ def test_body_reads_are_given_the_remaining_time_and_a_bounded_size(listen):
         chunk = real_read1(self, size)
         sizes.append((size, len(chunk)))
         return chunk
-    with patch.object(adapters, "MAX_RESPONSE_BYTES", 8192 * 2 + 5), patch.object(socket.socket, "settimeout", lambda s, v: timeouts.append(v) or real_settimeout(s, v)), \
+    with patch.object(socket.socket, "settimeout", lambda s, v: timeouts.append(v) or real_settimeout(s, v)), \
             patch.object(http.client.HTTPResponse, "read1", read1):
-        assert fetch(listen(response(200, b"C" * (8192 * 2 + 5))), timeout=2.0)["bytes"] == 8192 * 2 + 5
+        assert fetch(listen(response(200, b"C" * (8192 * 2 + 5))), timeout=2.0, max_response_bytes=8192 * 2 + 5)["bytes"] == 8192 * 2 + 5
     # With Connection: close the response owns the socket; it still gets the time the deadline leaves before each read.
-    remaining = [value for value in timeouts if value != 2]  # the connect() timeout and the listener's own are 2
-    assert len(remaining) >= 3 and all(0 < value < 2.0 for value in remaining)
+    remaining = [value for value in timeouts if value != 2]  # the listener's own socket timeout is 2
+    assert len(remaining) >= 3 and all(0 < value <= 2.0 for value in remaining)
     total = 0
     for size, got in sizes:
         assert size == min(8192, 8192 * 2 + 5 + 1 - total)
@@ -194,55 +209,66 @@ def test_a_refused_connection_raises_instead_of_answering():
     probe.bind(("127.0.0.1", 0))
     port = probe.getsockname()[1]
     probe.close()
-    with pytest.raises(ConnectionRefusedError):
-        _request("http", "127.0.0.1", port, "127.0.0.1", "GET", "/", HEADERS, None, 1.0)
+    with pytest.raises(TransportRefused) as refused:
+        send_pinned_request("http", "127.0.0.1", port, "127.0.0.1", "GET", "/", HEADERS, None, timeout=1.0)
+    assert (refused.value.rule, refused.value.delivered) == ("connect_failed", False)
 
 
 def test_https_wraps_the_pinned_socket_with_the_authorized_host_name(listen):
     server = listen(response(200, b"tls"))
     wrapped = []
+    handshakes = []
+
+    class WrappedSocket:
+        def __init__(self, inner):
+            self._inner = inner
+
+        def do_handshake(self):
+            handshakes.append(self._inner.gettimeout())
+
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
 
     class Context:
         def wrap_socket(self, sock, **kwargs):
             wrapped.append((sock, kwargs))
-            return sock
-    with patch.object(adapters.ssl, "create_default_context", Context):
+            return WrappedSocket(sock)
+
+    with patch.object(target_transport.ssl, "create_default_context", Context):
         result = fetch(server, scheme="https", host="fixture.invalid", timeout=0.5)
     assert result["body"] == "tls"
-    assert len(wrapped) == 1 and wrapped[0][1] == {"server_hostname": "fixture.invalid"}
-    assert 0 < wrapped[0][0].gettimeout() <= 0.5
+    assert len(wrapped) == 1 and wrapped[0][1] == {"server_hostname": "fixture.invalid", "do_handshake_on_connect": False}
+    assert len(handshakes) == 1 and 0 < handshakes[0] <= 0.5
     assert f"Host: fixture.invalid:{server.port}\r\n".encode() in server.requests[0]
     # The listener got no TLS handshake: the plain socket was wrapped by the fake context.
-    with patch.object(adapters.ssl, "create_default_context", side_effect=AssertionError("no TLS over http")):
+    with patch.object(target_transport.ssl, "create_default_context", side_effect=AssertionError("no TLS over http")):
         assert fetch(server)["body"] == "tls"
 
 
 def test_tls_handshake_gets_only_the_time_the_connection_left(listen):
     server = listen(response(200, b""))
-    connection = adapters._PinnedHTTPSConnection("fixture.invalid", server.port, pinned_ip="127.0.0.1", timeout=2.0)
-    # The deadline is taken before connecting; the clock then reads exactly the deadline and later past it.
-    for clock in [[100.0, 102.0], [100.0, 102.5]]:
-        with patch.object(adapters.time, "monotonic", side_effect=clock), pytest.raises(TimeoutError):
-            connection.connect()
+    # The deadline is taken before connecting; the clock then reads before connect and at/past the deadline before TLS.
+    for clock in [[100.0, 100.5, 102.0], [100.0, 100.5, 102.5]]:
+        with patch.object(target_transport.time, "monotonic", side_effect=clock), pytest.raises(TransportRefused) as refused:
+            send_pinned_request("https", "fixture.invalid", server.port, "127.0.0.1", timeout=2.0)
+        assert (refused.value.rule, refused.value.delivered) == ("connect_timeout", False)
 
 
 def test_pinned_connection_keeps_its_timeout_and_dials_the_numeric_address(listen):
-    server = listen(response(200, b""))
-    connection = adapters._PinnedHTTPConnection("fixture.invalid", server.port, pinned_ip="127.0.0.1", timeout=1.5)
-    assert connection.timeout == 1.5
-    with patch.object(socket, "getaddrinfo", side_effect=AssertionError("the pinned address needs no DNS")):
-        connection.connect()
-    assert connection.sock.gettimeout() == 1.5 and connection.sock.getpeername() == ("127.0.0.1", server.port)
-    connection.close()
-    instances = []
+    server = listen(response(200, b"ok"))
+    peers = []
+    real_connect = socket.socket.connect
 
-    class Spy(adapters._PinnedHTTPConnection):
-        def __init__(self, *args, **kwargs):
-            super().__init__(*args, **kwargs)
-            instances.append(self)
-    with patch.object(adapters, "_PinnedHTTPConnection", Spy):
-        fetch(server, timeout=1.25)
-    assert [(c.host, c.port, c.pinned_ip, c.timeout) for c in instances] == [("127.0.0.1", server.port, "127.0.0.1", 1.25)]
+    def spy_connect(self, addr):
+        peers.append((addr, self.gettimeout()))
+        return real_connect(self, addr)
+
+    with patch.object(socket, "getaddrinfo", side_effect=AssertionError("the pinned address needs no DNS")), \
+            patch.object(socket.socket, "connect", spy_connect):
+        result = send_pinned_request("http", "fixture.invalid", server.port, "127.0.0.1", "GET", "/", HEADERS, None, timeout=1.5)
+    assert result["body"] == "ok" and result["peer_ip"] == "127.0.0.1"
+    assert len(peers) == 1 and peers[0][0] == ("127.0.0.1", server.port) and 0 < peers[0][1] <= 1.5
+    assert f"Host: fixture.invalid:{server.port}\r\n".encode() in server.requests[0]
 
 
 def test_pinned_connection_uses_the_address_family_of_its_pinned_ip():
@@ -252,11 +278,28 @@ def test_pinned_connection_uses_the_address_family_of_its_pinned_ip():
     except OSError:
         pytest.skip("IPv6 loopback is not available here")
     server.listen()
-    connection = adapters._PinnedHTTPConnection("fixture.invalid", server.getsockname()[1], pinned_ip="::1", timeout=1.0)
-    connection.connect()
-    assert connection.sock.family == socket.AF_INET6
-    connection.close()
-    server.close()
+    port = server.getsockname()[1]
+
+    def serve_once():
+        with server:
+            conn, _ = server.accept()
+            with conn:
+                conn.recv(4096)
+                conn.sendall(response(200, b"v6"))
+
+    worker = threading.Thread(target=serve_once, daemon=True)
+    worker.start()
+    families = []
+    real_connect = socket.socket.connect
+
+    def spy_connect(self, addr):
+        families.append(self.family)
+        return real_connect(self, addr)
+
+    with patch.object(socket.socket, "connect", spy_connect):
+        result = send_pinned_request("http", "fixture.invalid", port, "::1", "GET", "/", HEADERS, None, timeout=1.0)
+    worker.join(timeout=1.0)
+    assert families == [socket.AF_INET6] and result["peer_ip"] == "::1" and result["body"] == "v6"
 
 
 def test_result_shape():
@@ -354,11 +397,11 @@ def test_unbound_target_credentials_name_the_profiles_the_environment_did_not_bi
 
 
 def test_credential_helpers_read_the_environment_they_are_given():
-    assert adapters.credential_env_allowed("VIBEAUDIT_NEW", {}) is True
+    assert target_transport.credential_env_allowed("VIBEAUDIT_NEW", {}) is True
     with patch.dict(os.environ, {"VIBEAUDIT_NEW": "plain"}, clear=False):
-        assert adapters.credential_env_allowed("VIBEAUDIT_NEW", {"VIBEAUDIT_NEW": "http://not-a-key"}) is False
-    with patch.dict(os.environ, {adapters.CREDENTIAL_ORIGINS_ENV: "VIBEAUDIT_PROCESS_KEY=https://m"}):
-        assert adapters.bound_model_credentials({}) == set(adapters.DEFAULT_CREDENTIAL_ORIGINS)
+        assert target_transport.credential_env_allowed("VIBEAUDIT_NEW", {"VIBEAUDIT_NEW": "http://not-a-key"}) is False
+    with patch.dict(os.environ, {target_transport.CREDENTIAL_ORIGINS_ENV: "VIBEAUDIT_PROCESS_KEY=https://m"}):
+        assert target_transport.bound_model_credentials({}) == set(target_transport.DEFAULT_CREDENTIAL_ORIGINS)
     # Entries that are not profiles, or name no variable, are skipped; an empty value is never a shared key.
     manifest = {"models": ["x", {"credential_env": 5}, {"credential_env": "VIBEAUDIT_M"}], "auth_profiles": [{"credential_env": "VIBEAUDIT_T"}]}
     assert adapters.shared_credentials(manifest, {"VIBEAUDIT_M": "", "VIBEAUDIT_T": ""}) == []
@@ -373,9 +416,9 @@ def test_credential_helpers_read_the_environment_they_are_given():
     # An empty value is never a key, even against an empty literal.
     assert adapters.literal_model_credentials({**literals, "unredacted_literals": [""]}, {"VIBEAUDIT_M": ""}) is False
     # The bindings are read from the environment it is given, and the process environment by default.
-    bound = {adapters.CREDENTIAL_ORIGINS_ENV: "VIBEAUDIT_BOUND=https://m", "VIBEAUDIT_BOUND": "k"}
+    bound = {target_transport.CREDENTIAL_ORIGINS_ENV: "VIBEAUDIT_BOUND=https://m", "VIBEAUDIT_BOUND": "k"}
     with patch.dict(os.environ, {}, clear=False):
-        os.environ.pop(adapters.CREDENTIAL_ORIGINS_ENV, None)
+        os.environ.pop(target_transport.CREDENTIAL_ORIGINS_ENV, None)
         assert adapters.literal_model_credentials({"unredacted_literals": ["k"]}, bound) is True
     with patch.dict(os.environ, bound):
         assert adapters.literal_model_credentials({"unredacted_literals": ["k"]}) is True
@@ -414,27 +457,27 @@ def test_model_header_lists_are_checked_with_their_exact_reasons():
 
 
 def test_ipv4_mapped_addresses_are_read_as_their_ipv4_address():
-    assert adapters._unmapped(ipaddress.ip_address("::ffff:127.0.0.1")) == ipaddress.ip_address("127.0.0.1")
-    assert adapters._unmapped(ipaddress.ip_address("::1")) == ipaddress.ip_address("::1")
-    assert adapters._unmapped(ipaddress.ip_address("10.0.0.1")) == ipaddress.ip_address("10.0.0.1")
+    assert unmapped_ip(ipaddress.ip_address("::ffff:127.0.0.1")) == ipaddress.ip_address("127.0.0.1")
+    assert unmapped_ip(ipaddress.ip_address("::1")) == ipaddress.ip_address("::1")
+    assert unmapped_ip(ipaddress.ip_address("10.0.0.1")) == ipaddress.ip_address("10.0.0.1")
 
 
 def test_pinned_address_reasons_and_choice():
     for allowed, message in [("10.0.0.5", "Allowed target IPs must be explicit IP addresses, not hostnames or ranges."),
                              ([], "No target IP addresses were explicitly authorized."),
                              (["169.254.169.254"], "Target IPs cannot be cloud metadata, link-local, unspecified or multicast addresses.")]:
-        with pytest.raises(AdapterBlocked) as refused:
-            _pinned_address("10.0.0.5", 80, allowed)
-        assert str(refused.value) == message
-    with pytest.raises(AdapterBlocked) as refused:
-        _pinned_address("10.0.0.7", 80, ["10.0.0.5"])
-    assert str(refused.value) == "DNS returned an address outside the exact target IP allowlist."
+        with pytest.raises(TransportRefused) as refused:
+            resolve_pinned_ip("10.0.0.5", 80, allowed)
+        assert adapters.PIN_REFUSALS[refused.value.rule] == message
+    with pytest.raises(TransportRefused) as refused:
+        resolve_pinned_ip("10.0.0.7", 80, ["10.0.0.5"])
+    assert adapters.PIN_REFUSALS[refused.value.rule] == "DNS returned an address outside the exact target IP allowlist."
     # Of several authorized answers the lowest IPv4 address is dialled, before any IPv6 one.
     answers = [(socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("::1", 80, 0, 0)), (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.9", 80)),
                (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.5", 80))]
     with patch.object(socket, "getaddrinfo", return_value=answers):
-        assert _pinned_address("fixture.invalid", 80, ["::1", "10.0.0.9", "10.0.0.5"]) == "10.0.0.5"
-        assert _pinned_address("fixture.invalid", 80, ["::1", "10.0.0.9", "10.0.0.5", "10.0.0.1"]) == "10.0.0.5"
+        assert resolve_pinned_ip("fixture.invalid", 80, ["::1", "10.0.0.9", "10.0.0.5"]) == "10.0.0.5"
+        assert resolve_pinned_ip("fixture.invalid", 80, ["::1", "10.0.0.9", "10.0.0.5", "10.0.0.1"]) == "10.0.0.5"
 
 
 # --- request preparation ---------------------------------------------------------------------------------------------
@@ -818,7 +861,7 @@ async def test_execute_case_cancellation_and_hook_refusals_keep_what_was_dispatc
     answered = Replies(listen, **{"/ok": answer_and_cancel})
     assert await execute_case(answered.manifest, live_case(), cancel_event=during, request_hook=hook) == \
         _result("outcome_unknown", "Execution was cancelled; dispatched requests are not automatically replayed.", [], 1)
-    with patch.object(adapters, "REQUEST_TIMEOUT_SECONDS", 0.2), patch.object(adapters, "_pinned_address", lambda *a: time.sleep(0.5) or "127.0.0.1"):
+    with patch.object(adapters, "REQUEST_TIMEOUT_SECONDS", 0.2), patch.object(target_transport, "resolve_pinned_ip", lambda *a: time.sleep(0.5) or "127.0.0.1"):
         assert await run(target, live_case()) == _result("execution_error", "Target transport timed out; no success was inferred.")
 
 
@@ -843,3 +886,187 @@ async def test_execute_case_failures_after_a_control_keep_its_observation(listen
             assert [obs["kind"] for obs in result["observations"]] == ["precondition"] and result["evidence"] == [], path
             if path == "/stall":
                 time.sleep(0.6)  # the listener answers one connection at a time; let the stalled one end
+
+
+@pytest.mark.asyncio
+async def test_execute_case_treats_head_and_204_as_bodiless(listen):
+    replies = {
+        "/head": b"HTTP/1.1 200 OK\r\nContent-Length: 4096\r\nConnection: close\r\n\r\n",
+        "/empty": b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+    }
+    target = Replies(listen, **replies)
+    head_result = await run(target, live_case(method="HEAD", path="/head", preconditions=[GOOD]))
+    assert (head_result["status"], head_result["requests"]) == ("pass", 2)
+    assert (head_result["observations"][1]["status_code"], head_result["observations"][1]["body"], head_result["observations"][1]["bytes"]) == (200, "", 0)
+    no_content = await run(target, live_case(method="GET", path="/empty", preconditions=[GOOD],
+                                             oracle={**canary_case()["oracle"], "allowed_statuses": [204]}))
+    assert (no_content["status"], no_content["requests"]) == ("pass", 2)
+    assert (no_content["observations"][1]["status_code"], no_content["observations"][1]["body"], no_content["observations"][1]["bytes"]) == (204, "", 0)
+
+
+@pytest.mark.asyncio
+async def test_execute_case_distinguishes_pre_send_failures_from_delivered_requests(listen, monkeypatch):
+    target = Target(listen)
+    real_send = target_transport.send_pinned_request
+
+    for rule, expected_reason in [("connect_failed", "Target transport failed; no success was inferred."),
+                                  ("connect_timeout", "Target transport timed out; no success was inferred.")]:
+        monkeypatch.setattr(target_transport, "send_pinned_request",
+                            lambda *a, r=rule, **k: (_ for _ in ()).throw(TransportRefused(r, delivered=False)))
+        standalone = await run(target, live_case(method="POST", path="/echo", body={"m": 1}))
+        assert standalone == _result("execution_error", expected_reason, [], 0)
+
+        def fail_only_post(scheme, host, port, pinned, method="GET", path="/", *rest, r=rule, **kwargs):
+            if method == "POST":
+                raise TransportRefused(r, delivered=False)
+            return real_send(scheme, host, port, pinned, method, path, *rest, **kwargs)
+
+        monkeypatch.setattr(target_transport, "send_pinned_request", fail_only_post)
+        after_control = await run(target, live_case(method="POST", path="/echo", body={"m": 1}, preconditions=[GOOD]))
+        assert (after_control["status"], after_control["reason"], after_control["requests"]) == ("execution_error", expected_reason, 1)
+        assert [obs["kind"] for obs in after_control["observations"]] == ["precondition"]
+
+    monkeypatch.setattr(target_transport, "resolve_pinned_ip",
+                        lambda *a, **k: (_ for _ in ()).throw(TransportRefused("dns_failed", delivered=False)))
+    dns_failed = await run(target, live_case(method="POST", path="/echo", body={"m": 1}))
+    assert dns_failed == _result("execution_error", "Target transport failed; no success was inferred.", [], 0)
+
+    monkeypatch.setattr(target_transport, "resolve_pinned_ip", lambda *a, **k: "127.0.0.1")
+    monkeypatch.setattr(target_transport, "send_pinned_request",
+                        lambda *a, **k: (_ for _ in ()).throw(TransportRefused("revoked", delivered=False)))
+    assert await run(target, live_case()) == _result("blocked", "Run was cancelled before a request.", [], 0)
+
+    import asyncio as _asyncio
+    monkeypatch.undo()
+    lookups = []
+    handshakes = []
+
+    class WrappedSocket:
+        def __init__(self, inner):
+            self._inner = inner
+
+        def do_handshake(self):
+            handshakes.append(True)
+
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+
+    class FakeSSLContext:
+        def wrap_socket(self, sock, **kwargs):
+            assert kwargs == {"server_hostname": "fixture.invalid", "do_handshake_on_connect": False}
+            return WrappedSocket(sock)
+
+    def fake_getaddrinfo(host, port, type=0):
+        lookups.append((host, port))
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", port))]
+
+    https_manifest = {**target.manifest, "target_url": f"https://fixture.invalid:{target.listener.port}"}
+    with patch.object(socket, "getaddrinfo", fake_getaddrinfo), patch.object(target_transport.ssl, "create_default_context", FakeSSLContext):
+        https_res = await execute_case(https_manifest, live_case(preconditions=[GOOD]), cancel_event=_asyncio.Event(), request_hook=hook)
+    assert (https_res["status"], https_res["requests"]) == ("pass", 2)
+    assert lookups == [("fixture.invalid", target.listener.port), ("fixture.invalid", target.listener.port)]
+    assert len(handshakes) == 2
+
+    in_flight = threading.Event()
+    release = threading.Event()
+
+    def slow_main(scheme, host, port, pinned, method="GET", path="/", *rest, **kwargs):
+        if path == "/ok":
+            in_flight.set()
+            release.wait(timeout=1.0)
+        return real_send(scheme, host, port, pinned, method, path, *rest, **kwargs)
+
+    with patch.object(target_transport, "send_pinned_request", slow_main):
+        task = _asyncio.create_task(execute_case(target.manifest, live_case(preconditions=[GOOD]), cancel_event=_asyncio.Event(), request_hook=hook))
+        await _asyncio.to_thread(in_flight.wait, 1.0)
+        task.cancel()
+        release.set()
+        cancelled = await task
+    assert (cancelled["status"], cancelled["requests"]) == ("outcome_unknown", 2)
+    assert [obs["kind"] for obs in cancelled["observations"]] == ["precondition"]
+
+
+@pytest.mark.asyncio
+async def test_execute_case_enforces_strict_ascii_length_deployment_header_and_unified_redaction(listen, monkeypatch):
+    monkeypatch.setenv("VIBEAUDIT_OPENAI_API_KEY", "sk-bound-model")
+    monkeypatch.setenv("VIBEAUDIT_EXTRA_MODEL", "nim/secret")
+    monkeypatch.setenv("VIBEAUDIT_MODEL_CREDENTIAL_ORIGINS", "VIBEAUDIT_EXTRA_MODEL=https://llm.example")
+    monkeypatch.setenv("VIBEAUDIT_DATA_DIR", "/var/lib/vibeaudit")
+
+    replies = {
+        "/plus": b"HTTP/1.1 200 OK\r\nContent-Length: +5\r\nConnection: close\r\n\r\nhello",
+        "/space": b"HTTP/1.1 200 OK\r\nContent-Length:  5 \r\nConnection: close\r\n\r\nhello",
+        "/non-ascii": "HTTP/1.1 200 OK\r\nContent-Length: ۱۲\r\nConnection: close\r\n\r\n123456789012".encode("utf-8"),
+        "/declared-big": b"HTTP/1.1 200 OK\r\nContent-Length: 999999\r\nConnection: close\r\n\r\nx",
+        "/body-big": b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n" + b"x" * 64,
+        "/gzip": response(200, b"x", ["Content-Encoding: gzip"]),
+        "/bad-utf8": response(200, b"\xff\xfe"),
+        "/deploy-ok": response(200, b"safe fixture", ["X-Deploy: v1"]),
+        "/deploy-bad": response(200, b"safe fixture", ["X-Deploy: v2"]),
+        "/deploy-missing": response(200, b"safe fixture"),
+        "/reflect": response(200, b"leak sk-bound-model nim%2Fsecret /var/lib/vibeaudit"),
+    }
+    target = Replies(listen, **replies)
+    for bad_len in ("/plus", "/space", "/non-ascii"):
+        assert await run(target, live_case(path=bad_len)) == _result("inconclusive", "Invalid response length; no oracle was evaluated.", [], 1)
+    with patch.object(adapters, "MAX_RESPONSE_BYTES", 32):
+        assert await run(target, live_case(path="/declared-big")) == _result("inconclusive", "Response exceeds the configured byte limit.", [], 1)
+        assert await run(target, live_case(path="/body-big")) == _result("inconclusive", "Response exceeds the configured byte limit.", [], 1)
+    assert await run(target, live_case(path="/gzip")) == _result("inconclusive", "Compressed responses are unsupported; no oracle was evaluated.", [], 1)
+    assert await run(target, live_case(path="/bad-utf8")) == _result("inconclusive", "Only complete UTF-8 responses can be evaluated.", [], 1)
+
+    scoped = {**target.manifest, "deployment_header": "X-Deploy", "deployment_id": "v1"}
+    ok = await execute_case(scoped, live_case(path="/deploy-ok"), cancel_event=pytest.importorskip("asyncio").Event(), request_hook=hook)
+    assert (ok["requests"], ok["observations"][0]["body"]) == (1, "safe fixture")
+    for mismatch in ("/deploy-bad", "/deploy-missing"):
+        get_res = await execute_case(scoped, live_case(path=mismatch), cancel_event=pytest.importorskip("asyncio").Event(), request_hook=hook)
+        assert get_res == _result("blocked", "Deployment identity changed or was not present", [], 1)
+        post_res = await execute_case(scoped, live_case(method="POST", path=mismatch, body={}), cancel_event=pytest.importorskip("asyncio").Event(), request_hook=hook)
+        assert post_res == _result("outcome_unknown", "Deployment identity changed or was not present", [], 1)
+
+    redaction_manifest = {**target.manifest, "auth_profiles": [{"id": "cfg", "credential_env": "VIBEAUDIT_DATA_DIR"}], "models": []}
+    reflected = await execute_case(redaction_manifest, live_case(path="/reflect"), cancel_event=pytest.importorskip("asyncio").Event(), request_hook=hook)
+    assert reflected["observations"][0]["body"] == "leak [REDACTED_CREDENTIAL] [REDACTED_CREDENTIAL] /var/lib/vibeaudit"
+
+
+def test_pinned_transport_and_credential_redaction_have_a_single_source_of_truth():
+    import ast
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    backend_dir = root / "backend" / "vibe_audit"
+    if not backend_dir.is_dir():
+        pytest.skip("checkout sources are not next to the mutated test copy")
+
+    moved = {
+        "RESERVED_ENV", "CREDENTIAL_ORIGINS_ENV", "DEFAULT_CREDENTIAL_ORIGINS",
+        "target_ip_refused", "secret_forms", "credential_env_allowed", "bound_model_credentials",
+        "unmapped_ip", "_unmapped", "_pinned_address", "_PinnedHTTPConnection", "_PinnedHTTPSConnection",
+    }
+    for name in moved | {"_request"}:
+        assert not hasattr(adapters, name), f"adapters.{name} should not exist or be re-exported"
+
+    single_defs = {"resolve_pinned_ip", "send_pinned_request", "secret_forms", "credential_env_allowed",
+                   "bound_model_credentials", "target_ip_refused", "unmapped_ip"}
+    defined_where = {name: [] for name in single_defs}
+    forbidden_defs = {"_PinnedHTTPConnection", "_PinnedHTTPSConnection", "_pinned_address", "_unmapped"}
+
+    for path in sorted(backend_dir.glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in tree.body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                assert node.name not in forbidden_defs, f"{path.name} still defines {node.name}"
+                if node.name in defined_where:
+                    defined_where[node.name].append(path.name)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and (node.module or "").endswith("adapters"):
+                leaked = {alias.name for alias in node.names} & moved
+                assert not leaked, f"{path.name} still imports {sorted(leaked)} from adapters"
+
+    assert defined_where == {name: ["target_transport.py"] for name in single_defs}
+
+    for path in sorted((root / "tests").glob("test_*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and (node.module or "").endswith("adapters"):
+                leaked = {alias.name for alias in node.names} & (moved | {"_request"})
+                assert not leaked, f"tests/{path.name} still imports {sorted(leaked)} from adapters"
