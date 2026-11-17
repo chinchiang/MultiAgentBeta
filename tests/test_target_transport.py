@@ -1,6 +1,7 @@
 """Public seams of target_transport: IP pinning, single-hop HTTP(S) transport and credential redaction."""
 import importlib.util
 import ipaddress
+import itertools
 import os
 import socket
 import ssl
@@ -378,10 +379,11 @@ def test_send_pinned_request_defense_in_depth_and_http_https_dial(serve, tls_pai
         return real_connect(sock, addr)
 
     with patch.object(socket.socket, "connect", redirect_ports):
-        send_pinned_request("http", "plain.fixture", 80, "127.0.0.1", timeout=2.0)
+        send_pinned_request("http", "plain.fixture", 80, "127.0.0.1", body=b"", timeout=2.0)
         send_pinned_request("http", "plain.fixture", 443, "127.0.0.1", timeout=2.0)
     assert plain_default.requests[0].startswith(b"GET / HTTP/1.1\r\n")
     assert b"Host: plain.fixture\r\n" in plain_default.requests[0]
+    assert b"content-length:" not in plain_default.requests[0].lower()
     assert b"Host: plain.fixture:443\r\n" in plain_default.requests[1]
 
     # Real TLS over loopback pinned IP: verifies SNI/SAN against host and omits :443 in Host header.
@@ -401,8 +403,8 @@ def test_send_pinned_request_defense_in_depth_and_http_https_dial(serve, tls_pai
             handshake_timeouts.append((sock.gettimeout(), kwargs))
         return real_wrap(self, sock, *args, **kwargs)
 
-    # Clock ticks: deadline=100.8 -> pre-connect remaining=0.7 -> pre-TLS remaining=0.5 (0 < remaining <= 1) -> pre-request=0.3 -> body read=0.2
-    ticks = iter([100.0, 100.1, 100.3, 100.5, 100.6, 100.7])
+    # Clock ticks: deadline=100.8 -> pre-connect remaining=0.7 -> pre-TLS remaining=0.5 (0 < remaining <= 1) -> pre-request=0.3 -> body reads=0.2
+    ticks = itertools.chain([100.0, 100.1, 100.3, 100.5], itertools.repeat(100.6))
     with patch.object(
         target_transport.ssl, "create_default_context", lambda: real_default_ctx(cafile=str(cert_file))
     ), patch.object(socket.socket, "connect", redirect_443_to_loopback), patch.object(
@@ -614,17 +616,27 @@ def test_post_send_policy_and_framing_refusals_report_delivered_and_status(serve
         )["body"]
         == "ok"
     )
-    for hdrs, status in (([], 200), (["X-Deploy: v2"], 302)):
+    for hdrs, status, dep_id in (
+        ([], 200, "v1"),
+        (["X-Deploy: v2"], 302, "v1"),
+        ([], 200, None),
+        (["X-Deploy: v1"], 200, None),
+    ):
         dep_bad = serve(wire_response(status, b"moved", ["Location: http://evil.invalid/", *hdrs]))
         with pytest.raises(TransportRefused) as exc_info:
             send_pinned_request(
-                "http", "127.0.0.1", dep_bad.port, "127.0.0.1", deployment_header="X-Deploy", deployment_id="v1"
+                "http", "127.0.0.1", dep_bad.port, "127.0.0.1", deployment_header="X-Deploy", deployment_id=dep_id
             )
         assert (exc_info.value.rule, exc_info.value.delivered, exc_info.value.status_code) == (
             "deployment_changed",
             True,
             status,
         )
+    # Empty deployment_header disables the deployment check.
+    assert (
+        send_pinned_request("http", "127.0.0.1", serve(wire_response(200, b"ok")).port, "127.0.0.1", deployment_header="")["body"]
+        == "ok"
+    )
 
     # Every 3xx status is refused with redirect; 299 and 400 are allowed.
     for status in (300, 301, 302, 307, 308, 399):
@@ -715,11 +727,7 @@ def test_chunked_reads_watchdog_timeouts_and_protocol_errors(serve):
     assert got["bytes"] == big_limit
     body_timeouts = [v for v in timeouts if v != 2]
     assert len(body_timeouts) >= 4 and all(0 < v <= 2.5 for v in body_timeouts)
-    seen_bytes = 0
-    for ask, n in sizes:
-        assert ask == min(8192, big_limit + 1 - seen_bytes)
-        seen_bytes += n
-    assert sizes[-1] == (1, 0)
+    assert sizes == [(8192, 8131), (8192, 8192), (67, 66), (1, 0)]
 
     # Slow trickled headers are interrupted by the daemon watchdog and reported as post-send timeout (delivered=True).
     def slow_headers(conn, _req):
@@ -780,6 +788,35 @@ def test_chunked_reads_watchdog_timeouts_and_protocol_errors(serve):
             True,
             None,
         )
+
+    # A deterministic TransportRefused (e.g. body_too_large) is never clobbered into timeout if the watchdog races it.
+    fire_callbacks = []
+
+    class ManualWatchdog:
+        daemon = True
+
+        def __init__(self, _interval, fn):
+            fire_callbacks.append(fn)
+
+        def start(self):
+            pass
+
+        def cancel(self):
+            pass
+
+    def spy_over_read1(self, size=-1):
+        chunk = real_read1(self, size)
+        for fn in fire_callbacks:
+            fn()
+        return chunk
+
+    race_over = serve(b"HTTP/1.1 202 OK\r\nConnection: close\r\n\r\n" + b"Z" * 33)
+    with patch.object(target_transport.threading, "Timer", ManualWatchdog), patch.object(
+        http.client.HTTPResponse, "read1", spy_over_read1
+    ):
+        with pytest.raises(TransportRefused) as exc_info:
+            send_pinned_request("http", "127.0.0.1", race_over.port, "127.0.0.1", max_response_bytes=32)
+    assert (exc_info.value.rule, exc_info.value.delivered, exc_info.value.status_code) == ("body_too_large", True, 202)
 
 
 

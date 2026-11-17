@@ -114,7 +114,8 @@ def resolve_pinned_ip(host: str, port: int, allowed_ips: list[str]) -> str:
 def secret_forms(value: str) -> set[str]:
     """The raw secret and the escaped forms a target may reflect it in (JSON, JSON with \\/, URL encoding)."""
     escaped = json.dumps(value)[1:-1]
-    return {value, escaped, escaped.replace("/", "\\/"), quote(value, safe="")} - {""}  # pragma: no mutate (letters are always unescaped by quote)
+    quoted = quote(value, safe="")  # pragma: no mutate (letters are always unescaped by quote)
+    return {value, escaped, escaped.replace("/", "\\/"), quoted} - {""}
 
 
 def credential_env_allowed(name: object, environ: Mapping[str, str] | None = None) -> bool:
@@ -275,12 +276,14 @@ def send_pinned_request(
         conn.default_port = 443 if scheme == "https" else 80
         conn.sock = sock
         try:
-            conn.request(method, path, body=body, headers=dict(headers) if headers else {})
+            conn.request(method, path, body=body or None, headers=dict(headers) if headers else {})
             response = conn.getresponse()
             if expired.is_set():
                 raise TimeoutError
-            if deployment_header and response.getheader(deployment_header) != deployment_id:
-                raise TransportRefused("deployment_changed", delivered=True, status_code=response.status)
+            if deployment_header:
+                observed_deployment = response.getheader(deployment_header)
+                if observed_deployment is None or observed_deployment != deployment_id:
+                    raise TransportRefused("deployment_changed", delivered=True, status_code=response.status)
             if 300 <= response.status < 400:
                 raise TransportRefused("redirect", delivered=True, status_code=response.status)
             encoding = response.getheader("Content-Encoding", "identity").lower()  # pragma: no mutate (header names and the default are compared case-insensitively)
@@ -325,19 +328,19 @@ def send_pinned_request(
                 text = raw.decode()
             except UnicodeDecodeError:
                 raise TransportRefused("invalid_utf8", delivered=True, status_code=response.status) from None
-            content_type = response.getheader("Content-Type", "application/json")  # pragma: no mutate (header names are case-insensitive)
+            content_type = response.getheader("Content-Type")  # pragma: no mutate (header names are case-insensitive)
             return {
                 "status_code": response.status,
                 "body": text,
                 "bytes": size,
                 "peer_ip": pinned_ip,
-                "content_type": content_type,
+                "content_type": "application/json" if content_type is None else content_type,
             }
+        except TransportRefused:
+            raise
         except Exception as exc:
             if isinstance(exc, TimeoutError) or expired.is_set():
                 raise TransportRefused("timeout", delivered=True) from None
-            if isinstance(exc, TransportRefused):
-                raise
             raise TransportRefused("protocol_error", delivered=True) from None
     finally:
         watchdog.cancel()
