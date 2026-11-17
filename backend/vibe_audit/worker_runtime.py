@@ -79,7 +79,8 @@ def phase_scope(manifest,phase):
 
 
 def _client_env(manifest):
-    from .adapters import AdapterBlocked,TARGET_CREDENTIAL_ORIGINS_ENV,credential_env_allowed,shared_credentials,unbound_target_credentials
+    from .adapters import AdapterBlocked,TARGET_CREDENTIAL_ORIGINS_ENV,shared_credentials,unbound_target_credentials
+    from .target_transport import credential_env_allowed
     from .worker_entry import clean_env
     result=clean_env()
     # A model key must never reach the supervisor that talks to the target, even under a second name;

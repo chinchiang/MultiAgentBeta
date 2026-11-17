@@ -312,7 +312,7 @@ threats:
       引用），以及與它同值的變數，都不能當測試身分的憑證；預檢、supervisor 環境與送出前都會拒絕（adapters.py:77-88、129-144、404-405）。
       測試身分的憑證也比照辦理：run 自己指定 target_url，所以憑證只送往操作者在 VIBEAUDIT_TARGET_CREDENTIAL_ORIGINS 綁定的
       origin，預設不綁定；預檢列出未綁定的變數並拒絕（service.py:398-403），supervisor 環境不帶未綁定的值、只帶綁定設定本身
-      （worker_runtime.py:81-99），送出前再以環境的綁定核對一次（adapters.py:90-117、407-408）；該變數也列為保留設定（adapters.py:41-47）。
+      （worker_runtime.py:81-100），送出前再以環境的綁定核對一次（adapters.py:90-117、407-408）；該變數也列為保留設定（adapters.py:41-47）。
       2026-10-06 第 6 次 G4 identity 審查指出原本只綁定模型金鑰，已補上（行為變更，2026-10-06 @chinchiang 確認保留）。
       殘留：持有 session 的人仍可在已綁定的 origin 使用金鑰（耗用額度），也可用已綁定的測試身分對該 origin 送出 allowed_requests 內的請求。
     status: mitigated
@@ -328,7 +328,7 @@ threats:
       live 預檢拒絕同名或同值（service.py:382-385，shared_credentials 見 adapters.py:129-144）；環境綁定為模型金鑰的變數一律算模型
       憑證，不論本 run 的模型是否引用（adapters.py:77-88）。送出前再擋（adapters.py:404-405）：supervisor 收到的 manifest 帶有模型
       憑證的名稱（不含值），所以這一層在送到目標前的最後一個受信任節點也有效（worker_runtime.py:66-73）；supervisor 的環境也不帶
-      與模型金鑰同值的目標憑證（worker_runtime.py:81-99）。
+      與模型金鑰同值的目標憑證（worker_runtime.py:81-100）。
     status: mitigated
     gate: G4
   - id: t-target-internal

@@ -27,6 +27,10 @@ import uuid
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0,str(HERE))
+try:
+    from . import target_transport as _target_transport
+except ImportError:
+    import target_transport as _target_transport  # type: ignore[import-not-found,no-redef]
 # Two copies (the worker's claim and the supervisor's record) of a task's bounded responses must fit.
 MAX_FRAME = 64*1024*1024
 # A broker request carries at most a 64 KiB body; nothing larger is buffered before the token check.
@@ -430,22 +434,21 @@ class Supervisor:
     def forward(self,method,path,headers,body,deadline=None):
         from adapters import _origin
         from lease import LeaseError
-        from target_transport import TransportRefused,resolve_pinned_ip,send_pinned_request  # type: ignore[import-not-found]  # flat import inside the container
         scheme,host,port=_origin(self.manifest)
-        try: pinned=resolve_pinned_ip(host,port,self.manifest.get("allowed_target_ips",[]))
-        except TransportRefused as exc: raise NotSent(BROKER_REFUSALS[exc.rule]) from None
+        try: pinned=_target_transport.resolve_pinned_ip(host,port,self.manifest.get("allowed_target_ips",[]))
+        except _target_transport.TransportRefused as exc: raise NotSent(BROKER_REFUSALS[exc.rule]) from None
         try: self.lease.validate(self.cap,self.worker_id)
         except LeaseError: raise NotSent("Run lease is no longer valid") from None
-        remaining=(time.monotonic()+BROKER_DEADLINE if deadline is None else deadline)-time.monotonic()
+        remaining=BROKER_DEADLINE if deadline is None else deadline-time.monotonic()
         try:
-            response=send_pinned_request(
+            response=_target_transport.send_pinned_request(
                 scheme,host,port,pinned,method,path,headers,body,
                 timeout=remaining,max_response_bytes=MAX_BODY,
                 deployment_header=self.manifest.get("deployment_header"),
                 deployment_id=self.manifest.get("deployment_id"),
                 egress=(self.sockets,self.socket_lock,self.revoked),
             )
-        except TransportRefused as exc:
+        except _target_transport.TransportRefused as exc:
             reason=BROKER_REFUSALS[exc.rule]
             if not exc.delivered:
                 raise NotSent(reason) from None
@@ -516,8 +519,7 @@ class Supervisor:
                     result["capture_success"]=True
             secrets.extend(self.sessions.values())
             # A target may reflect another identity's or model's credential; the sandboxed tool must not see that either.
-            from target_transport import redact_credentials
-            result["body"]=redact_credentials(result["body"],self.manifest,extra_secrets=secrets)
+            result["body"]=_target_transport.redact_credentials(result["body"],self.manifest,extra_secrets=secrets)
             self.lease.finish_dispatch(self.cap,self.worker_id,rid,sealed_dispatch,result)
             self.broker_observations.append({**record,"status_code":result["status_code"],"body":result["body"],"peer_ip":result["peer_ip"],"complete":True,"capture_success":result.get("capture_success") is True,"body_sha256":hashlib.sha256(result["body"].encode()).hexdigest()})
         except Exception:
