@@ -122,6 +122,7 @@ MultiAgentBeta/
 │   ├── contracts.py / policy.py   #   案例契約；manifest、白箱、威脅、案例閘門與 authorize
 │   ├── domain.py / schemas.py     #   資料模型與 JSON schema
 │   ├── adapters.py                #   受控 HTTP 傳輸、IP 釘選、oracle 評估
+│   ├── target_transport.py        #   鎖定數值 IP 的單跳 HTTP(S) 傳輸與統一憑證遮罩
 │   ├── request_rules.py           #   請求規則：送往目標的請求能長什麼樣、能不能送出（header、路徑、身分、scope、來源）
 │   ├── fixture_protocol.py        #   reset／setup／cleanup 協定、測試身分
 │   ├── effect_collector.py        #   獨立事件序列與 sink 收據
@@ -138,7 +139,7 @@ MultiAgentBeta/
 │   ├── tests/                     #   vitest 單元與元件測試（happy-dom 模擬瀏覽器，不需後端）
 │   ├── scripts/                   #   contract-smoke、browser-smoke、check-i18n、check-messages
 │   └── dist/                      #   已建置的介面，由 FastAPI 同 origin 提供
-├── tests/                         # pytest（31 個檔案，含 test_bilingual_docs.py 文件雙語檢查與 test_properties.py 的 Hypothesis 性質測試）
+├── tests/                         # pytest（32 個檔案，含 test_bilingual_docs.py 文件雙語檢查與 test_properties.py 的 Hypothesis 性質測試）
 ├── catalogs/                      # ASVS 5.0.0、WSTG 4.2、LLM 2026、Agentic 2026 標準 JSON 與 manifest
 │   └── sources/                   #   原始標準內容與授權
 ├── fixtures/                      # 掃描器規則與設定（Semgrep、Gitleaks、OSV）
@@ -329,6 +330,7 @@ MultiAgentBeta/
 │   ├── contracts.py / policy.py   #   case contract; manifest, white-box, threat and case gates, authorize
 │   ├── domain.py / schemas.py     #   data model and JSON schemas
 │   ├── adapters.py                #   controlled HTTP transport, IP pinning, oracle evaluation
+│   ├── target_transport.py        #   IP-pinned single-hop HTTP(S) transport and credential redaction
 │   ├── request_rules.py           #   request rules: what a request to the target may look like and whether it may be sent (headers, path, identity, scope, provenance)
 │   ├── fixture_protocol.py        #   reset/setup/cleanup protocol, test identities
 │   ├── effect_collector.py        #   independent event sequence and sink receipts
@@ -345,7 +347,7 @@ MultiAgentBeta/
 │   ├── tests/                     #   vitest unit and component tests (happy-dom simulated browser, no backend)
 │   ├── scripts/                   #   contract-smoke, browser-smoke, check-i18n, check-messages
 │   └── dist/                      #   built UI, served by FastAPI on the same origin
-├── tests/                         # pytest (31 files, including test_bilingual_docs.py for bilingual docs and the Hypothesis property tests in test_properties.py)
+├── tests/                         # pytest (32 files, including test_bilingual_docs.py for bilingual docs and the Hypothesis property tests in test_properties.py)
 ├── catalogs/                      # ASVS 5.0.0, WSTG 4.2, LLM 2026, Agentic 2026 standard JSON and manifest
 │   └── sources/                   #   original standard content and licenses
 ├── fixtures/                      # scanner rules and settings (Semgrep, Gitleaks, OSV)
