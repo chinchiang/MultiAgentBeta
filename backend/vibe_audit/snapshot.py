@@ -52,7 +52,8 @@ _AUTH_FIELD = re.compile(r'''(?i)(["'](?:auth|identitytoken|registrytoken)["']\s
 _KNOWN_SECRET = re.compile(r"(?<![A-Za-z0-9_-])(?:sk-(?:proj-|ant-)?[A-Za-z0-9_-]{16,}|[sr]k_(?:live|test)_[A-Za-z0-9]{16,}|gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{20,}|xox[abposr]-[A-Za-z0-9-]{10,}|AKIA[A-Z0-9]{16}|AIza[0-9A-Za-z_-]{35}|npm_[A-Za-z0-9]{36}|hf_[A-Za-z0-9]{30,}|ASIA[A-Z0-9]{16}|SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}|ya29\.[A-Za-z0-9_-]{20,}|shp(?:at|ss|ca|pa)_[a-fA-F0-9]{32}|dop_v1_[a-f0-9]{64}|pypi-[A-Za-z0-9_-]{50,}|hooks\.slack\.com/services/[A-Za-z0-9_/-]{20,}|eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})\b")
 _BEARER = re.compile(r"(?i)\b(Bearer\s+)[A-Za-z0-9._~+/=-]{8,}")
 # Other Authorization schemes ("Basic dXNlcjpwYXNz", "Token abc") only next to the header name: alone, "Basic" is prose.
-_AUTH_HEADER = re.compile(r"""(?i)((?<![A-Za-z0-9_-])authorization["']?\s*[:=,]\s*["']?[^\S\r\n]*(?:basic|token|digest|apikey)[^\S\r\n]+)[A-Za-z0-9._~+/=-]{4,}""")
+# The name may carry a Proxy-, X- or HTTP_ (CGI and Django's META) prefix; another word glued to it is a different name.
+_AUTH_HEADER = re.compile(r"""(?i)((?<![A-Za-z0-9_-])(?:proxy[_-]|x[_-]|http_)?authorization["']?\s*[:=,]\s*["']?[^\S\r\n]*(?:basic|token|digest|apikey)[^\S\r\n]+)[A-Za-z0-9._~+/=-]{4,}""")
 # Any scheme: postgres://, mongodb+srv://, redis://:password@ and so on. The bounded scheme
 # keeps runs like a.a.a.a from being rescanned after every dot.
 _URL_AUTH = re.compile(r"(?i)\b([a-z][a-z0-9+.-]{0,63}://)[^/\s:@]*:[^/\s@]+@")

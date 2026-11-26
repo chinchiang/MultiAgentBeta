@@ -174,3 +174,102 @@ def test_a_database_restart_is_noticed_and_the_lock_taken_again(tmp_path):
         assert other_controller(tmp_path / "two", url).startswith("busy:")
     finally:
         store.close()
+
+
+def test_a_store_without_a_database_claim_confirms_nothing(tmp_path, monkeypatch):
+    from vibe_audit import store as module
+    calls = []
+    monkeypatch.setattr(module, "_confirm_database", lambda *args: calls.append(args))
+    store = Store(tmp_path)
+    try:
+        Engine(store)
+        store.confirm_controller()
+        assert calls == []
+    finally:
+        store.close()
+
+
+def test_a_forked_child_takes_a_database_lock_of_its_own(monkeypatch):
+    # The parent's claim is in the inherited table; confirming it must not touch the parent's session.
+    from vibe_audit import store as module
+    class Parent:
+        def execute(self, *args):
+            raise AssertionError("the parent's session was used")
+    class Fresh:
+        def execute(self, *args):
+            class Row:
+                def fetchone(self):
+                    return (True,)
+            return Row()
+    inherited = module._Claim(Parent())
+    inherited.pid = os.getpid() + 1
+    monkeypatch.setattr(module, "_CLAIMS", {"db:synthetic": inherited})
+    fresh = Fresh()
+    module._confirm_database("db:synthetic", lambda: fresh)
+    assert module._CLAIMS["db:synthetic"].handle is fresh and module._CLAIMS["db:synthetic"].pid == os.getpid()
+
+
+def lock_session(url):
+    from vibe_audit import store as module
+    return module._CLAIMS["db:" + url].handle.info.backend_pid
+
+
+def terminate(url, *pids):
+    import psycopg
+    with psycopg.connect(url, autocommit=True) as admin:
+        for pid in pids:
+            admin.execute("SELECT pg_terminate_backend(%s)", (pid,))
+
+
+def test_a_lock_session_lost_unseen_is_taken_again_before_the_next_write(tmp_path):
+    url = postgres_url()
+    store = Store(tmp_path, url)
+    engine = Engine(store, url)
+    try:
+        run = engine.create(RunInput(name="Writes on"))
+        pid = lock_session(url)
+        # An idle timeout or a proxy ended only the lock's session; the store's own connection is fine.
+        terminate(url, pid)
+        store.save(run)
+        assert lock_session(url) != pid
+        assert other_controller(tmp_path / "two", url).startswith("busy:")
+    finally:
+        store.close()
+
+
+def test_a_reconnect_confirms_the_lock_before_its_statement(tmp_path):
+    url = postgres_url()
+    store = Store(tmp_path, url)
+    engine = Engine(store, url)
+    try:
+        run = engine.create(RunInput(name="Database restarted"))
+        pid = lock_session(url)
+        # A database restart ends both sessions; a read reconnects first.
+        terminate(url, pid, store.conn.info.backend_pid)
+        assert store.get(run["id"])["name"] == "Database restarted"
+        assert lock_session(url) != pid
+    finally:
+        store.close()
+
+
+def test_a_controller_whose_lock_was_taken_writes_nothing(tmp_path):
+    import psycopg
+    from vibe_audit import store as module
+    url = postgres_url()
+    store = Store(tmp_path, url)
+    engine = Engine(store, url)
+    other = psycopg.connect(url, autocommit=True)
+    try:
+        run = engine.create(RunInput(name="Taken over"))
+        terminate(url, lock_session(url))
+        # Another process started meanwhile and holds the lock now.
+        assert other.execute("SELECT pg_try_advisory_lock(%s)", (module.CONTROLLER_LOCK_KEY,)).fetchone()[0]
+        run["name"] = "must not be written"
+        with pytest.raises(ControllerBusy, match="already controls this database"):
+            store.save(run)
+        with pytest.raises(ControllerBusy):
+            store.update_job("job", "sent", {})
+        assert store.get(run["id"])["name"] == "Taken over"
+    finally:
+        other.close()
+        store.close()

@@ -987,6 +987,78 @@ def test_recoveries_of_one_run_take_turns(engine,monkeypatch):
     assert not errors and saves==["incomplete"] and not engine.unsaved
 
 
+def test_a_reconcile_and_a_cancel_recovering_at_once_do_not_deadlock(engine):
+    # Reconcile recovers from a worker thread already holding the store's lock; cancel recovers on the event loop.
+    import threading
+    first=engine.create(RunInput(name="Reconciled"))
+    second=engine.create(RunInput(name="Cancelled"))
+    for run in (first,second):
+        run["status"]="running"
+        engine.store.save(run)
+    held=threading.Event()
+    def reconcile():
+        with engine.store.lock:
+            held.set()
+            # The cancel below starts its recovery meanwhile.
+            time.sleep(0.3)
+            engine.recover(first["id"])
+    def cancel():
+        held.wait()
+        engine.recover(second["id"])
+    threads=[threading.Thread(target=reconcile,daemon=True),threading.Thread(target=cancel,daemon=True)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+    assert not any(thread.is_alive() for thread in threads), "the two recoveries deadlocked"
+    assert {engine.store.get(run["id"])["status"] for run in (first,second)}=={"incomplete"}
+
+
+async def test_a_closing_settle_that_fails_is_retried_by_the_last_save(engine,monkeypatch):
+    # The store was down for the closing settle and back for the last save: the run must not be saved as finished
+    # while its sent job stays hidden.
+    from vibe_audit import service
+    monkeypatch.setattr(service,"FINAL_SAVE_RETRY_SECONDS",(0,0))
+    run=engine.create(RunInput(name="Settle during outage"))
+    async def dispatching_blackbox(run):
+        case=run["cases"][0]
+        job=engine.store.job(run["id"],case)
+        engine.store.update_job(job,"sent",{"case_hash":case["hash"],"side_effects":False,"sent_at":"now","repetition":0})
+        # The outage begins after the dispatch and is over by the last save.
+        outage["left"]=1
+        raise KeyError("title")
+    monkeypatch.setattr(engine,"_blackbox",dispatching_blackbox)
+    jobs=engine.store.jobs
+    outage={"left":0}
+    def flaky_jobs(run_id):
+        if outage["left"]:
+            outage["left"]-=1
+            raise OSError("synthetic database outage")
+        return jobs(run_id)
+    monkeypatch.setattr(engine.store,"jobs",flaky_jobs)
+    engine.start(run["id"])
+    await engine.tasks[run["id"]]
+    stored=engine.store.get(run["id"])
+    assert stored["status"]=="failed" and not engine.unsaved
+    assert [e["status"] for e in stored["executions"]]==["outcome_unknown"]
+    assert [j["status"] for j in jobs(run["id"])]==["finished"]
+
+
+async def test_a_sent_job_left_on_a_finished_run_is_settled_by_the_next_action(engine):
+    # Its closing settle and every retry failed while the save itself landed: no attempt holds the job any more.
+    run=engine.create(RunInput(name="Finished with a sent job"))
+    run.update(status="failed",stage="blackbox",cases=[{"id":"C-001","title":"Tenant boundary","hash":"sealed"}])
+    engine.store.save(run)
+    job=engine.store.job(run["id"],run["cases"][0])
+    engine.store.update_job(job,"sent",{"case_hash":"sealed","side_effects":False,"sent_at":"now","repetition":0})
+    with pytest.raises(PolicyError,match="outcome_unknown"):
+        engine.start(run["id"],resume=True)
+    stored=engine.store.get(run["id"])
+    assert stored["status"]=="failed"
+    assert [(e["id"],e["status"]) for e in stored["executions"]]==[(job,"outcome_unknown")]
+    assert any("Tenant boundary" in gap and "never recorded" in gap for gap in stored["gaps"])
+
+
 def test_shutdown_saves_a_final_state_its_last_save_lost(tmp_path):
     with TestClient(create_app(tmp_path,testing=True)) as client:
         engine=client.app.state.engine

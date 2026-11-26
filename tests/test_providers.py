@@ -477,6 +477,9 @@ SECRET_FORMATS = [
     "  GITHUB_TOKEN=synthetic-secret-1 # ci", '  - "NPM_TOKEN=synthetic-secret-1"',
     "Authorization: Basic synthetic-secret", 'headers = {"Authorization": "Basic synthetic-secret"}',
     'curl -H "Authorization: Token synthetic-secret" https://api.example',
+    # The same header under a proxy, CGI/Django META or X- name.
+    "Proxy-Authorization: Basic synthetic-secret", "HTTP_AUTHORIZATION: Basic synthetic-secret",
+    "request.META = {'HTTP_AUTHORIZATION': 'Basic synthetic-secret'}", "X-Authorization: Token synthetic-secret",
 ]
 
 
@@ -491,7 +494,9 @@ def test_redaction_covers_common_secret_formats(content):
                                      'tokenizer = load("cl100k")', '<input type="password" name="password">',
                                      'bypass = "cache"', "compass: north", "passthrough = True", "for item in items: pass",
                                      "token: string", "  token?: string;", "token = None", "token = req.token", "token = get_token(user)",
-                                     "csrf_token = request.form['csrf']", "Basic authentication is required", "- token=${{ secrets.TOKEN }}"])
+                                     "csrf_token = request.form['csrf']", "Basic authentication is required", "- token=${{ secrets.TOKEN }}",
+                                     # A word glued to the name makes another name.
+                                     "preauthorization: Basic dXNlcjpwYXNz", "xhttp_authorization: Basic dXNlcjpwYXNz"])
 def test_redaction_keeps_security_relevant_code_readable(content):
     # Reviewers must still see how credentials are handled, not only that they exist.
     assert redact_text(content) == content
@@ -551,6 +556,9 @@ def test_tokenizer_loader_rejects_unknown_network_assets():
     ("key AKIAABCDEFGHIJKLMNOP end", "key [REDACTED_TOKEN] end"),
     ("Authorization: Bearer abcdefghij1234", "Authorization: Bearer [REDACTED]"),
     ("Authorization: Basic dXNlcjpwYXNz", "Authorization: Basic [REDACTED]"),
+    ("Proxy-Authorization: Basic dXNlcjpwYXNz", "Proxy-Authorization: Basic [REDACTED]"),
+    ("HTTP_AUTHORIZATION: Basic dXNlcjpwYXNz", "HTTP_AUTHORIZATION: Basic [REDACTED]"),
+    ("x_authorization = Token abc123", "x_authorization = Token [REDACTED]"),
     ('AWS_SECRET_ACCESS_KEY = "abc123"', 'AWS_SECRET_ACCESS_KEY = [REDACTED]'),
     ("  - DB_PASSWORD=hunter2", "  - DB_PASSWORD=[REDACTED]"),
     ("  - 'DB_PASSWORD=hunter 2'", "  - 'DB_PASSWORD=[REDACTED]'"),

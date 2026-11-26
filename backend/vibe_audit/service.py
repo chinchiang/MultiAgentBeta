@@ -6,7 +6,6 @@ import hashlib
 import json
 import html
 import re
-import threading
 import uuid
 from datetime import datetime
 from functools import partial
@@ -58,8 +57,6 @@ class Engine:
         self.runtime_configs: dict[str,dict]={}
         # Finished attempts whose last save failed: their final state, kept until a save succeeds.
         self.unsaved: dict[str,dict]={}
-        # Reconcile recovers from a worker thread while the other actions do so on the event loop: one at a time.
-        self.recovering=threading.RLock()
         # Recovery rewrites every running run and deletes staged copies: only the one controller of this data may do it.
         store.claim_controller()
         for run in store.list():
@@ -96,9 +93,13 @@ class Engine:
         """Before acting on a run no attempt in this controller holds, settle what a lost last save left behind.
 
         A finished attempt whose final save failed is saved now. Without that state (the store says running or
-        cancelling, yet nothing runs it) the stored run is closed as a restart would close it. Raises while the store
-        is still unreachable, so the action fails instead of acting on the stale row."""
-        with self.recovering:
+        cancelling, yet nothing runs it) the stored run is closed as a restart would close it. A job still marked sent
+        is settled whatever the run's status: with no attempt holding it, its result will never be recorded. Raises
+        while the store is still unreachable, so the action fails instead of acting on the stale row.
+
+        Held under the store's own lock: reconcile recovers from a worker thread that already holds it, and a second
+        lock taken in the other order on the event loop would deadlock the console."""
+        with self.store.lock:
             if self.executing(run_id):
                 return
             if run_id in self.unsaved:
@@ -109,12 +110,14 @@ class Engine:
             if run["status"]=="running" or run["status"]=="cancelling" and not run.get("workers_pending_cleanup"):
                 self.store.claim_controller()
                 self.interrupted(run,restarted=False)
+            else:
+                self.settle_sent_jobs(run,"The workflow stopped before this request's result was recorded; its outcome is unknown")
 
     def flush_unsaved(self,run_id=None):
         """Save the final state of finished attempts whose last save failed: run_id's, raising if it still cannot, or
         every one, logging each that cannot (at shutdown). The requests their closing could not settle are settled
         first: a request sent without a recorded result must reach the exports."""
-        with self.recovering:
+        with self.store.lock:
             for key in [run_id] if run_id is not None else list(self.unsaved):
                 pending=self.unsaved.get(key)
                 if pending is None:
@@ -368,22 +371,33 @@ class Engine:
                 await asyncio.to_thread(self.discard_staging_copy,run)
             except Exception as exc:
                 note_failure(f"run {run['id']} staging cleanup",exc)
+            settled=True
             try:
                 self.settle_sent_jobs(run,"The workflow stopped before this request's result was recorded; its outcome is unknown")
             except Exception as exc:
-                # The journal still marks them sent: a resume refuses, and flush_unsaved or a restart settles them.
+                # The journal still marks them sent: the last save settles them first, or else flush_unsaved, the next
+                # recover or a restart does.
                 note_failure(f"run {run['id']} settling sent jobs",exc)
+                settled=False
             run["active_seconds"]=elapsed_seconds(run)
             run["attempt_started_at"]=None
-            await self.save_final(run)
+            await self.save_final(run,settle=not settled)
 
-    async def save_final(self,run):
+    async def save_final(self,run,settle=False):
         """The attempt's last save, retried through a short store outage. When every try fails, the final state stays
         in memory for recover(): the stored row still says running, and acting on it alone would lose this state.
-        Each try runs in a thread: against an unreachable database one waits out the connect timeout, and the console
-        must keep serving meanwhile."""
+        With settle, each try first settles the sent jobs the closing could not, so a run saved as finished does not
+        hide a request whose result was not recorded; a settle that fails does not hold back the save, and the next
+        recover() settles what is left. Each try runs in a thread: against an unreachable database one waits out the
+        connect timeout, and the console must keep serving meanwhile."""
         for delay in (*FINAL_SAVE_RETRY_SECONDS,None):
             try:
+                if settle:
+                    try:
+                        await asyncio.to_thread(self.settle_sent_jobs,run,"The workflow stopped before this request's result was recorded; its outcome is unknown")
+                        settle=False
+                    except Exception as exc:
+                        note_failure(f"run {run['id']} settling sent jobs",exc)
                 await asyncio.to_thread(self.store.save,run)
                 return
             except Exception as exc:

@@ -176,7 +176,12 @@ def _confirm_database(key: str, connect):
     the console serves requests, so the lock is tried once: a process that took it over will not let go."""
     import psycopg
     with _CLAIMS_GUARD:
-        claim = _CLAIMS[key]
+        claim = _CLAIMS.get(key)
+        if claim is None or claim.pid != os.getpid():
+            # A forked child must not touch the session it inherited: it takes a lock of its own, or is refused.
+            claim = _CLAIMS[key] = _Claim(_lock_database(connect, 0))
+            claim.holders = 1
+            return
         try:
             claim.handle.execute("SELECT 1")
             return
@@ -239,6 +244,15 @@ class Store:
             _hold(database, lambda: _lock_database(self._connect, CONTROLLER_WAIT_SECONDS))
             self.claims.append(database)
 
+    def confirm_controller(self):
+        """Before a write, confirm this store still holds the database claim it took: the lock lives on a session of
+        its own, which a database restart, an idle timeout or a proxy can end unseen, and another process may then
+        start and recover this one's live runs. A claim that cannot be taken back raises ControllerBusy, so this
+        process stops writing. One round trip on the lock's connection; nothing for SQLite or an unclaimed store."""
+        database = "db:" + str(self.database_url)
+        if self.postgres and database in self.claims:
+            _confirm_database(database, self._connect)
+
     def _connect(self):
         import psycopg
         conn = psycopg.connect(self.database_url, autocommit=True, connect_timeout=5)
@@ -262,6 +276,8 @@ class Store:
             if self.transacting:
                 raise
             self.conn = self._connect()
+            # Whatever dropped this connection most likely ended the lock's session too.
+            self.confirm_controller()
             return self.conn.execute(sql, args)
 
     @contextmanager
@@ -291,6 +307,7 @@ class Store:
     def save(self, run: dict):
         """Write the run; its events are appended to their own table, so a run with thousands of them is not rewritten
         whole on every event, and an event once stored is never rewritten."""
+        self.confirm_controller()
         run["updated_at"] = now()
         payload = json.dumps(run, ensure_ascii=False)
         if _SURROGATE.search(payload):
@@ -382,11 +399,14 @@ class Store:
     def job(self, run_id: str, case: dict) -> str:
         job_id = str(uuid.uuid4())
         payload = {"case_hash": case["hash"], "side_effects": case.get("side_effects",False), "created_at":now(), "attempt":1}
+        self.confirm_controller()
         with self.lock:
             self._execute(self.sql["insert_job"], (job_id,run_id,case["id"],"prepared",json.dumps(payload)))
         return job_id
 
     def update_job(self, job_id: str, status: str, payload: dict):
+        # A job marked sent comes before its request: only the controller may journal one.
+        self.confirm_controller()
         with self.lock:
             self._execute(self.sql["update_job"], (status,json.dumps(payload),job_id))
 
