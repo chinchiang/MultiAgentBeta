@@ -1,7 +1,6 @@
 """The pull-request mutation gate covers what [tool.mutmut] mutates, and a changed test file mutates what it tests."""
 import importlib.util
 import json
-import subprocess
 import tomllib
 from pathlib import Path
 
@@ -42,22 +41,59 @@ def test_every_selected_test_file_names_what_it_tests():
     assert set(mutmut["only_mutate"]) == {module for modules in table.values() for module in modules}
 
 
+def modules_for(monkeypatch, names, then=None):
+    """tested_modules with these files changed since the base, and the table at the base as given (as now if None)."""
+    module = script()
+    now = tool()["vibeaudit"]["mutation"]["tests"]
+    monkeypatch.setattr(module, "changed_test_files", lambda base: names)
+    monkeypatch.setattr(module, "table_at", lambda base: now if then is None else then)
+    return module.tested_modules("base")
+
+
 @from_checkout
 def test_a_changed_test_file_names_the_modules_it_tests(monkeypatch):
+    # test_engine.py is not in the selection and the baseline is no test, so neither names anything.
+    names = ["tests/test_policy_gates.py", "tests/test_snapshot_catalog.py", "tests/test_engine.py", "tests/mutation-baseline.json"]
+    assert modules_for(monkeypatch, names) == ["src/vibe_audit/catalog.py", "src/vibe_audit/policy.py", "src/vibe_audit/snapshot.py"]
+
+
+@from_checkout
+def test_a_deleted_test_file_names_what_it_tested_at_the_base(monkeypatch):
+    then = {**tool()["vibeaudit"]["mutation"]["tests"], "tests/test_gone.py": ["src/vibe_audit/lease.py"]}
+    assert modules_for(monkeypatch, ["tests/test_gone.py"], then) == ["src/vibe_audit/lease.py"]
+
+
+@from_checkout
+def test_an_entry_of_the_table_that_changed_names_both_its_old_and_new_modules(monkeypatch):
+    # No test file changed: only what the table says one tests.
+    then = {**tool()["vibeaudit"]["mutation"]["tests"], "tests/test_lease.py": ["src/vibe_audit/catalog.py"]}
+    assert modules_for(monkeypatch, [], then) == ["src/vibe_audit/catalog.py", "src/vibe_audit/lease.py"]
+
+
+@from_checkout
+def test_a_changed_helper_names_what_the_test_files_importing_it_test(monkeypatch):
+    importers = [name for name in tool()["vibeaudit"]["mutation"]["tests"] if "from fakes import" in (ROOT / name).read_text(encoding="utf-8")]
+    assert "tests/test_answers.py" in importers
+    expected = sorted({module for name in importers for module in tool()["vibeaudit"]["mutation"]["tests"][name]})
+    assert modules_for(monkeypatch, ["tests/fakes.py"]) == expected and "src/vibe_audit/answers.py" in expected
+
+
+@from_checkout
+def test_the_comparison_is_against_where_the_branch_left_the_base(monkeypatch, tmp_path):
     module = script()
-    def diff(args, **kwargs):
-        assert args[:4] == ["git", "diff", "--name-only", "origin/main"] and args[-2:] == ["--", "tests"]
-        names = "tests/test_policy_gates.py\ntests/test_snapshot_catalog.py\ntests/test_engine.py\ntests/mutation-baseline.json\n"
-        return subprocess.CompletedProcess(args, 0, names, "")
-    monkeypatch.setattr(module.subprocess, "run", diff)
-    # test_engine.py is not in the selection, so it names nothing.
-    assert module.tested_modules("origin/main") == ["src/vibe_audit/catalog.py", "src/vibe_audit/policy.py", "src/vibe_audit/snapshot.py"]
+    seen = []
+    monkeypatch.setattr(module, "merge_base", lambda ref: "base-commit")
+    monkeypatch.setattr(module, "changed_functions", lambda base: seen.append(("functions", base)) or [])
+    monkeypatch.setattr(module, "tested_modules", lambda base: seen.append(("tests", base)) or [])
+    assert module.main(["--changed", "origin/main"]) == 0
+    assert seen == [("tests", "base-commit"), ("functions", "base-commit")]
 
 
 def run_changed(monkeypatch, tmp_path, functions, whole, states=None, ceilings=None):
     module = script()
-    monkeypatch.setattr(module, "changed_functions", lambda ref: functions)
-    monkeypatch.setattr(module, "tested_modules", lambda ref: whole)
+    monkeypatch.setattr(module, "merge_base", lambda ref: "base-commit")
+    monkeypatch.setattr(module, "changed_functions", lambda base: functions)
+    monkeypatch.setattr(module, "tested_modules", lambda base: whole)
     monkeypatch.setattr(module, "TEST_MAP", tmp_path / "mutmut-stats.json")
     baseline = tmp_path / "baseline.json"
     baseline.write_text(json.dumps(ceilings or {"modules": {}, "functions": {}}), encoding="utf-8")
@@ -95,3 +131,13 @@ def test_a_module_whose_tests_changed_is_held_to_its_module_ceiling(monkeypatch,
     assert code == expected
     shown = [args for args in calls if args[0] == "show"]
     assert shown == ([] if expected == 0 else [("show", "vibe_audit.policy.x_sealed__mutmut_2")])
+
+
+@from_checkout
+def test_a_changed_function_in_a_module_mutated_whole_keeps_its_own_ceiling(monkeypatch, tmp_path, capsys):
+    # The module stays within its total, yet the new function lets a mutant escape: new code must let none.
+    states = {"vibe_audit.policy.x_fresh__mutmut_1": "survived", "vibe_audit.policy.x_sealed__mutmut_1": "killed"}
+    code, calls = run_changed(monkeypatch, tmp_path, ["vibe_audit.policy.x_fresh__mutmut_*"], ["src/vibe_audit/policy.py"], states,
+                              {"modules": {"src/vibe_audit/policy.py": 2}, "functions": {}})
+    assert calls[0] == ("run", "vibe_audit.policy.*")
+    assert code == 1 and "vibe_audit.policy.x_fresh: 1 escaped, ceiling none (new code)" in capsys.readouterr().out

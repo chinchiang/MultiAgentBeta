@@ -102,12 +102,21 @@ def escaped(states_of_one):
     return sum(states_of_one.get(state, 0) for state in ESCAPED)
 
 
-def changed_functions(ref):
-    """Mutant name patterns for every top-level function and method the working tree changed against ref."""
+def git(*args):
+    return subprocess.run(["git", *args], cwd=ROOT, capture_output=True, text=True, check=True).stdout
+
+
+def merge_base(ref):
+    """Where this branch left ref: what changed on ref since then is not this branch's change."""
+    return git("merge-base", ref, "HEAD").strip()
+
+
+def changed_functions(base):
+    """Mutant name patterns for every top-level function and method the working tree changed against base."""
     patterns = []
     for module in modules():
         source = ROOT / "backend" / module.removeprefix("src/")
-        diff = subprocess.run(["git", "diff", "-U0", ref, "--", str(source)], cwd=ROOT, capture_output=True, text=True, check=True).stdout
+        diff = git("diff", "-U0", base, "--", str(source))
         touched = set()
         for start, length in HUNK.findall(diff):
             start, length = int(start), int(length) if length else 1
@@ -127,11 +136,34 @@ def changed_functions(ref):
     return patterns
 
 
-def tested_modules(ref):
-    """The modules, as [tool.mutmut] names them, that a test file the working tree changed against ref tests."""
-    table = config()["vibeaudit"]["mutation"]["tests"]
-    names = subprocess.run(["git", "diff", "--name-only", ref, "--", "tests"], cwd=ROOT, capture_output=True, text=True, check=True).stdout.split()
-    return sorted({module for name in names for module in table.get(name, [])})
+def table_at(base):
+    """[tool.vibeaudit.mutation.tests] as pyproject.toml had it at base, or {} where it had none."""
+    shown = subprocess.run(["git", "show", f"{base}:pyproject.toml"], cwd=ROOT, capture_output=True, text=True)
+    if shown.returncode:
+        return {}
+    return tomllib.loads(shown.stdout).get("tool", {}).get("vibeaudit", {}).get("mutation", {}).get("tests", {})
+
+
+def changed_test_files(base):
+    return git("diff", "--name-only", base, "--", "tests").split()
+
+
+def tested_modules(base):
+    """The modules, as [tool.mutmut] names them, whose tests the working tree changed against base.
+
+    A test file changed, deleted or renamed counts by its entry now and at base, so dropping one is caught too; so does
+    an entry of the table that is new, gone or different. A changed helper beside the tests (tests/fakes.py) counts as
+    every listed test file that imports it."""
+    now, then = config()["vibeaudit"]["mutation"]["tests"], table_at(base)
+    names = changed_test_files(base)
+    touched = set(names)
+    for name in names:
+        if name.endswith(".py") and name not in now and name not in then:
+            imports = re.compile(rf"^\s*(?:from|import)\s+{re.escape(Path(name).stem)}\b", re.M)
+            touched.update(test for test in now if (ROOT / test).is_file() and imports.search((ROOT / test).read_text(encoding="utf-8")))
+    touched.update(name for name in now.keys() | then.keys() if now.get(name) != then.get(name))
+    mutated = set(modules())
+    return sorted({module for name in touched for module in [*now.get(name, []), *then.get(name, [])] if module in mutated})
 
 
 def with_link(action):
@@ -173,11 +205,14 @@ def main(argv):
     baseline = json.loads(BASELINE.read_text(encoding="utf-8")) if BASELINE.exists() else {}
     whole = []
     if ref is not None:
-        whole = tested_modules(ref)
-        functions = changed_functions(ref)
-        # A function inside a module mutated whole is in it already.
-        functions = [name for name in functions if not any(name.startswith(dotted(module) + ".") for module in whole)]
-        mutant_names = functions + [dotted(module) + ".*" for module in whole]
+        # Against the merge base: what landed on ref since this branch left it is not this branch's change.
+        base = merge_base(ref)
+        whole = tested_modules(base)
+        functions = changed_functions(base)
+        # A function inside a module mutated whole is run with it, and still held to its own ceiling below: a module
+        # within its total may not hide a new function that lets a mutant escape.
+        outside = [name for name in functions if not any(name.startswith(dotted(module) + ".") for module in whole)]
+        mutant_names = outside + [dotted(module) + ".*" for module in whole]
         if not mutant_names:
             print(f"No function of the mutated modules, and no test file that tests one, changed against {ref}; nothing to mutate")
             return 0
@@ -216,7 +251,7 @@ def main(argv):
         shown = [key for key, state in keys_states.items() if state in ESCAPED and (function_of(key) in over or module_of(key) in over_modules)]
         if shown:
             print()
-            print("What each of those functions' escaped mutants changed:")
+            print("What each escaped mutant of a function or module over its ceiling changed:")
             with_link(lambda: [mutmut("show", key) for key in shown])
     else:
         with_link(lambda: mutmut("results"))
