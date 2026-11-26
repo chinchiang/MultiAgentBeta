@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import builtins
+import hashlib
 import json
 import os
 import re
 import sqlite3
 import stat
 import threading
+import time
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
@@ -91,6 +93,117 @@ class RunNotFound(KeyError):
     """Only an unknown run is a 404; any other KeyError is a bug and must not read as one."""
 
 
+class ControllerBusy(RuntimeError):
+    """Another process already controls this data directory or database."""
+
+
+# The controller claims: one per data directory and one per database. Startup recovery marks every running run
+# interrupted and deletes staged copies, which would break the runs of a controller that is still live. A claim is
+# this process's, shared by each store that takes it (tests restart an engine in place), and released when the last of
+# them closes; another process waits CONTROLLER_WAIT_SECONDS, so one that is shutting down can let go, then is refused.
+CONTROLLER_WAIT_SECONDS = 10
+# pg_try_advisory_lock takes one bigint; this one is the first eight bytes of sha256("vibe-audit controller"), signed.
+CONTROLLER_LOCK_KEY = int.from_bytes(hashlib.sha256(b"vibe-audit controller").digest()[:8], "big", signed=True)
+
+
+class _Claim:
+    def __init__(self, handle):
+        self.handle = handle
+        self.pid = os.getpid()
+        self.holders = 0
+
+
+_CLAIMS: dict[str, _Claim] = {}
+_CLAIMS_GUARD = threading.Lock()
+
+
+def _until_free(attempt, wait: float):
+    """The handle attempt() returns once the lock is free, or None when it is still held after wait seconds."""
+    deadline = time.monotonic() + wait
+    while True:
+        handle = attempt()
+        if handle is not None or time.monotonic() >= deadline:
+            return handle
+        time.sleep(0.2)
+
+
+def _lock_directory(root: Path):
+    def attempt():
+        handle = os.fdopen(os.open(root / "controller.lock", os.O_RDWR | os.O_CREAT, 0o600), "r+b")
+        try:
+            if os.name == "nt":
+                import msvcrt
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            handle.close()
+            return None
+        return handle
+    handle = _until_free(attempt, CONTROLLER_WAIT_SECONDS)
+    if handle is None:
+        raise ControllerBusy(f"Another Vibe Audit process already uses the data directory {root}; stop it or choose another directory")
+    return handle
+
+
+def _lock_database(connect, wait: float):
+    """A session-level advisory lock on a connection of its own, so the store's reconnects never drop it unseen."""
+    conn = connect()
+    try:
+        held = _until_free(lambda: conn if conn.execute("SELECT pg_try_advisory_lock(%s)", (CONTROLLER_LOCK_KEY,)).fetchone()[0] else None, wait)
+    except BaseException:
+        conn.close()
+        raise
+    if held is None:
+        conn.close()
+        raise ControllerBusy("Another Vibe Audit process already controls this database; stop it before starting another")
+    return held
+
+
+def _hold(key: str, acquire):
+    with _CLAIMS_GUARD:
+        claim = _CLAIMS.get(key)
+        # A forked child inherits its parent's claims; sharing the parent's database session would corrupt it.
+        if claim is None or claim.pid != os.getpid():
+            claim = _CLAIMS[key] = _Claim(acquire())
+        claim.holders += 1
+
+
+def _confirm_database(key: str, connect):
+    """The advisory lock lives as long as its session: a database restart ends both, and another process may hold
+    the lock by now. A dead session is replaced and the lock taken again, or ControllerBusy is raised. This runs while
+    the console serves requests, so the lock is tried once: a process that took it over will not let go."""
+    import psycopg
+    with _CLAIMS_GUARD:
+        claim = _CLAIMS.get(key)
+        if claim is None or claim.pid != os.getpid():
+            # A forked child must not touch the session it inherited: it takes a lock of its own, or is refused.
+            claim = _CLAIMS[key] = _Claim(_lock_database(connect, 0))
+            claim.holders = 1
+            return
+        try:
+            claim.handle.execute("SELECT 1")
+            return
+        except psycopg.Error:
+            try:
+                claim.handle.close()
+            except psycopg.Error:
+                pass
+        claim.handle = _lock_database(connect, 0)
+
+
+def _release(key: str):
+    with _CLAIMS_GUARD:
+        claim = _CLAIMS.get(key)
+        if claim is None or claim.pid != os.getpid():
+            return
+        claim.holders -= 1
+        if claim.holders == 0:
+            del _CLAIMS[key]
+            claim.handle.close()
+
+
 class Store:
     """Durable job journal. PostgreSQL for live; SQLite only for local synthetic demo."""
 
@@ -102,6 +215,7 @@ class Store:
         private_dirs(self.root, self.artifacts)
         self.lock = threading.RLock()
         self.transacting = False
+        self.claims: list[str] = []
         self.postgres = bool(database_url)
         self.database_url = database_url
         self.sql = dialect(SQL, self.postgres)
@@ -112,6 +226,32 @@ class Store:
             self.conn.execute("PRAGMA journal_mode=WAL")
         for name in ("create_runs", "create_jobs", "create_entity_versions", "create_relations", "create_settings", "create_events"):
             self._execute(self.sql[name])
+
+    def claim_controller(self):
+        """Claim the data directory, and the database when there is one, for this process; raises ControllerBusy.
+
+        Called again before acting on what a lost attempt left behind: a database restart releases the database
+        claim, so it is confirmed or taken again."""
+        directory, database = "dir:" + str(self.root), "db:" + str(self.database_url)
+        if directory not in self.claims:
+            _hold(directory, lambda: _lock_directory(self.root))
+            self.claims.append(directory)
+        if not self.postgres:
+            return
+        if database in self.claims:
+            _confirm_database(database, self._connect)
+        else:
+            _hold(database, lambda: _lock_database(self._connect, CONTROLLER_WAIT_SECONDS))
+            self.claims.append(database)
+
+    def confirm_controller(self):
+        """Before a write, confirm this store still holds the database claim it took: the lock lives on a session of
+        its own, which a database restart, an idle timeout or a proxy can end unseen, and another process may then
+        start and recover this one's live runs. A claim that cannot be taken back raises ControllerBusy, so this
+        process stops writing. One round trip on the lock's connection; nothing for SQLite or an unclaimed store."""
+        database = "db:" + str(self.database_url)
+        if self.postgres and database in self.claims:
+            _confirm_database(database, self._connect)
 
     def _connect(self):
         import psycopg
@@ -136,6 +276,8 @@ class Store:
             if self.transacting:
                 raise
             self.conn = self._connect()
+            # Whatever dropped this connection most likely ended the lock's session too.
+            self.confirm_controller()
             return self.conn.execute(sql, args)
 
     @contextmanager
@@ -165,6 +307,7 @@ class Store:
     def save(self, run: dict):
         """Write the run; its events are appended to their own table, so a run with thousands of them is not rewritten
         whole on every event, and an event once stored is never rewritten."""
+        self.confirm_controller()
         run["updated_at"] = now()
         payload = json.dumps(run, ensure_ascii=False)
         if _SURROGATE.search(payload):
@@ -256,11 +399,14 @@ class Store:
     def job(self, run_id: str, case: dict) -> str:
         job_id = str(uuid.uuid4())
         payload = {"case_hash": case["hash"], "side_effects": case.get("side_effects",False), "created_at":now(), "attempt":1}
+        self.confirm_controller()
         with self.lock:
             self._execute(self.sql["insert_job"], (job_id,run_id,case["id"],"prepared",json.dumps(payload)))
         return job_id
 
     def update_job(self, job_id: str, status: str, payload: dict):
+        # A job marked sent comes before its request: only the controller may journal one.
+        self.confirm_controller()
         with self.lock:
             self._execute(self.sql["update_job"], (status,json.dumps(payload),job_id))
 
@@ -295,4 +441,6 @@ class Store:
         return body
 
     def close(self):
+        while self.claims:
+            _release(self.claims.pop())
         self.conn.close()

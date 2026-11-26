@@ -359,6 +359,22 @@ def test_declared_test_literals_stay_readable_and_nothing_else_does():
     assert redact_text("password = 'XFIXTUREX'", frozenset({"XFIXTUREX"})) == "password = 'XFIXTUREX'"
 
 
+def test_declared_test_literals_stay_readable_in_bare_token_and_authorization_forms():
+    # The bare token form and the non-Bearer Authorization schemes honour the declaration like every other form.
+    keep = frozenset({"fixture-tok-1", "dXNlcjpwYXNz"})
+    text = "token: fixture-tok-1\n  - \"GH_TOKEN=fixture-tok-1\"\nAuthorization: Basic dXNlcjpwYXNz\n"
+    assert redact_text(text, keep) == text
+    assert redact_text(text) == "token: [REDACTED]\n  - \"GH_TOKEN=[REDACTED]\"\nAuthorization: Basic [REDACTED]\n"
+
+
+def test_declared_test_literals_stay_readable_in_the_digest_form():
+    # Digest's whole parameter list is its value: declared as a whole, it stays; anything more is redacted.
+    keep = frozenset({"fixture-digest-1"})
+    assert redact_text("Authorization: Digest fixture-digest-1\n", keep) == "Authorization: Digest fixture-digest-1\n"
+    assert redact_text("Authorization: Digest fixture-digest-1, nc=00000001\n", keep) == "Authorization: Digest [REDACTED]\n"
+    assert redact_text("Authorization: Digest fixture-digest-1\n") == "Authorization: Digest [REDACTED]\n"
+
+
 def test_snapshot_states_how_many_declared_literals_it_left_unredacted(tmp_path):
     (tmp_path / "app.py").write_text("token = 'fixture-web-a'\n", newline="\n")
     (tmp_path / "other.py").write_text("x = 1\n", newline="\n")

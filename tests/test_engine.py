@@ -821,6 +821,7 @@ def test_restart_records_a_sent_request_as_outcome_unknown(tmp_path):
     # The dispatch may have reached the target: every export must show it, and nothing may replay it.
     assert stored["status"]=="incomplete" and "after a request was sent" in stored["error"]
     assert [(e["id"],e["case_id"],e["status"],e["repetition"]) for e in stored["executions"]]==[(job,"C-001","outcome_unknown",0)]
+    assert stored["executions"][0]["reason"]=="The controller stopped after this request was sent; its outcome is unknown"
     assert any("Tenant boundary" in gap and "never recorded" in gap for gap in stored["gaps"])
     assert [j["status"] for j in store.jobs(run["id"])]==["finished"]
     markdown=report_markdown(stored)
@@ -828,6 +829,338 @@ def test_restart_records_a_sent_request_as_outcome_unknown(tmp_path):
     with pytest.raises(PolicyError,match="outcome_unknown"):
         restarted.start(run["id"],resume=True)
     store.close()
+
+
+def store_outage(engine,monkeypatch,run_id,failures):
+    """Once the workflow is complete the store refuses the run's saves failures times, or until lifted: the closing
+    event and the attempt's last save both meet the outage."""
+    from vibe_audit import service
+    monkeypatch.setattr(service,"FINAL_SAVE_RETRY_SECONDS",(0,0))
+    save=engine.store.save
+    outage={"left":failures,"tries":0}
+    def flaky(record):
+        if record["id"]==run_id and record["stage"]=="complete" and outage["left"]:
+            outage["left"]-=1
+            outage["tries"]+=1
+            raise OSError("synthetic database outage")
+        return save(record)
+    monkeypatch.setattr(engine.store,"save",flaky)
+    return outage
+
+
+async def test_a_last_save_that_fails_briefly_is_retried(engine,monkeypatch):
+    run=engine.create(RunInput(name="Brief outage"))
+    outage=store_outage(engine,monkeypatch,run["id"],2)
+    engine.start(run["id"])
+    await engine.tasks[run["id"]]
+    # The closing event waits for the last save, whose first two tries failed; the third landed both.
+    assert outage["tries"]==2 and not engine.unsaved
+    assert engine.store.get(run["id"])["events"][-1]["message"]=="Workflow finished. Completion is not a guarantee of security."
+    assert engine.store.get(run["id"])["status"]=="incomplete" and engine.store.get(run["id"])["attempt_started_at"] is None
+
+
+async def test_a_lost_last_save_is_kept_until_the_store_returns(engine,monkeypatch):
+    run=engine.create(RunInput(name="Long outage"))
+    outage=store_outage(engine,monkeypatch,run["id"],10**6)
+    engine.start(run["id"])
+    await engine.tasks[run["id"]]
+    # Every try of the last save failed (the closing event saves with it): the store still says running, and the
+    # final state waits in memory. The outage did not turn the finished workflow into a failed one.
+    assert outage["tries"]==3 and engine.store.get(run["id"])["status"]=="running"
+    assert engine.unsaved[run["id"]]["status"]=="incomplete" and not engine.executing(run["id"])
+    # While the store is still down an action fails, rather than acting on the stale row (cancel used to KeyError).
+    with pytest.raises(OSError,match="synthetic"):
+        engine.cancel(run["id"])
+    with pytest.raises(OSError,match="synthetic"):
+        engine.start(run["id"],resume=True)
+    outage["left"]=0
+    cancelled=engine.cancel(run["id"])
+    # The first action after the outage saves the attempt's own final state; nothing is cancelled or restarted.
+    assert cancelled["status"]=="incomplete" and not engine.unsaved
+    stored=engine.store.get(run["id"])
+    assert stored["status"]=="incomplete" and stored["stage"]=="complete" and stored["error"] is None
+    assert stored["events"][-1]["message"]=="Workflow finished. Completion is not a guarantee of security."
+
+
+@pytest.mark.parametrize("action",["cancel","resume"])
+async def test_a_running_run_no_attempt_holds_is_closed_like_a_restart(engine,action):
+    # The final state is gone too (the process kept no copy): the stored row is all there is.
+    run=engine.create(RunInput(name="Orphan"))
+    run.update(status="running",stage="whitebox",attempt_started_at=run["created_at"],reserved_tokens=10)
+    engine.store.save(run)
+    job=engine.store.job(run["id"],{"id":"C-001","hash":"sealed"})
+    engine.store.update_job(job,"sent",{"case_hash":"sealed","side_effects":False,"sent_at":"now","repetition":0})
+    if action=="cancel":
+        engine.cancel(run["id"])
+    else:
+        with pytest.raises(PolicyError,match="outcome_unknown"):
+            engine.start(run["id"],resume=True)
+    stored=engine.store.get(run["id"])
+    assert stored["status"]=="incomplete" and stored["attempt_started_at"] is None
+    assert stored["error"]=="The attempt ended without saving its final state after a request was sent; reset the target and continue in a new run"
+    assert stored["error_zh"] and stored["usage_unknown"] is True
+    assert "The attempt ended without saving its final state while a model reservation was unresolved; further paid calls are blocked" in stored["gaps"]
+    assert [(e["id"],e["status"]) for e in stored["executions"]]==[(job,"outcome_unknown")]
+    # The controller never stopped: the request's reason says what did happen.
+    assert stored["executions"][0]["reason"]=="The attempt ended without saving its final state after this request was sent; its outcome is unknown"
+
+
+async def test_a_resume_after_an_orphaned_attempt_runs_again(engine):
+    run=engine.create(RunInput(name="Orphan resume"))
+    run.update(status="running",attempt_started_at=run["created_at"])
+    engine.store.save(run)
+    engine.start(run["id"],resume=True)
+    await engine.tasks[run["id"]]
+    stored=engine.store.get(run["id"])
+    assert stored["stage"]=="complete" and stored["status"]=="incomplete" and stored["error"] is None
+
+
+async def test_a_waiting_worker_cleanup_is_not_taken_for_a_lost_attempt(engine):
+    run=engine.create(RunInput(name="Cleanup pending"))
+    run.update(status="cancelling",workers_pending_cleanup=True,error=None)
+    engine.store.save(run)
+    engine.cancel(run["id"])
+    stored=engine.store.get(run["id"])
+    assert stored["status"]=="cancelling" and stored["error"] is None
+
+
+async def test_a_kept_final_state_is_saved_with_the_requests_its_closing_could_not_settle(engine):
+    # The outage also stopped the closing settle: the job is still sent, and the kept final state does not show it.
+    run=engine.create(RunInput(name="Sent during outage"))
+    run.update(status="running",stage="blackbox",cases=[{"id":"C-001","title":"Tenant boundary","hash":"sealed"}])
+    engine.store.save(run)
+    job=engine.store.job(run["id"],run["cases"][0])
+    engine.store.update_job(job,"sent",{"case_hash":"sealed","side_effects":False,"sent_at":"now","repetition":0})
+    final=engine.store.get(run["id"])
+    final.update(status="failed",attempt_started_at=None)
+    engine.unsaved[run["id"]]=final
+    engine.cancel(run["id"])
+    stored=engine.store.get(run["id"])
+    assert stored["status"]=="failed" and not engine.unsaved
+    assert [(e["id"],e["status"]) for e in stored["executions"]]==[(job,"outcome_unknown")]
+    assert any("Tenant boundary" in gap and "never recorded" in gap for gap in stored["gaps"])
+    assert [j["status"] for j in engine.store.jobs(run["id"])]==["finished"]
+
+
+async def test_the_last_save_runs_off_the_event_loop(engine,monkeypatch):
+    import threading
+    loop_thread=threading.current_thread()
+    run=engine.create(RunInput(name="Off the loop"))
+    save=engine.store.save
+    settle=engine.settle_sent_jobs
+    threads=[]
+    settled_in=[]
+    def recording(record):
+        # Once the workflow is complete only the closing is left: its event, its settle and the last save.
+        if record["id"]==run["id"] and record["stage"]=="complete":
+            threads.append(threading.current_thread())
+        return save(record)
+    def recording_settle(record,reason):
+        if record["stage"]=="complete":
+            settled_in.append(threading.current_thread())
+        return settle(record,reason)
+    monkeypatch.setattr(engine.store,"save",recording)
+    monkeypatch.setattr(engine,"settle_sent_jobs",recording_settle)
+    engine.start(run["id"])
+    await engine.tasks[run["id"]]
+    # Against an unreachable database each store call waits out the connect timeout; the console keeps serving.
+    assert threads and loop_thread not in threads
+    assert settled_in and loop_thread not in settled_in
+    assert engine.store.get(run["id"])["events"][-1]["message"]=="Workflow finished. Completion is not a guarantee of security."
+
+
+def test_recoveries_of_one_run_take_turns(engine,monkeypatch):
+    # Reconcile recovers from a worker thread while cancel does so on the event loop.
+    import threading
+    run=engine.create(RunInput(name="Two recoveries"))
+    run["status"]="running"
+    engine.store.save(run)
+    final=engine.store.get(run["id"])
+    final["status"]="incomplete"
+    engine.unsaved[run["id"]]=final
+    save=engine.store.save
+    saves=[]
+    def slow(record):
+        saves.append(record["status"])
+        time.sleep(0.2)
+        return save(record)
+    monkeypatch.setattr(engine.store,"save",slow)
+    errors=[]
+    def recover():
+        try:
+            engine.recover(run["id"])
+        except Exception as exc:
+            errors.append(exc)
+    threads=[threading.Thread(target=recover) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    # The second found the first's result: one save, and nothing closed twice.
+    assert not errors and saves==["incomplete"] and not engine.unsaved
+
+
+def test_a_reconcile_and_a_cancel_recovering_at_once_do_not_deadlock(engine):
+    # Reconcile recovers from a worker thread already holding the store's lock; cancel recovers on the event loop.
+    import threading
+    first=engine.create(RunInput(name="Reconciled"))
+    second=engine.create(RunInput(name="Cancelled"))
+    for run in (first,second):
+        run["status"]="running"
+        engine.store.save(run)
+    held=threading.Event()
+    def reconcile():
+        with engine.store.lock:
+            held.set()
+            # The cancel below starts its recovery meanwhile.
+            time.sleep(0.3)
+            engine.recover(first["id"])
+    def cancel():
+        held.wait()
+        engine.recover(second["id"])
+    threads=[threading.Thread(target=reconcile,daemon=True),threading.Thread(target=cancel,daemon=True)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+    assert not any(thread.is_alive() for thread in threads), "the two recoveries deadlocked"
+    assert {engine.store.get(run["id"])["status"] for run in (first,second)}=={"incomplete"}
+
+
+async def test_a_closing_settle_that_fails_is_retried_by_the_last_save(engine,monkeypatch):
+    # The store was down for the closing settle and back for the last save: the run must not be saved as finished
+    # while its sent job stays hidden.
+    from vibe_audit import service
+    monkeypatch.setattr(service,"FINAL_SAVE_RETRY_SECONDS",(0,0))
+    run=engine.create(RunInput(name="Settle during outage"))
+    async def dispatching_blackbox(run):
+        case=run["cases"][0]
+        job=engine.store.job(run["id"],case)
+        engine.store.update_job(job,"sent",{"case_hash":case["hash"],"side_effects":False,"sent_at":"now","repetition":0})
+        # The outage begins after the dispatch and is over by the last save.
+        outage["left"]=1
+        raise KeyError("title")
+    monkeypatch.setattr(engine,"_blackbox",dispatching_blackbox)
+    jobs=engine.store.jobs
+    outage={"left":0}
+    def flaky_jobs(run_id):
+        if outage["left"]:
+            outage["left"]-=1
+            raise OSError("synthetic database outage")
+        return jobs(run_id)
+    monkeypatch.setattr(engine.store,"jobs",flaky_jobs)
+    engine.start(run["id"])
+    await engine.tasks[run["id"]]
+    stored=engine.store.get(run["id"])
+    assert stored["status"]=="failed" and not engine.unsaved
+    assert [e["status"] for e in stored["executions"]]==["outcome_unknown"]
+    assert [j["status"] for j in jobs(run["id"])]==["finished"]
+
+
+async def test_a_sent_job_left_on_a_finished_run_is_settled_by_the_next_action(engine):
+    # Its closing settle and every retry failed while the save itself landed: no attempt holds the job any more.
+    run=engine.create(RunInput(name="Finished with a sent job"))
+    run.update(status="failed",stage="blackbox",cases=[{"id":"C-001","title":"Tenant boundary","hash":"sealed"}])
+    engine.store.save(run)
+    job=engine.store.job(run["id"],run["cases"][0])
+    engine.store.update_job(job,"sent",{"case_hash":"sealed","side_effects":False,"sent_at":"now","repetition":0})
+    with pytest.raises(PolicyError,match="outcome_unknown"):
+        engine.start(run["id"],resume=True)
+    stored=engine.store.get(run["id"])
+    assert stored["status"]=="failed"
+    assert [(e["id"],e["status"]) for e in stored["executions"]]==[(job,"outcome_unknown")]
+    assert any("Tenant boundary" in gap and "never recorded" in gap for gap in stored["gaps"])
+
+
+async def test_a_start_whose_first_save_fails_leaves_nothing_registered(engine,monkeypatch):
+    run=engine.create(RunInput(name="Start during outage"))
+    save=engine.store.save
+    def failing(record):
+        if record["status"]=="running":
+            raise OSError("synthetic database outage")
+        return save(record)
+    monkeypatch.setattr(engine.store,"save",failing)
+    with pytest.raises(OSError,match="synthetic"):
+        engine.start(run["id"])
+    assert run["id"] not in engine.cancel_flags and run["id"] not in engine.runs and run["id"] not in engine.locks
+    monkeypatch.setattr(engine.store,"save",save)
+    # A cancel finds no attempt: the run stays created and can still be started.
+    assert engine.cancel(run["id"])["status"]=="created"
+    assert engine.store.get(run["id"])["status"]=="created"
+    engine.start(run["id"])
+    await engine.tasks[run["id"]]
+    assert engine.store.get(run["id"])["stage"]=="complete"
+
+
+@pytest.mark.parametrize("route,body",[("cancel",None),("start",None),("resume",None),("approve-cases",{"receipt":"r"})])
+def test_actions_settle_a_lost_attempt_off_the_event_loop(tmp_path,route,body):
+    # Against an unreachable database recover() waits out the connect timeout; every other request must go on.
+    with TestClient(create_app(tmp_path,testing=True)) as client:
+        authorize(client)
+        engine=client.app.state.engine
+        run=engine.create(RunInput(name="Off the loop"))
+        run["status"]="completed"
+        engine.store.save(run)
+        where=[]
+        recover=engine.recover
+        def recording(run_id):
+            try:
+                asyncio.get_running_loop()
+                where.append("loop")
+            except RuntimeError:
+                where.append("thread")
+            return recover(run_id)
+        engine.recover=recording
+        client.post(f"/api/runs/{run['id']}/{route}",json=body)
+    assert where and where[0]=="thread"
+
+
+def test_shutdown_saves_a_final_state_its_last_save_lost(tmp_path):
+    with TestClient(create_app(tmp_path,testing=True)) as client:
+        engine=client.app.state.engine
+        run=engine.create(RunInput(name="Lost at shutdown"))
+        run["status"]="running"
+        engine.store.save(run)
+        final=engine.store.get(run["id"])
+        final.update(status="incomplete",stage="complete")
+        engine.unsaved[run["id"]]=final
+    # Without it, the next start would close the run as interrupted and lose the attempt's own ending.
+    reader=Store(tmp_path)
+    try:
+        assert reader.get(run["id"])["status"]=="incomplete" and reader.get(run["id"])["stage"]=="complete"
+    finally:
+        reader.close()
+
+
+def test_an_action_refused_by_a_lost_controller_claim_is_a_conflict(tmp_path,monkeypatch):
+    from vibe_audit.store import ControllerBusy
+    with TestClient(create_app(tmp_path,testing=True)) as client:
+        authorize(client)
+        engine=client.app.state.engine
+        run=engine.create(RunInput(name="Claim lost"))
+        run["status"]="running"
+        engine.store.save(run)
+        def taken():
+            raise ControllerBusy("Another Vibe Audit process already controls this database; stop it before starting another")
+        monkeypatch.setattr(engine.store,"claim_controller",taken)
+        response=client.post(f"/api/runs/{run['id']}/cancel")
+        assert response.status_code==409
+        assert response.json()["detail_zh"]=="另一個 Vibe Audit 程序已在控制這個資料庫；請先停止它再啟動另一個"
+        # Refused before acting: the run is left for the controller that holds the claim.
+        assert engine.store.get(run["id"])["status"]=="running"
+
+
+async def test_closing_steps_that_fail_still_leave_the_last_save(engine,monkeypatch):
+    run=engine.create(RunInput(name="Closing failure"))
+    def broken(record,*args):
+        # Only the closing steps fail: whitebox discards its staged copy through the same call.
+        if record["stage"]=="complete":
+            raise OSError("synthetic journal failure")
+    monkeypatch.setattr(engine,"settle_sent_jobs",broken)
+    monkeypatch.setattr(engine,"discard_staging_copy",broken)
+    engine.start(run["id"])
+    await engine.tasks[run["id"]]
+    assert engine.store.get(run["id"])["status"]=="incomplete" and not engine.unsaved
 
 
 async def test_failure_after_dispatch_leaves_no_silent_sent_job(engine,monkeypatch):
@@ -1869,13 +2202,52 @@ def test_event_stream_ends_when_its_session_does(tmp_path,monkeypatch):
     with TestClient(create_app(tmp_path,testing=True)) as client:
         authorize(client)
         engine=client.app.state.engine
+        # A created run's stream stays open until it starts, so only the session's end can close it.
         run=engine.create(RunInput(name="Streaming"))
-        run["status"]="running"
-        engine.store.save(run)
         response=client.get(f"/api/runs/{run['id']}/events")
     assert response.status_code==200
     assert response.text.rstrip().endswith("event: expired\ndata: {}")
     assert "event: progress" not in response.text.split("event: expired")[1]
+
+
+def test_event_stream_keeps_the_closing_events_of_an_attempt_that_ends_during_a_poll(tmp_path,monkeypatch):
+    with TestClient(create_app(tmp_path,testing=True)) as client:
+        authorize(client)
+        engine=client.app.state.engine
+        store=client.app.state.store
+        run=engine.create(RunInput(name="Ends mid-poll"))
+        run["status"]="running"
+        store.save(run)
+        attempt={"live":True}
+        monkeypatch.setattr(engine,"executing",lambda run_id:attempt["live"])
+        summary=store.summary
+        def closing(run_id):
+            # The attempt saves its closing event and ends right after the poll read it as running.
+            answer=summary(run_id)
+            if attempt["live"]:
+                attempt["live"]=False
+                stored=store.get(run_id)
+                stored["status"]="incomplete"
+                stored["events"].append(dict(seq=len(stored["events"])+1,at="now",stage=stored["stage"],level="info",agent_id=None,
+                                             message="Workflow finished. Completion is not a guarantee of security."))
+                store.save(stored)
+            return answer
+        monkeypatch.setattr(store,"summary",closing)
+        response=client.get(f"/api/runs/{run['id']}/events")
+    assert "Workflow finished" in response.text
+    assert response.text.rstrip().endswith("event: done\ndata: {}")
+
+
+def test_event_stream_of_a_run_no_attempt_holds_ends(tmp_path):
+    # The store says running, yet nothing in this controller runs it: its last save was lost, and no event will come.
+    with TestClient(create_app(tmp_path,testing=True)) as client:
+        authorize(client)
+        engine=client.app.state.engine
+        run=engine.create(RunInput(name="Orphan stream"))
+        run["status"]="running"
+        engine.store.save(run)
+        response=client.get(f"/api/runs/{run['id']}/events")
+    assert response.text.rstrip().endswith("event: done\ndata: {}")
 
 
 def test_wrong_startup_tokens_slow_down_without_locking_out_the_operator(tmp_path,monkeypatch):

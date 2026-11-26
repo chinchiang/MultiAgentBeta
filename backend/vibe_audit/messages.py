@@ -111,6 +111,12 @@ ZH = {
     "The target no longer reports the declared deployment identity; test the new deployment in a new run": "目標不再回報宣告的部署識別；請在新的執行中測試新的部署",
     "Controller restarted after a request was sent; reset the target and continue in a new run": "controller 在請求送出後重新啟動；請重設目標並在新的執行中繼續",
     "Controller restarted; resume re-checks every gate against the stored run": "controller 已重新啟動；恢復時會依已儲存的執行重新檢查每道閘門",
+    "Another Vibe Audit process already controls this database; stop it before starting another": "另一個 Vibe Audit 程序已在控制這個資料庫；請先停止它再啟動另一個",
+    "The attempt ended without saving its final state after a request was sent; reset the target and continue in a new run": "這次嘗試在請求送出後結束，最終狀態沒有存下來；請重設目標並在新的執行中繼續",
+    "The attempt ended without saving its final state; resume re-checks every gate against the stored run": "這次嘗試結束時最終狀態沒有存下來；恢復時會依已儲存的執行重新檢查每道閘門",
+    "The controller stopped after this request was sent; its outcome is unknown": "controller 在這個請求送出後停止；結果不明",
+    "The attempt ended without saving its final state after this request was sent; its outcome is unknown": "這次嘗試在這個請求送出後結束，最終狀態沒有存下來；結果不明",
+    "The workflow stopped before this request's result was recorded; its outcome is unknown": "流程在記錄這個請求的結果之前停止；結果不明",
     # workspace_api.py
     "Project ID mismatch": "專案 ID 不符",
     "Agent ID mismatch": "代理 ID 不符",
@@ -148,6 +154,7 @@ ZH.update({
     "Evidence attribution and integrity verified for report": "已為報告驗證證據歸屬與完整性",
     # service.py and policy.py: gaps
     "Controller restarted with an unresolved model reservation; further paid calls are blocked": "controller 重新啟動時仍有未結算的模型預留；後續付費呼叫已封鎖",
+    "The attempt ended without saving its final state while a model reservation was unresolved; further paid calls are blocked": "這次嘗試結束時最終狀態沒有存下來，且仍有未結算的模型預留；後續付費呼叫已封鎖",
     "a request was sent but its result was never recorded; reset the target before a new run": "請求已送出但結果從未記錄；建立新的執行前請先重設目標",
     "Worker cleanup was attested by the local operator, not confirmed by the supervisor": "worker 清理是本機操作者確認的，不是 supervisor 確認的",
     "Source-to-deployment association is unverified: deployment identity or verification header missing": "原始碼與部署的對應未經驗證：缺少部署識別或驗證 header",
@@ -458,6 +465,7 @@ ZH.update({
 })
 
 PATTERNS = [
+    (r"Another Vibe Audit process already uses the data directory (.+); stop it or choose another directory", "另一個 Vibe Audit 程序已在使用資料目錄 {0}；請停止它或改用其他目錄"),
     (r"Challenger: dropped (\d+) challenge\(s\) naming a finding that does not exist", "反證審查員：捨棄 {0} 項指向不存在發現的反證"),
     (r"Model request failed \(([A-Za-z0-9_ <-]+)\); response and error body withheld; billed usage may be unknown", "模型請求失敗（{0}）；回應與錯誤內容不予顯示；計費用量可能不明"),
     (r"Model endpoint answered HTTP (\d+); the request was not served and is treated as unbilled", "模型端點回應 HTTP {0}；請求沒有被處理，視為未計費"),
