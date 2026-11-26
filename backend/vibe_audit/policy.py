@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from datetime import datetime, timezone
 
-from .request_rules import RequestRefused, match_request, plan_case
+from .request_rules import DEFAULT_METHOD, RequestRefused, match_request, plan_case
 from .domain import digest
 
 
@@ -193,7 +193,7 @@ class Policy:
             raise PolicyError("Model-designed cases need the operator's approval of this sealed case set")
         if run["mode"]=="live":
             # The request is one step of the case's sealed request plan, sent as that step's own identity.
-            request={"method":method or case.get("method","GET"),"path":path or case.get("path"),"identity":identity}
+            request={"method":method or case.get("method",DEFAULT_METHOD),"path":path or case.get("path"),"identity":identity}
             try:
                 match_request(run["manifest"],case,request)
             except RequestRefused as refused:
