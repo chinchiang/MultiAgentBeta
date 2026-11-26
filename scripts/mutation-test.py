@@ -196,9 +196,13 @@ def report(rows, ceilings, label):
     return worse
 
 
-def main(argv):
+def require_posix():
     if os.name != "posix":
         raise SystemExit("mutmut forks test workers; run this on Linux (WSL2 is fine)")
+
+
+def main(argv):
+    require_posix()
     update = "--update-baseline" in argv
     ref = argv[argv.index("--changed") + 1] if "--changed" in argv else None
     mutant_names = [arg for arg in argv if arg not in ("--update-baseline", "--changed", ref)]

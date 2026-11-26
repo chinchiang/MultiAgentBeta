@@ -82,6 +82,8 @@ def test_a_changed_helper_names_what_the_test_files_importing_it_test(monkeypatc
 def test_the_comparison_is_against_where_the_branch_left_the_base(monkeypatch, tmp_path):
     module = script()
     seen = []
+    # mutmut itself needs Linux; nothing here runs it, so these run on Windows too.
+    monkeypatch.setattr(module, "require_posix", lambda: None)
     monkeypatch.setattr(module, "merge_base", lambda ref: "base-commit")
     monkeypatch.setattr(module, "changed_functions", lambda base: seen.append(("functions", base)) or [])
     monkeypatch.setattr(module, "tested_modules", lambda base: seen.append(("tests", base)) or [])
@@ -91,6 +93,7 @@ def test_the_comparison_is_against_where_the_branch_left_the_base(monkeypatch, t
 
 def run_changed(monkeypatch, tmp_path, functions, whole, states=None, ceilings=None):
     module = script()
+    monkeypatch.setattr(module, "require_posix", lambda: None)
     monkeypatch.setattr(module, "merge_base", lambda ref: "base-commit")
     monkeypatch.setattr(module, "changed_functions", lambda base: functions)
     monkeypatch.setattr(module, "tested_modules", lambda base: whole)
