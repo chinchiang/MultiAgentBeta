@@ -3,15 +3,18 @@
   python -m pip install --require-hashes -r requirements.mutation.lock.txt
   python scripts/mutation-test.py                     mutate the modules [tool.mutmut] in pyproject.toml names, run their tests
   python scripts/mutation-test.py --update-baseline   the same, then record the escaped mutants per module and per function
-  python scripts/mutation-test.py --changed <ref>     only the functions the diff against <ref> touched (a pull request);
-                                                      prints the change each escaped mutant of a function over its ceiling made
+  python scripts/mutation-test.py --changed <ref>     only the functions the diff against <ref> touched (a pull request),
+                                                      and the whole modules whose test files it touched;
+                                                      prints the change each escaped mutant over its ceiling made
   python scripts/mutation-test.py <mutant name>...    re-test the named mutants only (see mutmut results / mutmut show)
 
 mutmut changes one operator, constant or branch of the code at a time and runs the tests that cover the changed
 function; a mutant the tests still pass ("survived") or that no test reaches ("no tests") is a blind spot.
 tests/mutation-baseline.json records how many such mutants each module, and each function, had when it was last
 accepted, so a full run fails when a module's count rises and a --changed run fails when a touched function's count
-rises: a change that loosens a test or adds untested logic. A function the baseline does not name (new code) must
+rises: a change that adds untested logic. A loosened test changes no function, so a --changed run also mutates the
+whole of every module that a changed test file tests ([tool.vibeaudit.mutation.tests] in pyproject.toml), against the
+per-module ceilings. A function the baseline does not name (new code) must
 leave none. Lower a ceiling by adding tests, then --update-baseline; it never goes up by itself. mutmut keeps its
 working copy and results in mutants/ (ignored by git) and reuses a result whose mutant text is unchanged, even
 when the tests changed, so a full run starts from an empty mutants/ and runs every mutant; a --changed or named run
@@ -49,8 +52,17 @@ def mutmut(*args):
     return subprocess.run([sys.executable, "-m", "mutmut", *args], cwd=ROOT).returncode
 
 
+def config():
+    return tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["tool"]
+
+
 def modules():
-    return tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["tool"]["mutmut"]["only_mutate"]
+    return config()["mutmut"]["only_mutate"]
+
+
+def dotted(module):
+    """src/vibe_audit/policy.py -> vibe_audit.policy, the prefix of that module's mutant keys."""
+    return module.removeprefix("src/").removesuffix(".py").replace("/", ".")
 
 
 def function_of(key):
@@ -95,7 +107,6 @@ def changed_functions(ref):
     patterns = []
     for module in modules():
         source = ROOT / "backend" / module.removeprefix("src/")
-        dotted = module.removeprefix("src/").removesuffix(".py").replace("/", ".")
         diff = subprocess.run(["git", "diff", "-U0", ref, "--", str(source)], cwd=ROOT, capture_output=True, text=True, check=True).stdout
         touched = set()
         for start, length in HUNK.findall(diff):
@@ -112,8 +123,15 @@ def changed_functions(ref):
             for item, mangled in members:
                 first = min([item.lineno, *(d.lineno for d in item.decorator_list)])
                 if any(first <= line <= item.end_lineno for line in touched):
-                    patterns.append(f"{dotted}.{mangled}__mutmut_*")
+                    patterns.append(f"{dotted(module)}.{mangled}__mutmut_*")
     return patterns
+
+
+def tested_modules(ref):
+    """The modules, as [tool.mutmut] names them, that a test file the working tree changed against ref tests."""
+    table = config()["vibeaudit"]["mutation"]["tests"]
+    names = subprocess.run(["git", "diff", "--name-only", ref, "--", "tests"], cwd=ROOT, capture_output=True, text=True, check=True).stdout.split()
+    return sorted({module for name in names for module in table.get(name, [])})
 
 
 def with_link(action):
@@ -153,12 +171,20 @@ def main(argv):
     ref = argv[argv.index("--changed") + 1] if "--changed" in argv else None
     mutant_names = [arg for arg in argv if arg not in ("--update-baseline", "--changed", ref)]
     baseline = json.loads(BASELINE.read_text(encoding="utf-8")) if BASELINE.exists() else {}
+    whole = []
     if ref is not None:
-        mutant_names = changed_functions(ref)
+        whole = tested_modules(ref)
+        functions = changed_functions(ref)
+        # A function inside a module mutated whole is in it already.
+        functions = [name for name in functions if not any(name.startswith(dotted(module) + ".") for module in whole)]
+        mutant_names = functions + [dotted(module) + ".*" for module in whole]
         if not mutant_names:
-            print(f"No function of the mutated modules changed against {ref}; nothing to mutate")
+            print(f"No function of the mutated modules, and no test file that tests one, changed against {ref}; nothing to mutate")
             return 0
-        print("Changed functions: " + ", ".join(name.removesuffix("__mutmut_*") for name in mutant_names))
+        if functions:
+            print("Changed functions: " + ", ".join(name.removesuffix("__mutmut_*") for name in functions))
+        if whole:
+            print("Modules whose tests changed, mutated whole: " + ", ".join(whole))
         # The remembered test map does not learn which existing tests reach a changed function (see the module docstring).
         TEST_MAP.unlink(missing_ok=True)
     if not mutant_names:
@@ -172,17 +198,22 @@ def main(argv):
     print()
     print("Mutants the tests did not catch (mutmut show <name> prints the change):")
     if ref is not None:
-        keys_states = {key: state for key, state in keys_states.items()
-                       if any(function_of(key) == name.removesuffix("__mutmut_*") for name in mutant_names)}
+        named = {name.removesuffix("__mutmut_*") for name in functions}
+        keys_states = {key: state for key, state in keys_states.items() if function_of(key) in named or module_of(key) in whole}
         for key, state in keys_states.items():
             if state in ESCAPED:
                 print(f"    {key}: {state}")
-        rows = counts(keys_states)[1]
-        worse = report(rows, baseline.get("functions", {}), "changed function")
-        # The mutants to act on are those of a function over its ceiling: show what each one changed, so no one has
-        # to link src and ask mutmut for them one at a time.
+        by_module, by_function = counts(keys_states)
+        rows = {name: s for name, s in by_function.items() if name in named}
+        worse = report(rows, baseline.get("functions", {}), "changed function") if rows else []
+        modules_rows = {module: by_module[module] for module in whole if module in by_module}
+        if modules_rows:
+            worse += report(modules_rows, baseline.get("modules", {}), "module whose tests changed")
+        # The mutants to act on are those of a function or module over its ceiling: show what each one changed, so no
+        # one has to link src and ask mutmut for them one at a time.
         over = {name for name, s in rows.items() if escaped(s) > (baseline.get("functions", {}).get(name) or 0)}
-        shown = [key for key, state in keys_states.items() if state in ESCAPED and function_of(key) in over]
+        over_modules = {name for name, s in modules_rows.items() if escaped(s) > (baseline.get("modules", {}).get(name) or 0)}
+        shown = [key for key, state in keys_states.items() if state in ESCAPED and (function_of(key) in over or module_of(key) in over_modules)]
         if shown:
             print()
             print("What each of those functions' escaped mutants changed:")

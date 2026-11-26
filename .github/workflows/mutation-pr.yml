@@ -1,7 +1,12 @@
 # Mutation testing of the functions a pull request changes (scripts/mutation-test.py --changed): mutmut mutates
 # only the top-level functions and methods the diff against the base branch touched in the modules [tool.mutmut]
 # names, and none of them may let more mutants escape than tests/mutation-baseline.json records for it (a new
-# function must let none). The full run (mutation.yml) keeps the per-module ceilings.
+# function must let none). A changed test file that [tool.vibeaudit.mutation.tests] maps mutates the whole of the
+# modules it tests, against their per-module ceilings, so a loosened test is caught too. The full run (mutation.yml)
+# keeps the per-module ceilings for everything.
+#
+# The paths are every module [tool.mutmut] only_mutate names, and the tests; tests/test_mutation_gate.py keeps the
+# two lists equal.
 #
 # Off by default: the pull-request run happens only when the repository variable VIBEAUDIT_MUTATION is "true"
 # (Settings > Secrets and variables > Actions > Variables); a manual dispatch always runs.
@@ -16,6 +21,11 @@ on:
       - backend/vibe_audit/lease.py
       - backend/vibe_audit/snapshot.py
       - backend/vibe_audit/messages.py
+      - backend/vibe_audit/answers.py
+      - backend/vibe_audit/stage_answers.py
+      - backend/vibe_audit/request_rules.py
+      - backend/vibe_audit/target_transport.py
+      - tests/**
   workflow_dispatch:
 
 permissions:

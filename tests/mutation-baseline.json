@@ -1,6 +1,6 @@
 {
   "modules": {
-    "src/vibe_audit/policy.py": 14,
+    "src/vibe_audit/policy.py": 2,
     "src/vibe_audit/adapters.py": 15,
     "src/vibe_audit/catalog.py": 3,
     "src/vibe_audit/lease.py": 8,
@@ -22,7 +22,6 @@
     "vibe_audit.lease.xǁLeaseStoreǁfinished_result": 1,
     "vibe_audit.lease.xǁLeaseStoreǁissue": 2,
     "vibe_audit.lease.xǁLeaseStoreǁrenew": 1,
-    "vibe_audit.policy.xǁPolicyǁauthorize": 12,
     "vibe_audit.policy.xǁPolicyǁcase_gate": 2,
     "vibe_audit.request_rules.x_model_header_vocabulary": 3,
     "vibe_audit.request_rules.x_state_changing": 1,

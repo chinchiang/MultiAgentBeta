@@ -60,3 +60,26 @@ also_copy = ["catalogs", "fixtures", "docs"]
 # packaging and Docker-only suites stay out too. ci.yml still runs them all.
 pytest_add_cli_args_test_selection = ["tests/test_adapter_transport.py", "tests/test_adapters.py", "tests/test_answers.py", "tests/test_catalog.py", "tests/test_contracts_and_workspace.py", "tests/test_error_messages.py", "tests/test_lease.py", "tests/test_policy_gates.py", "tests/test_properties.py", "tests/test_providers.py", "tests/test_release_guards.py", "tests/test_review_followups.py", "tests/test_sandbox.py", "tests/test_snapshot_catalog.py", "tests/test_stage_answers.py", "tests/test_request_rules.py", "tests/test_target_transport.py"]
 pytest_add_cli_args = ["-p", "no:cacheprovider"]
+
+[tool.vibeaudit.mutation.tests]
+# What each test file of the selection above tests: a pull request that changes one has scripts/mutation-test.py
+# --changed mutate the whole of these modules against their per-module ceilings, so a loosened test is caught as a
+# loosened function is. The subject, not every import: a test that only raises PolicyError or reads zh() names neither
+# policy.py nor messages.py. tests/test_mutation_gate.py keeps the table to the selection and to only_mutate.
+"tests/test_adapter_transport.py" = ["src/vibe_audit/adapters.py", "src/vibe_audit/request_rules.py", "src/vibe_audit/target_transport.py"]
+"tests/test_adapters.py" = ["src/vibe_audit/adapters.py", "src/vibe_audit/request_rules.py", "src/vibe_audit/target_transport.py"]
+"tests/test_answers.py" = ["src/vibe_audit/answers.py"]
+"tests/test_catalog.py" = ["src/vibe_audit/catalog.py"]
+"tests/test_contracts_and_workspace.py" = ["src/vibe_audit/policy.py"]
+"tests/test_error_messages.py" = ["src/vibe_audit/messages.py"]
+"tests/test_lease.py" = ["src/vibe_audit/lease.py"]
+"tests/test_policy_gates.py" = ["src/vibe_audit/policy.py"]
+"tests/test_properties.py" = ["src/vibe_audit/adapters.py", "src/vibe_audit/lease.py", "src/vibe_audit/messages.py", "src/vibe_audit/policy.py", "src/vibe_audit/request_rules.py", "src/vibe_audit/snapshot.py", "src/vibe_audit/target_transport.py"]
+"tests/test_providers.py" = ["src/vibe_audit/snapshot.py", "src/vibe_audit/target_transport.py"]
+"tests/test_release_guards.py" = ["src/vibe_audit/adapters.py", "src/vibe_audit/request_rules.py", "src/vibe_audit/target_transport.py"]
+"tests/test_review_followups.py" = ["src/vibe_audit/adapters.py", "src/vibe_audit/request_rules.py", "src/vibe_audit/target_transport.py"]
+"tests/test_sandbox.py" = []
+"tests/test_snapshot_catalog.py" = ["src/vibe_audit/catalog.py", "src/vibe_audit/snapshot.py"]
+"tests/test_stage_answers.py" = ["src/vibe_audit/answers.py", "src/vibe_audit/stage_answers.py"]
+"tests/test_request_rules.py" = ["src/vibe_audit/adapters.py", "src/vibe_audit/request_rules.py"]
+"tests/test_target_transport.py" = ["src/vibe_audit/target_transport.py"]
