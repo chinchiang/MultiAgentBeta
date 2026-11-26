@@ -4,7 +4,7 @@ Multi-Agent 資安測試工具包：**白箱獨立審查 → 威脅建模 → �
 
 AI Commander 負責派工；程式 Harness 強制範圍、階段、權限、預算與證據。三個 reviewer 可分別指定 Claude、OpenAI、Nemotron 或本地端點；沒有靜默 fallback：只有操作者明確設定的備援模型，會在指定 Agent 拒答或輸出被截斷時代答，並記在報告裡；也不用多數票決定漏洞。
 
-本次依使用者要求先交付工程與本地整合。**已以真模型跑過 28 次完整流程（2026-10-10～11-03，合計約 422 萬 tokens），但對象只有本 repo 的合成靶場，用來驗收流程，不是評估效果；沒有付費效果實驗，不宣稱減偏、檢出率或成本改善。** 用過的模型是 Claude Opus 5.5 與 Sonnet 5.5（Bedrock）、Gemini 3.8 Flash、Gemma 4，以及本地的 Nemotron 3 Super 與 Qwen；OpenAI 端點還沒有以真模型驗收。每次 run 的設定與結果、真實工具與隔離基礎設施的驗收，都列在 [驗證紀錄](docs/VALIDATION.md)；本地測試使用明確標示的合成模型/靶場。
+本次依使用者要求先交付工程與本地整合。**已以真模型跑過 28 次 run（2026-10-10～11-03），其中 14 次跑完全程，其餘停在中途後修正；用量至少約 422 萬 tokens（沒有完整回報）。對象只有本 repo 的合成靶場，用來驗收流程，不是評估效果；沒有付費效果實驗，不宣稱減偏、檢出率或成本改善。** 用過的模型是 Claude Opus 5.5 與 Sonnet 5.5（Bedrock）、Gemini 3.8 Flash（經 OpenAI 相容端點）、Gemma 4，以及在本地 LM Studio 上的 Nemotron 3 Super 與 Qwen；OpenAI 自家的 API（api.openai.com）與 NVIDIA NIM 還沒有以真模型驗收。每次 run 的設定與結果、真實工具與隔離基礎設施的驗收，都列在 [驗證紀錄](docs/VALIDATION.md)；本地測試使用明確標示的合成模型/靶場。
 
 ## 開啟控制台
 
@@ -212,7 +212,7 @@ Multi-Agent security testing toolkit: **white-box independent review → threat 
 
 The AI Commander dispatches work; the programmatic Harness enforces scope, phases, permissions, budgets, and evidence. The three reviewers can each be pointed at Claude, OpenAI, Nemotron, or a local endpoint; there is no silent fallback: only a fallback model the operator configures answers, when a named agent refuses or is truncated, and the report records it; vulnerabilities are not decided by majority vote.
 
-At the user's request, this release delivers engineering and local integration first. **The full flow has run 28 times on real models (2026-10-10 to 11-03, about 4.22 million tokens in all), but only against this repository's synthetic ranges, to accept the flow rather than to measure efficacy; there are no paid-effect experiments, and no claims of bias reduction, detection-rate improvement, or cost improvement are made.** The models used were Claude Opus 5.5 and Sonnet 5.5 (Bedrock), Gemini 3.8 Flash, Gemma 4, and the local Nemotron 3 Super and Qwen; an OpenAI endpoint has not yet been accepted on a real model. Each run's settings and results, and the acceptance of real tools and isolated infrastructure, are in the [validation log](docs/VALIDATION.md); local testing uses clearly labeled synthetic models/ranges.
+At the user's request, this release delivers engineering and local integration first. **There have been 28 runs on real models (2026-10-10 to 11-03), 14 of which ran the whole flow; the others stopped part-way and led to fixes. They used at least about 4.22 million tokens (usage was not fully reported). They ran only against this repository's synthetic ranges, to accept the flow rather than to measure efficacy; there are no paid-effect experiments, and no claims of bias reduction, detection-rate improvement, or cost improvement are made.** The models used were Claude Opus 5.5 and Sonnet 5.5 (Bedrock), Gemini 3.8 Flash (through an OpenAI-compatible endpoint), Gemma 4, and Nemotron 3 Super and Qwen on a local LM Studio; OpenAI's own API (api.openai.com) and NVIDIA NIM have not yet been accepted on a real model. Each run's settings and results, and the acceptance of real tools and isolated infrastructure, are in the [validation log](docs/VALIDATION.md); local testing uses clearly labeled synthetic models/ranges.
 
 ## Opening the Console
 
