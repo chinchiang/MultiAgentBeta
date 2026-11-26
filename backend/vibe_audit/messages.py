@@ -114,6 +114,9 @@ ZH = {
     "Another Vibe Audit process already controls this database; stop it before starting another": "另一個 Vibe Audit 程序已在控制這個資料庫；請先停止它再啟動另一個",
     "The attempt ended without saving its final state after a request was sent; reset the target and continue in a new run": "這次嘗試在請求送出後結束，最終狀態沒有存下來；請重設目標並在新的執行中繼續",
     "The attempt ended without saving its final state; resume re-checks every gate against the stored run": "這次嘗試結束時最終狀態沒有存下來；恢復時會依已儲存的執行重新檢查每道閘門",
+    "The controller stopped after this request was sent; its outcome is unknown": "controller 在這個請求送出後停止；結果不明",
+    "The attempt ended without saving its final state after this request was sent; its outcome is unknown": "這次嘗試在這個請求送出後結束，最終狀態沒有存下來；結果不明",
+    "The workflow stopped before this request's result was recorded; its outcome is unknown": "流程在記錄這個請求的結果之前停止；結果不明",
     # workspace_api.py
     "Project ID mismatch": "專案 ID 不符",
     "Agent ID mismatch": "代理 ID 不符",

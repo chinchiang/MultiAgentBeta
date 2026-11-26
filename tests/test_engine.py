@@ -821,6 +821,7 @@ def test_restart_records_a_sent_request_as_outcome_unknown(tmp_path):
     # The dispatch may have reached the target: every export must show it, and nothing may replay it.
     assert stored["status"]=="incomplete" and "after a request was sent" in stored["error"]
     assert [(e["id"],e["case_id"],e["status"],e["repetition"]) for e in stored["executions"]]==[(job,"C-001","outcome_unknown",0)]
+    assert stored["executions"][0]["reason"]=="The controller stopped after this request was sent; its outcome is unknown"
     assert any("Tenant boundary" in gap and "never recorded" in gap for gap in stored["gaps"])
     assert [j["status"] for j in store.jobs(run["id"])]==["finished"]
     markdown=report_markdown(stored)
@@ -852,7 +853,7 @@ async def test_a_last_save_that_fails_briefly_is_retried(engine,monkeypatch):
     outage=store_outage(engine,monkeypatch,run["id"],2)
     engine.start(run["id"])
     await engine.tasks[run["id"]]
-    # The closing event's save failed once and the last save once; its retry landed both.
+    # The closing event waits for the last save, whose first two tries failed; the third landed both.
     assert outage["tries"]==2 and not engine.unsaved
     assert engine.store.get(run["id"])["events"][-1]["message"]=="Workflow finished. Completion is not a guarantee of security."
     assert engine.store.get(run["id"])["status"]=="incomplete" and engine.store.get(run["id"])["attempt_started_at"] is None
@@ -863,9 +864,9 @@ async def test_a_lost_last_save_is_kept_until_the_store_returns(engine,monkeypat
     outage=store_outage(engine,monkeypatch,run["id"],10**6)
     engine.start(run["id"])
     await engine.tasks[run["id"]]
-    # Every try failed: the store still says running, and the final state waits in memory. The outage did not turn
-    # the finished workflow into a failed one.
-    assert outage["tries"]==4 and engine.store.get(run["id"])["status"]=="running"
+    # Every try of the last save failed (the closing event saves with it): the store still says running, and the
+    # final state waits in memory. The outage did not turn the finished workflow into a failed one.
+    assert outage["tries"]==3 and engine.store.get(run["id"])["status"]=="running"
     assert engine.unsaved[run["id"]]["status"]=="incomplete" and not engine.executing(run["id"])
     # While the store is still down an action fails, rather than acting on the stale row (cancel used to KeyError).
     with pytest.raises(OSError,match="synthetic"):
@@ -900,6 +901,8 @@ async def test_a_running_run_no_attempt_holds_is_closed_like_a_restart(engine,ac
     assert stored["error_zh"] and stored["usage_unknown"] is True
     assert "The attempt ended without saving its final state while a model reservation was unresolved; further paid calls are blocked" in stored["gaps"]
     assert [(e["id"],e["status"]) for e in stored["executions"]]==[(job,"outcome_unknown")]
+    # The controller never stopped: the request's reason says what did happen.
+    assert stored["executions"][0]["reason"]=="The attempt ended without saving its final state after this request was sent; its outcome is unknown"
 
 
 async def test_a_resume_after_an_orphaned_attempt_runs_again(engine):
@@ -944,16 +947,26 @@ async def test_the_last_save_runs_off_the_event_loop(engine,monkeypatch):
     loop_thread=threading.current_thread()
     run=engine.create(RunInput(name="Off the loop"))
     save=engine.store.save
+    settle=engine.settle_sent_jobs
     threads=[]
+    settled_in=[]
     def recording(record):
-        if record["id"]==run["id"] and record["stage"]=="complete" and record.get("attempt_started_at") is None:
+        # Once the workflow is complete only the closing is left: its event, its settle and the last save.
+        if record["id"]==run["id"] and record["stage"]=="complete":
             threads.append(threading.current_thread())
         return save(record)
+    def recording_settle(record,reason):
+        if record["stage"]=="complete":
+            settled_in.append(threading.current_thread())
+        return settle(record,reason)
     monkeypatch.setattr(engine.store,"save",recording)
+    monkeypatch.setattr(engine,"settle_sent_jobs",recording_settle)
     engine.start(run["id"])
     await engine.tasks[run["id"]]
-    # Against an unreachable database each try waits out the connect timeout; the console keeps serving meanwhile.
+    # Against an unreachable database each store call waits out the connect timeout; the console keeps serving.
     assert threads and loop_thread not in threads
+    assert settled_in and loop_thread not in settled_in
+    assert engine.store.get(run["id"])["events"][-1]["message"]=="Workflow finished. Completion is not a guarantee of security."
 
 
 def test_recoveries_of_one_run_take_turns(engine,monkeypatch):
@@ -1057,6 +1070,49 @@ async def test_a_sent_job_left_on_a_finished_run_is_settled_by_the_next_action(e
     assert stored["status"]=="failed"
     assert [(e["id"],e["status"]) for e in stored["executions"]]==[(job,"outcome_unknown")]
     assert any("Tenant boundary" in gap and "never recorded" in gap for gap in stored["gaps"])
+
+
+async def test_a_start_whose_first_save_fails_leaves_nothing_registered(engine,monkeypatch):
+    run=engine.create(RunInput(name="Start during outage"))
+    save=engine.store.save
+    def failing(record):
+        if record["status"]=="running":
+            raise OSError("synthetic database outage")
+        return save(record)
+    monkeypatch.setattr(engine.store,"save",failing)
+    with pytest.raises(OSError,match="synthetic"):
+        engine.start(run["id"])
+    assert run["id"] not in engine.cancel_flags and run["id"] not in engine.runs and run["id"] not in engine.locks
+    monkeypatch.setattr(engine.store,"save",save)
+    # A cancel finds no attempt: the run stays created and can still be started.
+    assert engine.cancel(run["id"])["status"]=="created"
+    assert engine.store.get(run["id"])["status"]=="created"
+    engine.start(run["id"])
+    await engine.tasks[run["id"]]
+    assert engine.store.get(run["id"])["stage"]=="complete"
+
+
+@pytest.mark.parametrize("route,body",[("cancel",None),("start",None),("resume",None),("approve-cases",{"receipt":"r"})])
+def test_actions_settle_a_lost_attempt_off_the_event_loop(tmp_path,route,body):
+    # Against an unreachable database recover() waits out the connect timeout; every other request must go on.
+    with TestClient(create_app(tmp_path,testing=True)) as client:
+        authorize(client)
+        engine=client.app.state.engine
+        run=engine.create(RunInput(name="Off the loop"))
+        run["status"]="completed"
+        engine.store.save(run)
+        where=[]
+        recover=engine.recover
+        def recording(run_id):
+            try:
+                asyncio.get_running_loop()
+                where.append("loop")
+            except RuntimeError:
+                where.append("thread")
+            return recover(run_id)
+        engine.recover=recording
+        client.post(f"/api/runs/{run['id']}/{route}",json=body)
+    assert where and where[0]=="thread"
 
 
 def test_shutdown_saves_a_final_state_its_last_save_lost(tmp_path):

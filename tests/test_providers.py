@@ -480,6 +480,10 @@ SECRET_FORMATS = [
     # The same header under a proxy, CGI/Django META or X- name.
     "Proxy-Authorization: Basic synthetic-secret", "HTTP_AUTHORIZATION: Basic synthetic-secret",
     "request.META = {'HTTP_AUTHORIZATION': 'Basic synthetic-secret'}", "X-Authorization: Token synthetic-secret",
+    # Digest's parameters, raw, in a JSON string with escaped quotes, and in a Python string.
+    'Authorization: Digest username="synthetic-secret", response="synthetic-secret"',
+    '{"Authorization": "Digest username=\\"a\\", response=\\"synthetic-secret\\""}',
+    "h = {'Proxy-Authorization': 'Digest username=\"a\", response=\"synthetic-secret\"'}",
 ]
 
 
@@ -496,7 +500,10 @@ def test_redaction_covers_common_secret_formats(content):
                                      "token: string", "  token?: string;", "token = None", "token = req.token", "token = get_token(user)",
                                      "csrf_token = request.form['csrf']", "Basic authentication is required", "- token=${{ secrets.TOKEN }}",
                                      # A word glued to the name makes another name.
-                                     "preauthorization: Basic dXNlcjpwYXNz", "xhttp_authorization: Basic dXNlcjpwYXNz"])
+                                     "preauthorization: Basic dXNlcjpwYXNz", "xhttp_authorization: Basic dXNlcjpwYXNz",
+                                     # Dates, versions and plain numbers under a token key; Markdown lists about passwords.
+                                     "token: 2024-01-01", "token: 1.2.3-rc1", "  token: v10.20.30", "token: 123456789012",
+                                     "- password: must be 8 chars", "- token: rotated every 90 days", "  - secret: keep it out of logs"])
 def test_redaction_keeps_security_relevant_code_readable(content):
     # Reviewers must still see how credentials are handled, not only that they exist.
     assert redact_text(content) == content
@@ -505,7 +512,8 @@ def test_redaction_keeps_security_relevant_code_readable(content):
 @pytest.mark.parametrize("unit", ["a", "token", "secret_", "\n", " \n", "a.", "a+", "define('token", "export token_",
                                   "eyJ-", "sk-a", "xoxb-", "glpat-", "pass", "_pass", "DB_PASS=", "export pwd_",
                                   "SG.", "hf_", "ASIA", "ya29.", "hooks.slack.com/services/", ";AccountKey=",
-                                  "- ", "- token=1", "token: 1", "\ntoken=", "authorization: basic ", "Authorization:", "- 'pass=", "- \"pass=a'"])
+                                  "- ", "- token=1", "token: 1", "\ntoken=", "authorization: basic ", "Authorization:", "- 'pass=", "- \"pass=a'",
+                                  "authorization: digest ", "authorization: \"digest \\", "token: 1.1", "- token=a1"])
 def test_redaction_stays_linear_on_hostile_single_token_files(unit):
     # Each of these took minutes at the per-file limit with backtracking name scans.
     import time
@@ -559,6 +567,9 @@ def test_tokenizer_loader_rejects_unknown_network_assets():
     ("Proxy-Authorization: Basic dXNlcjpwYXNz", "Proxy-Authorization: Basic [REDACTED]"),
     ("HTTP_AUTHORIZATION: Basic dXNlcjpwYXNz", "HTTP_AUTHORIZATION: Basic [REDACTED]"),
     ("x_authorization = Token abc123", "x_authorization = Token [REDACTED]"),
+    ('Authorization: Digest username="a", response="6629fae4"', "Authorization: Digest [REDACTED]"),
+    ('{"Authorization": "Digest username=\\"a\\", nc=00000001", "next": 1}', '{"Authorization": "Digest [REDACTED]", "next": 1}'),
+    ("{'Authorization': 'Digest username=\"a\"', 'next': 1}", "{'Authorization': 'Digest [REDACTED]', 'next': 1}"),
     ('AWS_SECRET_ACCESS_KEY = "abc123"', 'AWS_SECRET_ACCESS_KEY = [REDACTED]'),
     ("  - DB_PASSWORD=hunter2", "  - DB_PASSWORD=[REDACTED]"),
     ("  - 'DB_PASSWORD=hunter 2'", "  - 'DB_PASSWORD=[REDACTED]'"),

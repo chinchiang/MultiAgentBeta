@@ -66,7 +66,8 @@ class Engine:
     def interrupted(self,run,restarted):
         """Close what an attempt that ended unrecorded left: a controller restart, or a last save that never landed."""
         # A request the journal marks sent, with no recorded result, may have reached the target.
-        settled=self.settle_sent_jobs(run,"The controller stopped after this request was sent; its outcome is unknown")
+        settled=self.settle_sent_jobs(run,"The controller stopped after this request was sent; its outcome is unknown" if restarted
+                                      else "The attempt ended without saving its final state after this request was sent; its outcome is unknown")
         if run["status"] not in {"running","cancelling"}:
             return
         run["status"]="cancelling" if run.get("workers_pending_cleanup") else "incomplete"
@@ -188,14 +189,11 @@ class Engine:
 
     def event(self,run,message,level="info",agent_id=None,closing=False):
         run["events"].append(dict(seq=len(run["events"])+1,at=now(),stage=run["stage"],message=message,level=level,agent_id=agent_id))
-        try:
+        # How an attempt ended is decided before its closing event, and the last save (save_final) stores both, in a
+        # thread and with retries: saving it here would block the event loop, and a store outage here would turn a
+        # finished attempt into a failed one.
+        if not closing:
             self.store.save(run)
-        except Exception as exc:
-            # How an attempt ended is decided before its closing event; the last save (save_final) retries and persists
-            # both, so a store outage here must not turn a finished attempt into a failed one.
-            if not closing:
-                raise
-            note_failure(f"run {run['id']} closing event",exc)
 
     def start(self, run_id: str, resume=False):
         if self.executing(run_id):
@@ -214,17 +212,19 @@ class Engine:
             raise PolicyError("Previous provider usage is unknown; this run cannot make further calls")
         if run.get("deployment_changed"):
             raise PolicyError("The target's deployment identity changed during this run; test it in a new run")
-        cancel_flag=asyncio.Event()
-        lock=asyncio.Lock()
-        self.cancel_flags[run_id]=cancel_flag
-        self.locks[run_id]=lock
-        self.runs[run_id]=run
         run["status"]="running"
         run["error"]=None
         run["error_zh"]=None
         run["started_at"]=run.get("started_at") or now()
         run["attempt_started_at"]=now()
+        # The attempt is registered only once its start is stored: a save that fails leaves the run as it was, with
+        # no cancel flag or in-memory copy that a later cancel would take for a live attempt.
         self.event(run,"Resuming journaled workflow" if resume else "Starting evidence-gated workflow")
+        cancel_flag=asyncio.Event()
+        lock=asyncio.Lock()
+        self.cancel_flags[run_id]=cancel_flag
+        self.locks[run_id]=lock
+        self.runs[run_id]=run
         task=asyncio.create_task(self._run(run))
         self.tasks[run_id]=task
         forget=partial(self.forget_attempt,run_id,task,cancel_flag,lock,run)
@@ -245,7 +245,8 @@ class Engine:
 
     def cancel(self,run_id):
         self.recover(run_id)
-        run=self.runs.get(run_id) or self.store.get(run_id)
+        # Only a live attempt's in-memory copy is newer than the store's row.
+        run=self.runs[run_id] if self.executing(run_id) else self.store.get(run_id)
         if run["status"]=="awaiting_approval" and not self.executing(run_id):
             # Declining model-designed cases sends nothing; a resume brings them back for review.
             run["status"]="cancelled"
@@ -373,7 +374,7 @@ class Engine:
                 note_failure(f"run {run['id']} staging cleanup",exc)
             settled=True
             try:
-                self.settle_sent_jobs(run,"The workflow stopped before this request's result was recorded; its outcome is unknown")
+                await asyncio.to_thread(self.settle_sent_jobs,run,"The workflow stopped before this request's result was recorded; its outcome is unknown")
             except Exception as exc:
                 # The journal still marks them sent: the last save settles them first, or else flush_unsaved, the next
                 # recover or a restart does.

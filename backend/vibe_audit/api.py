@@ -297,16 +297,21 @@ def _run_routes(api,console):
         # Database reads run off the event loop, so a slow database stalls one request, not every other one.
         return await asyncio.to_thread(console.store.get,run_id)
 
+    # What a lost attempt left behind is settled off the event loop first: against an unreachable database that waits
+    # out the connect timeout. The engine's own call that follows on the loop then finds nothing left to do.
     @api.post("/runs/{run_id}/start")
     async def start(run_id:str):
+        await asyncio.to_thread(console.engine.recover,run_id)
         return console.engine.start(run_id)
 
     @api.post("/runs/{run_id}/cancel")
     async def cancel(run_id:str):
+        await asyncio.to_thread(console.engine.recover,run_id)
         return console.engine.cancel(run_id)
 
     @api.post("/runs/{run_id}/resume")
     async def resume(run_id:str):
+        await asyncio.to_thread(console.engine.recover,run_id)
         return console.engine.start(run_id,resume=True)
 
     @api.post("/runs/{run_id}/approve-cases")
@@ -319,6 +324,7 @@ def _run_routes(api,console):
             receipt=None
         if not isinstance(receipt,str):
             raise HTTPException(422,"Approve with the receipt of the cases you reviewed")
+        await asyncio.to_thread(console.engine.recover,run_id)
         return console.engine.approve_cases(run_id,receipt,request.state.actor)
 
     @api.get("/runs/{run_id}/events")

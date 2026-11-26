@@ -34,13 +34,18 @@ _KEY_SUFFIX = r"(?:[_-]?key(?:[_-]?base)?)?"
 # A name starts at a word start, or the lazy name scan would restart at every letter of a long word.
 _SECRET_ASSIGNMENT = re.compile(rf'''(?im)(["']?(?:(?<![A-Za-z0-9_])[A-Za-z0-9_]*?(?:{_SECRET_WORDS}|token){_KEY_SUFFIX})["']?\s*[:=]\s*)(["'])([^\r\n]*?)(\2)''')
 # Leading whitespace stays on the key's own line, or every blank line would rescan the rest of the run.
-# A YAML list item (docker-compose "- DB_PASSWORD=x", or quoted "- 'DB_PASSWORD=x'") counts as a line start;
-# only the quote opened before the name closes the value, and a # inside the quotes is part of it.
-_LINE_KEY = r"""^([^\S\n]*(?:-[^\S\n]+)?(["'])?[A-Za-z0-9_.-]*?"""
-_UNQUOTED_SECRET = re.compile(rf"""(?im){_LINE_KEY}(?:{_SECRET_WORDS}){_KEY_SUFFIX}\s*[:=]\s*)((?(2)(?:(?!\2)[^\r\n])+|[^\r\n#]+))""")
-# A bare token name is also code ("token: string", "token = None", "token = req.token"), so its unquoted value counts
-# only when it reads as a credential: one run of token characters with a digit in it, ending the line or the quote.
-_UNQUOTED_TOKEN = re.compile(rf"""(?im){_LINE_KEY}token\s*[:=]\s*)(?=[A-Za-z0-9._~+/=-]*[0-9])([A-Za-z0-9._~+/=-]{{8,}})(?=(?(2)\2|[^\S\r\n]*(?:#|\r?$)))""")
+# A YAML list item (docker-compose "- DB_PASSWORD=x", or quoted "- 'DB_PASSWORD=x'") counts as a line start, but only
+# with "=": "- password: at least 8 characters" is a Markdown list about one. Only the quote opened before the name
+# closes the value, and a # inside the quotes is part of it. Group 2 is the list marker, group 3 that quote.
+_LINE_KEY = r"""^([^\S\n]*(?:(-)[^\S\n]+)?(["'])?[A-Za-z0-9_.-]*?"""
+_SEPARATOR = r"""(?(2)\s*=|\s*[:=])\s*"""
+_UNQUOTED_SECRET = re.compile(rf"""(?im){_LINE_KEY}(?:{_SECRET_WORDS}){_KEY_SUFFIX}{_SEPARATOR})((?(3)(?:(?!\3)[^\r\n])+|[^\r\n#]+))""")
+# A bare token name is also code ("token: string", "token = None", "token = req.token") and configuration
+# ("token: 2024-01-01", "token: 1.2.3-rc1"), so its unquoted value counts only when it reads as a credential: one run
+# of token characters holding both a letter and a digit, not a version number, ending the line or the quote.
+_UNQUOTED_TOKEN = re.compile(rf"""(?im){_LINE_KEY}token{_SEPARATOR})(?=[A-Za-z0-9._~+/=-]*[0-9])(?=[A-Za-z0-9._~+/=-]*[A-Za-z])"""
+                             r"""(?!v?[0-9]+(?:\.[0-9]+)+(?:[-+][A-Za-z0-9.]*)?(?![A-Za-z0-9._~+/=-]))"""
+                             r"""([A-Za-z0-9._~+/=-]{8,})(?=(?(3)\3|[^\S\r\n]*(?:#|\r?$)))""")
 # Shell, Dockerfile and batch declarations hold literal values, so any secret-like name counts.
 # The lookahead finds the word once; the name is then consumed without backtracking.
 _ENV_DECLARATION = re.compile(rf"(?im)^([^\S\n]*(?:export|ENV|ARG|set|setx)\s+(?=[A-Za-z0-9_.-]*?(?:{_SECRET_WORDS}|token))[A-Za-z0-9_.-]*+\s*=\s*)([^\r\n#]+)")
@@ -53,7 +58,11 @@ _KNOWN_SECRET = re.compile(r"(?<![A-Za-z0-9_-])(?:sk-(?:proj-|ant-)?[A-Za-z0-9_-
 _BEARER = re.compile(r"(?i)\b(Bearer\s+)[A-Za-z0-9._~+/=-]{8,}")
 # Other Authorization schemes ("Basic dXNlcjpwYXNz", "Token abc") only next to the header name: alone, "Basic" is prose.
 # The name may carry a Proxy-, X- or HTTP_ (CGI and Django's META) prefix; another word glued to it is a different name.
-_AUTH_HEADER = re.compile(r"""(?i)((?<![A-Za-z0-9_-])(?:proxy[_-]|x[_-]|http_)?authorization["']?\s*[:=,]\s*["']?[^\S\r\n]*(?:basic|token|digest|apikey)[^\S\r\n]+)[A-Za-z0-9._~+/=-]{4,}""")
+_AUTH_HEADER = re.compile(r"""(?i)((?<![A-Za-z0-9_-])(?:proxy[_-]|x[_-]|http_)?authorization["']?\s*[:=,]\s*["']?[^\S\r\n]*(?:basic|token|apikey)[^\S\r\n]+)[A-Za-z0-9._~+/=-]{4,}""")
+# Digest carries its secrets as parameters (username="a", response="<hash>"), so all of them go: to the end of the
+# line, or of the quoted value the header sits in (group 2), skipping escaped quotes inside it.
+_AUTH_DIGEST = re.compile(r"""(?i)((?<![A-Za-z0-9_-])(?:proxy[_-]|x[_-]|http_)?authorization["']?\s*[:=,]\s*(["'])?[^\S\r\n]*digest[^\S\r\n]+)"""
+                          r"""((?(2)(?:\\.|(?!\2)[^\\\r\n])+|[^\r\n]+))""")
 # Any scheme: postgres://, mongodb+srv://, redis://:password@ and so on. The bounded scheme
 # keeps runs like a.a.a.a from being rescanned after every dot.
 _URL_AUTH = re.compile(r"(?i)\b([a-z][a-z0-9+.-]{0,63}://)[^/\s:@]*:[^/\s@]+@")
@@ -70,8 +79,8 @@ def redact_text(text: str, keep: frozenset[str] = frozenset()) -> str:
 
     text = _PRIVATE_KEY.sub("[REDACTED_PRIVATE_KEY]", text)
     text = _SECRET_ASSIGNMENT.sub(lambda m: kept(m[3], m[1] + m[2] + "[REDACTED]" + m[4], m[0]), text)
-    text = _UNQUOTED_SECRET.sub(lambda m: kept(m[3], m[1] + "[REDACTED]", m[0]), text)
-    text = _UNQUOTED_TOKEN.sub(lambda m: kept(m[3], m[1] + "[REDACTED]", m[0]), text)
+    text = _UNQUOTED_SECRET.sub(lambda m: kept(m[4], m[1] + "[REDACTED]", m[0]), text)
+    text = _UNQUOTED_TOKEN.sub(lambda m: kept(m[4], m[1] + "[REDACTED]", m[0]), text)
     text = _ENV_DECLARATION.sub(lambda m: kept(m[2], m[1] + "[REDACTED]", m[0]), text)
     text = _DEFINE_SECRET.sub(lambda m: kept(m[4], m[1] + m[3] + "[REDACTED]" + m[5], m[0]), text)
     text = _CONNECTION_PASSWORD.sub(lambda m: kept(m[2], m[1] + "[REDACTED]", m[0]), text)
@@ -79,6 +88,7 @@ def redact_text(text: str, keep: frozenset[str] = frozenset()) -> str:
     text = _KNOWN_SECRET.sub(lambda m: kept(m[0], "[REDACTED_TOKEN]", m[0]), text)
     text = _BEARER.sub(lambda m: kept(m[0][len(m[1]):], m[1] + "[REDACTED]", m[0]), text)
     text = _AUTH_HEADER.sub(lambda m: kept(m[0][len(m[1]):], m[1] + "[REDACTED]", m[0]), text)
+    text = _AUTH_DIGEST.sub(lambda m: kept(m[3], m[1] + "[REDACTED]", m[0]), text)
     return _URL_AUTH.sub(lambda m: m[1] + "[REDACTED]@", text)
 
 
