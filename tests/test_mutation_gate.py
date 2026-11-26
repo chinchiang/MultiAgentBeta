@@ -24,13 +24,30 @@ def script():
     return module
 
 
+def workflow(name="mutation-pr.yml"):
+    return yaml.safe_load((ROOT / ".github" / "workflows" / name).read_text(encoding="utf-8"))
+
+
 @from_checkout
-def test_the_pull_request_run_starts_for_every_mutated_module_and_for_the_tests():
-    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+def test_the_pull_request_run_starts_for_every_mutated_module_the_tests_and_their_table():
     # YAML 1.1 reads the bare key "on" as true.
-    paths = (workflow.get("on") or workflow[True])["pull_request"]["paths"]
-    expected = {"backend/" + module.removeprefix("src/") for module in tool()["mutmut"]["only_mutate"]} | {"tests/**"}
+    paths = (workflow().get("on") or workflow()[True])["pull_request"]["paths"]
+    # pyproject.toml holds the selection and [tool.vibeaudit.mutation.tests]: changing either is a test change.
+    expected = {"backend/" + module.removeprefix("src/") for module in tool()["mutmut"]["only_mutate"]} | {"tests/**", "pyproject.toml"}
     assert set(paths) == expected and len(paths) == len(expected)
+
+
+@from_checkout
+def test_the_pull_request_run_has_the_full_runs_time():
+    # A test change can mutate several modules whole, close to a full run.
+    assert workflow()["jobs"]["changed"]["timeout-minutes"] == workflow("mutation.yml")["jobs"]["mutmut"]["timeout-minutes"]
+
+
+@from_checkout
+def test_a_manual_dispatch_compares_with_the_default_branch():
+    # base_ref is empty outside a pull request; "origin/" alone is no revision.
+    runs = [step["run"] for step in workflow()["jobs"]["changed"]["steps"] if "mutation-test.py" in step.get("run", "")]
+    assert runs == ['python scripts/mutation-test.py --changed "origin/${{ github.base_ref || github.event.repository.default_branch }}"']
 
 
 def test_every_selected_test_file_names_what_it_tests():
