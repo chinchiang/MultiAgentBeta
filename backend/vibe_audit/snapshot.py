@@ -27,14 +27,20 @@ _SECRET_NAMES = {"credentials", "credentials.json", "credential.json", "secrets.
 _PRIVATE_KEY = re.compile(r"-----BEGIN [^-\r\n]*PRIVATE KEY(?: BLOCK)?-----.*?(?:-----END [^-\r\n]*PRIVATE KEY(?: BLOCK)?-----|\Z)", re.S)
 # Short forms count only as a whole name segment (DB_PASS, smtp-pwd), so bypass or compass stay readable.
 _SECRET_WORDS = (r"api[_-]?key|password|passwd|secret|access[_-]?token|auth[_-]?token|refresh[_-]?token|client[_-]?secret|private[_-]?key"
-                 r"|(?<![a-z])(?:pass(?:[_-]?phrase)?|pwd)(?![a-z])|(?:signing|encryption|hmac|master|webhook)[_-]?key")
+                 r"|(?<![a-z])(?:pass(?:[_-]?phrase)?|pwd)(?![a-z])|(?:signing|encryption|hmac|master|webhook|access)[_-]?key")
 # SECRET_KEY / SECRET_KEY_BASE style names; password_hash and similar code stay readable for reviewers.
 _KEY_SUFFIX = r"(?:[_-]?key(?:[_-]?base)?)?"
 # Every pattern stays linear in the snapshot size; hostile sources can be megabytes of one token.
 # A name starts at a word start, or the lazy name scan would restart at every letter of a long word.
 _SECRET_ASSIGNMENT = re.compile(rf'''(?im)(["']?(?:(?<![A-Za-z0-9_])[A-Za-z0-9_]*?(?:{_SECRET_WORDS}|token){_KEY_SUFFIX})["']?\s*[:=]\s*)(["'])([^\r\n]*?)(\2)''')
 # Leading whitespace stays on the key's own line, or every blank line would rescan the rest of the run.
-_UNQUOTED_SECRET = re.compile(rf"(?im)^([^\S\n]*[A-Za-z0-9_.-]*?(?:{_SECRET_WORDS}){_KEY_SUFFIX}\s*[:=]\s*)([^\r\n#]+)")
+# A YAML list item (docker-compose "- DB_PASSWORD=x", or quoted "- 'DB_PASSWORD=x'") counts as a line start;
+# only the quote opened before the name closes the value, and a # inside the quotes is part of it.
+_LINE_KEY = r"""^([^\S\n]*(?:-[^\S\n]+)?(["'])?[A-Za-z0-9_.-]*?"""
+_UNQUOTED_SECRET = re.compile(rf"""(?im){_LINE_KEY}(?:{_SECRET_WORDS}){_KEY_SUFFIX}\s*[:=]\s*)((?(2)(?:(?!\2)[^\r\n])+|[^\r\n#]+))""")
+# A bare token name is also code ("token: string", "token = None", "token = req.token"), so its unquoted value counts
+# only when it reads as a credential: one run of token characters with a digit in it, ending the line or the quote.
+_UNQUOTED_TOKEN = re.compile(rf"""(?im){_LINE_KEY}token\s*[:=]\s*)(?=[A-Za-z0-9._~+/=-]*[0-9])([A-Za-z0-9._~+/=-]{{8,}})(?=(?(2)\2|[^\S\r\n]*(?:#|\r?$)))""")
 # Shell, Dockerfile and batch declarations hold literal values, so any secret-like name counts.
 # The lookahead finds the word once; the name is then consumed without backtracking.
 _ENV_DECLARATION = re.compile(rf"(?im)^([^\S\n]*(?:export|ENV|ARG|set|setx)\s+(?=[A-Za-z0-9_.-]*?(?:{_SECRET_WORDS}|token))[A-Za-z0-9_.-]*+\s*=\s*)([^\r\n#]+)")
@@ -45,6 +51,8 @@ _AUTH_FIELD = re.compile(r'''(?i)(["'](?:auth|identitytoken|registrytoken)["']\s
 # not once per "eyJ" or "sk-" inside it.
 _KNOWN_SECRET = re.compile(r"(?<![A-Za-z0-9_-])(?:sk-(?:proj-|ant-)?[A-Za-z0-9_-]{16,}|[sr]k_(?:live|test)_[A-Za-z0-9]{16,}|gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{20,}|xox[abposr]-[A-Za-z0-9-]{10,}|AKIA[A-Z0-9]{16}|AIza[0-9A-Za-z_-]{35}|npm_[A-Za-z0-9]{36}|hf_[A-Za-z0-9]{30,}|ASIA[A-Z0-9]{16}|SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}|ya29\.[A-Za-z0-9_-]{20,}|shp(?:at|ss|ca|pa)_[a-fA-F0-9]{32}|dop_v1_[a-f0-9]{64}|pypi-[A-Za-z0-9_-]{50,}|hooks\.slack\.com/services/[A-Za-z0-9_/-]{20,}|eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})\b")
 _BEARER = re.compile(r"(?i)\b(Bearer\s+)[A-Za-z0-9._~+/=-]{8,}")
+# Other Authorization schemes ("Basic dXNlcjpwYXNz", "Token abc") only next to the header name: alone, "Basic" is prose.
+_AUTH_HEADER = re.compile(r"""(?i)((?<![A-Za-z0-9_-])authorization["']?\s*[:=,]\s*["']?[^\S\r\n]*(?:basic|token|digest|apikey)[^\S\r\n]+)[A-Za-z0-9._~+/=-]{4,}""")
 # Any scheme: postgres://, mongodb+srv://, redis://:password@ and so on. The bounded scheme
 # keeps runs like a.a.a.a from being rescanned after every dot.
 _URL_AUTH = re.compile(r"(?i)\b([a-z][a-z0-9+.-]{0,63}://)[^/\s:@]*:[^/\s@]+@")
@@ -61,13 +69,15 @@ def redact_text(text: str, keep: frozenset[str] = frozenset()) -> str:
 
     text = _PRIVATE_KEY.sub("[REDACTED_PRIVATE_KEY]", text)
     text = _SECRET_ASSIGNMENT.sub(lambda m: kept(m[3], m[1] + m[2] + "[REDACTED]" + m[4], m[0]), text)
-    text = _UNQUOTED_SECRET.sub(lambda m: kept(m[2], m[1] + "[REDACTED]", m[0]), text)
+    text = _UNQUOTED_SECRET.sub(lambda m: kept(m[3], m[1] + "[REDACTED]", m[0]), text)
+    text = _UNQUOTED_TOKEN.sub(lambda m: kept(m[3], m[1] + "[REDACTED]", m[0]), text)
     text = _ENV_DECLARATION.sub(lambda m: kept(m[2], m[1] + "[REDACTED]", m[0]), text)
     text = _DEFINE_SECRET.sub(lambda m: kept(m[4], m[1] + m[3] + "[REDACTED]" + m[5], m[0]), text)
     text = _CONNECTION_PASSWORD.sub(lambda m: kept(m[2], m[1] + "[REDACTED]", m[0]), text)
     text = _AUTH_FIELD.sub(lambda m: kept(m[3], m[1] + m[2] + "[REDACTED]" + m[4], m[0]), text)
     text = _KNOWN_SECRET.sub(lambda m: kept(m[0], "[REDACTED_TOKEN]", m[0]), text)
     text = _BEARER.sub(lambda m: kept(m[0][len(m[1]):], m[1] + "[REDACTED]", m[0]), text)
+    text = _AUTH_HEADER.sub(lambda m: kept(m[0][len(m[1]):], m[1] + "[REDACTED]", m[0]), text)
     return _URL_AUTH.sub(lambda m: m[1] + "[REDACTED]@", text)
 
 

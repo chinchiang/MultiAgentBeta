@@ -471,6 +471,12 @@ SECRET_FORMATS = [
     "DefaultEndpointsProtocol=https;AccountName=demo;AccountKey=synthetic-secret;EndpointSuffix=core.windows.net",
     "hf = hf_" + "s" * 34, "aws = ASIA" + "S" * 16, "mail = SG." + "s" * 22 + "." + "s" * 43, "google = ya29." + "s" * 30,
     "hook = https://hooks.slack.com/services/T0000/B0000/" + "s" * 24,
+    # Names that go on past the secret word, compose list items, bare token values and other Authorization schemes.
+    'AWS_SECRET_ACCESS_KEY = "synthetic-secret"', "AWS_SECRET_ACCESS_KEY=synthetic-secret", "  secret_access_key: synthetic-secret",
+    "environment:\n  - DB_PASSWORD=synthetic-secret", '  - "API_KEY=synthetic-secret"', "token: synthetic-secret-1",
+    "  GITHUB_TOKEN=synthetic-secret-1 # ci", '  - "NPM_TOKEN=synthetic-secret-1"',
+    "Authorization: Basic synthetic-secret", 'headers = {"Authorization": "Basic synthetic-secret"}',
+    'curl -H "Authorization: Token synthetic-secret" https://api.example',
 ]
 
 
@@ -483,7 +489,9 @@ def test_redaction_covers_common_secret_formats(content):
 
 @pytest.mark.parametrize("content", ["password_hash = bcrypt.hashpw(password, salt)", "login(user, password=password)",
                                      'tokenizer = load("cl100k")', '<input type="password" name="password">',
-                                     'bypass = "cache"', "compass: north", "passthrough = True", "for item in items: pass"])
+                                     'bypass = "cache"', "compass: north", "passthrough = True", "for item in items: pass",
+                                     "token: string", "  token?: string;", "token = None", "token = req.token", "token = get_token(user)",
+                                     "csrf_token = request.form['csrf']", "Basic authentication is required", "- token=${{ secrets.TOKEN }}"])
 def test_redaction_keeps_security_relevant_code_readable(content):
     # Reviewers must still see how credentials are handled, not only that they exist.
     assert redact_text(content) == content
@@ -491,7 +499,8 @@ def test_redaction_keeps_security_relevant_code_readable(content):
 
 @pytest.mark.parametrize("unit", ["a", "token", "secret_", "\n", " \n", "a.", "a+", "define('token", "export token_",
                                   "eyJ-", "sk-a", "xoxb-", "glpat-", "pass", "_pass", "DB_PASS=", "export pwd_",
-                                  "SG.", "hf_", "ASIA", "ya29.", "hooks.slack.com/services/", ";AccountKey="])
+                                  "SG.", "hf_", "ASIA", "ya29.", "hooks.slack.com/services/", ";AccountKey=",
+                                  "- ", "- token=1", "token: 1", "\ntoken=", "authorization: basic ", "Authorization:", "- 'pass=", "- \"pass=a'"])
 def test_redaction_stays_linear_on_hostile_single_token_files(unit):
     # Each of these took minutes at the per-file limit with backtracking name scans.
     import time
@@ -541,6 +550,15 @@ def test_tokenizer_loader_rejects_unknown_network_assets():
     ('"auth": "dXNlcjpwYXNz"', '"auth": "[REDACTED]"'),
     ("key AKIAABCDEFGHIJKLMNOP end", "key [REDACTED_TOKEN] end"),
     ("Authorization: Bearer abcdefghij1234", "Authorization: Bearer [REDACTED]"),
+    ("Authorization: Basic dXNlcjpwYXNz", "Authorization: Basic [REDACTED]"),
+    ('AWS_SECRET_ACCESS_KEY = "abc123"', 'AWS_SECRET_ACCESS_KEY = [REDACTED]'),
+    ("  - DB_PASSWORD=hunter2", "  - DB_PASSWORD=[REDACTED]"),
+    ("  - 'DB_PASSWORD=hunter 2'", "  - 'DB_PASSWORD=[REDACTED]'"),
+    ("token: abc123def # rotated", "token: [REDACTED] # rotated"),
+    ('- "GH_TOKEN=abc123def"', '- "GH_TOKEN=[REDACTED]"'),
+    # Only the quote opened before the name ends the value; a # inside it is not a comment.
+    ('- "DB_PASSWORD=ab\'cd#ef"', '- "DB_PASSWORD=[REDACTED]"'),
+    ("""- 'API_KEY=a"b' # rotated""", "- 'API_KEY=[REDACTED]' # rotated"),
     ("postgres://user:pw@host/db", "postgres://[REDACTED]@host/db"),
 ])
 def test_redaction_replaces_each_secret_form_exactly(content, expected):

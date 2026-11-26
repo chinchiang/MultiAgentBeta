@@ -21,7 +21,7 @@ from .messages import PATTERNS, STATUS_ZH, ZH, zh
 from .policy import PolicyError
 from .service import REPORT_LANGUAGES, Engine, report_markdown, report_sarif
 from .settings import DEFAULT_CONSOLE_ORIGINS, ROOT, Settings, startup_token_strong  # noqa: F401  (startup_token_strong: kept for callers)
-from .store import RunNotFound, Store
+from .store import ControllerBusy, RunNotFound, Store
 
 LIMITATIONS=[
     "Demo uses synthetic reviewers and fixtures, not real model or target validation.",
@@ -160,6 +160,11 @@ def _error_handlers(app,console):
 
     @app.exception_handler(PolicyError)
     async def policy_error(request,exc):
+        return problem(str(exc),409)
+
+    @app.exception_handler(ControllerBusy)
+    async def controller_busy(request,exc):
+        # A database restart let another process take the controller lock: this one must not act on the runs.
         return problem(str(exc),409)
 
     @app.exception_handler(RunNotFound)
@@ -330,6 +335,8 @@ def _run_routes(api,console):
                 if console.current_session(request) is None:
                     yield "event: expired\ndata: {}\n\n"
                     return
+                # Read before the poll: an attempt that ends while the poll runs leaves its closing events for the next one.
+                live=console.engine.executing(run_id)
                 # Only the events after the cursor are read: the run's body is not loaded whole every half second.
                 def poll():
                     return console.store.events_after(run_id,cursor),console.store.summary(run_id)
@@ -337,8 +344,11 @@ def _run_routes(api,console):
                 for event in events:
                     cursor=event["seq"]
                     yield f"id: {cursor}\nevent: progress\ndata: {json.dumps(event,ensure_ascii=False)}\n\n"
-                # A cancelling run with no task left only changes through an operator reconcile.
-                if run["status"] not in {"running","cancelling","created"} or run["status"]=="cancelling" and not console.engine.executing(run_id):
+                # A cancelling run with no task left only changes through an operator reconcile, and a running one with
+                # none lost its last save: the next resume or cancel settles it (Engine.recover). Checked again after the
+                # poll too, so a run that started while it ran keeps its stream.
+                if (run["status"] not in {"running","cancelling","created"}
+                        or run["status"]!="created" and not live and not console.engine.executing(run_id)):
                     yield "event: done\ndata: {}\n\n"
                     return
                 yield ": heartbeat\n\n"
@@ -431,6 +441,8 @@ def create_app(data_dir=None, database_url=None, testing=False, session_token=No
         pending=[task for task in console.engine.tasks.values() if not task.done()]
         if pending:
             await asyncio.gather(*pending,return_exceptions=True)
+        # A finished attempt whose last save failed is saved now, or a restart would close it as interrupted.
+        await asyncio.to_thread(console.engine.flush_unsaved)
         console.store.close()
 
     # The schema is served behind the session; a Swagger page could not load its assets under this CSP.

@@ -359,6 +359,14 @@ def test_declared_test_literals_stay_readable_and_nothing_else_does():
     assert redact_text("password = 'XFIXTUREX'", frozenset({"XFIXTUREX"})) == "password = 'XFIXTUREX'"
 
 
+def test_declared_test_literals_stay_readable_in_bare_token_and_authorization_forms():
+    # The bare token form and the non-Bearer Authorization schemes honour the declaration like every other form.
+    keep = frozenset({"fixture-tok-1", "dXNlcjpwYXNz"})
+    text = "token: fixture-tok-1\n  - \"GH_TOKEN=fixture-tok-1\"\nAuthorization: Basic dXNlcjpwYXNz\n"
+    assert redact_text(text, keep) == text
+    assert redact_text(text) == "token: [REDACTED]\n  - \"GH_TOKEN=[REDACTED]\"\nAuthorization: Basic [REDACTED]\n"
+
+
 def test_snapshot_states_how_many_declared_literals_it_left_unredacted(tmp_path):
     (tmp_path / "app.py").write_text("token = 'fixture-web-a'\n", newline="\n")
     (tmp_path / "other.py").write_text("x = 1\n", newline="\n")

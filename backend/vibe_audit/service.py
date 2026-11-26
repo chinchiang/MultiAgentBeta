@@ -6,6 +6,7 @@ import hashlib
 import json
 import html
 import re
+import threading
 import uuid
 from datetime import datetime
 from functools import partial
@@ -26,6 +27,8 @@ from .contracts import (CORE_REVIEW_QUESTIONS, CaseDesignProposal, CommanderProp
                         ReviewProposal, ChallengeProposal, ThreatModelProposal, ReportOrderProposal, complete_requirements, partition_source_references)
 
 STAGES = ["preflight","whitebox","adjudication","threat_model","case_design","blackbox","report"]
+# Waits between tries of an attempt's last save: a database restart or failover is usually over within seconds.
+FINAL_SAVE_RETRY_SECONDS = (0.5, 1, 2, 4)
 
 
 class GraphState(TypedDict):
@@ -53,25 +56,78 @@ class Engine:
         self.checkpointer=InMemorySaver()
         self.runtimes: dict[str,Any]={}
         self.runtime_configs: dict[str,dict]={}
+        # Finished attempts whose last save failed: their final state, kept until a save succeeds.
+        self.unsaved: dict[str,dict]={}
+        # Reconcile recovers from a worker thread while the other actions do so on the event loop: one at a time.
+        self.recovering=threading.RLock()
+        # Recovery rewrites every running run and deletes staged copies: only the one controller of this data may do it.
+        store.claim_controller()
         for run in store.list():
-            # A request the journal marks sent, with no recorded result, may have reached the target.
-            settled=self.settle_sent_jobs(run,"The controller stopped after this request was sent; its outcome is unknown")
-            if run["status"] in {"running","cancelling"}:
-                run["status"]="cancelling" if run.get("workers_pending_cleanup") else "incomplete"
-                run["error"]=("Controller restarted after a request was sent; reset the target and continue in a new run" if settled
-                            else "Controller restarted; resume re-checks every gate against the stored run")
-                run["error_zh"]=zh(run["error"])
-                if run.get("attempt_started_at"):
-                    # The interrupted attempt was active until its last save at the latest.
-                    attempt=(datetime.fromisoformat(run["updated_at"])-datetime.fromisoformat(run["attempt_started_at"])).total_seconds()
-                    run["active_seconds"]=run.get("active_seconds",0)+max(0,attempt)
-                    run["attempt_started_at"]=None
-                if run.get("reserved_tokens",0)>0:
-                    run["usage_unknown"]=True
-                    run["usage"]["tokens_known"]=False
-                    run["gaps"].append("Controller restarted with an unresolved model reservation; further paid calls are blocked")
-                store.save(run)
+            self.interrupted(run,restarted=True)
         self.sweep_staging()
+
+    def interrupted(self,run,restarted):
+        """Close what an attempt that ended unrecorded left: a controller restart, or a last save that never landed."""
+        # A request the journal marks sent, with no recorded result, may have reached the target.
+        settled=self.settle_sent_jobs(run,"The controller stopped after this request was sent; its outcome is unknown")
+        if run["status"] not in {"running","cancelling"}:
+            return
+        run["status"]="cancelling" if run.get("workers_pending_cleanup") else "incomplete"
+        if restarted:
+            run["error"]=("Controller restarted after a request was sent; reset the target and continue in a new run" if settled
+                        else "Controller restarted; resume re-checks every gate against the stored run")
+        else:
+            run["error"]=("The attempt ended without saving its final state after a request was sent; reset the target and continue in a new run" if settled
+                        else "The attempt ended without saving its final state; resume re-checks every gate against the stored run")
+        run["error_zh"]=zh(run["error"])
+        if run.get("attempt_started_at"):
+            # The interrupted attempt was active until its last save at the latest.
+            attempt=(datetime.fromisoformat(run["updated_at"])-datetime.fromisoformat(run["attempt_started_at"])).total_seconds()
+            run["active_seconds"]=run.get("active_seconds",0)+max(0,attempt)
+            run["attempt_started_at"]=None
+        if run.get("reserved_tokens",0)>0:
+            run["usage_unknown"]=True
+            run["usage"]["tokens_known"]=False
+            run["gaps"].append("Controller restarted with an unresolved model reservation; further paid calls are blocked" if restarted
+                               else "The attempt ended without saving its final state while a model reservation was unresolved; further paid calls are blocked")
+        self.store.save(run)
+
+    def recover(self,run_id):
+        """Before acting on a run no attempt in this controller holds, settle what a lost last save left behind.
+
+        A finished attempt whose final save failed is saved now. Without that state (the store says running or
+        cancelling, yet nothing runs it) the stored run is closed as a restart would close it. Raises while the store
+        is still unreachable, so the action fails instead of acting on the stale row."""
+        with self.recovering:
+            if self.executing(run_id):
+                return
+            if run_id in self.unsaved:
+                self.flush_unsaved(run_id)
+                return
+            run=self.store.get(run_id)
+            # A cancelling run still waiting for worker cleanup is not lost: only an operator reconcile ends it.
+            if run["status"]=="running" or run["status"]=="cancelling" and not run.get("workers_pending_cleanup"):
+                self.store.claim_controller()
+                self.interrupted(run,restarted=False)
+
+    def flush_unsaved(self,run_id=None):
+        """Save the final state of finished attempts whose last save failed: run_id's, raising if it still cannot, or
+        every one, logging each that cannot (at shutdown). The requests their closing could not settle are settled
+        first: a request sent without a recorded result must reach the exports."""
+        with self.recovering:
+            for key in [run_id] if run_id is not None else list(self.unsaved):
+                pending=self.unsaved.get(key)
+                if pending is None:
+                    continue
+                try:
+                    self.settle_sent_jobs(pending,"The workflow stopped before this request's result was recorded; its outcome is unknown")
+                    self.store.save(pending)
+                except Exception as exc:
+                    if run_id is not None:
+                        raise
+                    note_failure(f"run {key} unsaved final state",exc)
+                    continue
+                self.unsaved.pop(key,None)
 
     def discard_staging_copy(self,run):
         staging=run.get("staging")
@@ -127,13 +183,21 @@ class Engine:
         self.store.save(run)
         return run
 
-    def event(self,run,message,level="info",agent_id=None):
+    def event(self,run,message,level="info",agent_id=None,closing=False):
         run["events"].append(dict(seq=len(run["events"])+1,at=now(),stage=run["stage"],message=message,level=level,agent_id=agent_id))
-        self.store.save(run)
+        try:
+            self.store.save(run)
+        except Exception as exc:
+            # How an attempt ended is decided before its closing event; the last save (save_final) retries and persists
+            # both, so a store outage here must not turn a finished attempt into a failed one.
+            if not closing:
+                raise
+            note_failure(f"run {run['id']} closing event",exc)
 
     def start(self, run_id: str, resume=False):
         if self.executing(run_id):
             raise PolicyError("Run is already executing")
+        self.recover(run_id)
         run=self.store.get(run_id)
         if not resume and run["status"]!="created":
             raise PolicyError("Use resume for an interrupted run or create a new run")
@@ -177,14 +241,15 @@ class Engine:
             del self.runs[run_id]
 
     def cancel(self,run_id):
+        self.recover(run_id)
         run=self.runs.get(run_id) or self.store.get(run_id)
         if run["status"]=="awaiting_approval" and not self.executing(run_id):
             # Declining model-designed cases sends nothing; a resume brings them back for review.
             run["status"]="cancelled"
             self.event(run,"Operator declined the model-designed cases; no request was sent","warning")
             return copy.deepcopy(run)
-        if run["status"]!="running":
-            return run
+        if run["status"]!="running" or run_id not in self.cancel_flags:
+            return copy.deepcopy(run)
         self.cancel_flags[run_id].set()
         self.policy.revoke(run_id)
         run["status"]="cancelling"
@@ -198,6 +263,7 @@ class Engine:
         """Record the operator's approval of the exact sealed case set, then resume into black-box execution."""
         if self.executing(run_id):
             raise PolicyError("Run is still executing")
+        self.recover(run_id)
         run=self.store.get(run_id)
         if run["status"]!="awaiting_approval":
             raise PolicyError("Only a run waiting for case approval can be approved")
@@ -215,6 +281,7 @@ class Engine:
         # The run closes but stays unresumable: workers_pending_cleanup remains set, so work continues in a new run.
         if self.executing(run_id):
             raise PolicyError("Run is still executing; wait for bounded workers to return")
+        self.recover(run_id)
         run=self.runs.get(run_id) or self.store.get(run_id)
         if run["status"]!="cancelling":
             raise PolicyError("Only a run waiting for worker cleanup can be reconciled")
@@ -271,17 +338,17 @@ class Engine:
                 # The retest itself finished; only the write-back to its parent did not.
                 run["gaps"].append(f"This retest's outcome could not be written back to the parent assessment ({type(exc).__name__})")
             run["status"]="incomplete" if any(e["status"] in {"inconclusive","blocked","execution_error","outcome_unknown"} for e in run["executions"]) or run["gaps"] else "completed"
-            self.event(run,"Workflow finished. Completion is not a guarantee of security.")
+            self.event(run,"Workflow finished. Completion is not a guarantee of security.",closing=True)
         except CaseApprovalRequired as pending:
             run["status"]="awaiting_approval"
-            self.event(run,f"{len(pending.args[0])} model-designed case(s) wait for operator approval; no request was sent","warning")
+            self.event(run,f"{len(pending.args[0])} model-designed case(s) wait for operator approval; no request was sent","warning",closing=True)
         except asyncio.CancelledError:
             run["status"]="cancelling" if run.get("workers_pending_cleanup") else "cancelled"
-            self.event(run,"Worker cleanup still pending" if run.get("workers_pending_cleanup") else "Bounded workers returned; run cancelled", "warning")
+            self.event(run,"Worker cleanup still pending" if run.get("workers_pending_cleanup") else "Bounded workers returned; run cancelled","warning",closing=True)
         except Exception as exc:
             if self.cancel_flags[run["id"]].is_set():
                 run["status"]="cancelling" if run.get("workers_pending_cleanup") else "cancelled"
-                self.event(run,"Workflow returned after cancellation; no further capabilities remain", "warning")
+                self.event(run,"Workflow returned after cancellation; no further capabilities remain","warning",closing=True)
                 return
             run["status"]="cancelling" if run.get("workers_pending_cleanup") else "blocked" if isinstance(exc,PolicyError) else "failed"
             note_failure(f"run {run['id']} stage {run.get('stage')}",exc)
@@ -292,15 +359,39 @@ class Engine:
             run["error"]=(str(exc) if isinstance(exc,(PolicyError,CatalogError)) else f"Model call failed ({exc.code}): {exc}" if isinstance(exc,ProviderError)
                         else f"{type(exc).__name__}: operation failed; no successful verification claimed")
             run["error_zh"]=zh(run["error"])
-            self.event(run,run["error"],"error")
+            self.event(run,run["error"],"error",closing=True)
         finally:
             self.policy.revoke(run["id"])
-            # Whatever ended the attempt, its copy of the repository's secret files goes; a resume restages.
-            await asyncio.to_thread(self.discard_staging_copy,run)
-            self.settle_sent_jobs(run,"The workflow stopped before this request's result was recorded; its outcome is unknown")
+            # Each closing step runs even when the one before it failed, so the last save is always tried.
+            try:
+                # Whatever ended the attempt, its copy of the repository's secret files goes; a resume restages.
+                await asyncio.to_thread(self.discard_staging_copy,run)
+            except Exception as exc:
+                note_failure(f"run {run['id']} staging cleanup",exc)
+            try:
+                self.settle_sent_jobs(run,"The workflow stopped before this request's result was recorded; its outcome is unknown")
+            except Exception as exc:
+                # The journal still marks them sent: a resume refuses, and flush_unsaved or a restart settles them.
+                note_failure(f"run {run['id']} settling sent jobs",exc)
             run["active_seconds"]=elapsed_seconds(run)
             run["attempt_started_at"]=None
-            self.store.save(run)
+            await self.save_final(run)
+
+    async def save_final(self,run):
+        """The attempt's last save, retried through a short store outage. When every try fails, the final state stays
+        in memory for recover(): the stored row still says running, and acting on it alone would lose this state.
+        Each try runs in a thread: against an unreachable database one waits out the connect timeout, and the console
+        must keep serving meanwhile."""
+        for delay in (*FINAL_SAVE_RETRY_SECONDS,None):
+            try:
+                await asyncio.to_thread(self.store.save,run)
+                return
+            except Exception as exc:
+                if delay is None:
+                    note_failure(f"run {run['id']} final save",exc)
+                    self.unsaved[run["id"]]=run
+                    return
+                await asyncio.sleep(delay)
 
     def record_retest(self,run):
         """Write a finished retest's outcome onto each parent finding it re-checked.
