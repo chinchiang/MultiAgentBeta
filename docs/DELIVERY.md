@@ -1,12 +1,12 @@
 # 0.2.1 交付範圍與原計畫對照
 
-0.2.0 接續 0.1.0，補上隔離 worker、PostgreSQL 整合、動態工具 adapter、fixture 重置、副作用收集、標準目錄及控制台工作台；0.2.1 再加入盲審 matching 工具、逐端點 header 清單與多輪審查修正（最近一輪見 [VALIDATION.md](VALIDATION.md) 的「2026-10-10 深入審查修正」）。使用者已指定先完成工程與本地整合，真實三模型端點尚未準備。
+0.2.0 接續 0.1.0，補上隔離 worker、PostgreSQL 整合、動態工具 adapter、fixture 重置、副作用收集、標準目錄及控制台工作台；0.2.1 再加入盲審 matching 工具、逐端點 header 清單與多輪審查修正（最近一輪見 [VALIDATION.md](VALIDATION.md) 的「2026-10-10 深入審查修正」）。使用者已指定先完成工程與本地整合；之後已以真模型對合成靶場跑過 28 次 run、其中 14 次跑完全程（見 VALIDATION.md 的「2026-10-10～11 真模型驗收」與「2026-10-11 備援模型與不遮蔽測試字面值的驗收」），效果比較仍未進行。
 
 「已實作」與「已驗證」分開記錄。實際測試結果以 [VALIDATION.md](VALIDATION.md) 和附帶的 JUnit XML 為準；程式存在本身不等於模型或工具的效果已被證明。
 
 | 階段 | 工程交付 | 外部驗收界線 |
 |---|---|---|
-| P0 | schema v2、逐 Agent 模型、禁止隱性 fallback（只有操作者設定的備援可以代答）、四類 provider SDK 合成傳輸契約、固定相依套件版本（npm 鎖定檔含 integrity 雜湊；Python 鎖定檔逐項釘版本並附發布 hash，安裝以 --require-hashes 驗證）、image/rule/database 雜湊、授權來源 | 真實 Claude/OpenAI/Nemotron 型號、額度及用量待端點驗收 |
+| P0 | schema v2、逐 Agent 模型、禁止隱性 fallback（只有操作者設定的備援可以代答）、四類 provider SDK 合成傳輸契約、固定相依套件版本（npm 鎖定檔含 integrity 雜湊；Python 鎖定檔逐項釘版本並附發布 hash，安裝以 --require-hashes 驗證）、image/rule/database 雜湊、授權來源 | Claude（Bedrock）、Gemini（經 OpenAI 相容端點）、Gemma，以及本地 LM Studio 上的 Nemotron 與 Qwen 已以真模型驗收（28 次 run，型號與用量見 VALIDATION.md）；OpenAI 自家的 API（api.openai.com）、NVIDIA NIM、各家額度與模型品質尚未驗收 |
 | P1 | LangGraph、PostgreSQL job ledger（恢復依 run 紀錄與 ledger，不讀 LangGraph checkpoint）、原子提交、獨立 supervisor、持久 lease、撤網先於停止、loopback UI、設定、SSE | 本地單使用者；沒有多人 SaaS 或跨主機 worker fleet 承諾 |
 | P2 | 私有唯讀 staging、三份同核心問題初審、並行靜態工具、一輪 Challenger、程式引用、少數發現聯集、Semgrep/Gitleaks/OSV runner | 程式摘要有上限；模型品質與任意 framework 深度分析不能由契約測試推論 |
 | P3 | 威脅/Requirement gate、版本凍結、追溯、ZAP/Schemathesis/Playwright、登入/登出 fixture、正控制與 oracle | ZAP 為核准路徑 requestor + passive；Schemathesis 為明確 example；Playwright 為 API 流程，不是任意探索、全站 fuzz 或任意瀏覽器腳本 |
@@ -27,17 +27,19 @@
 
 準備確切型號、端點與 VIBEAUDIT_* 憑證環境變數，先跑每端點契約，再以隔離 staging 及合成資料跑完整流程。最後才在人工核定、按專案切分且未公開的測試集執行七組公平預算比較。人工核定可用 0.2.1 附帶的盲審 matching 工具（`python -m vibe_audit.benchmark_matching`，用法見 benchmarks/README.md）產生盲審工作表、記錄兩位 reviewer 裁定並回填 gold；工具只記錄裁定宣告，審核本身仍須由真人完成。未知用量、未完成及缺少觀測不能作零成本或通過處理。
 
+目前進度：以真模型和合成靶場跑完整流程這一步，已在 2026-10-10～11-03 跑過 28 次 run，其中 14 次跑完全程，其餘停在中途後修正（用量至少約 422 萬 tokens，沒有完整回報；每次設定與結果見 VALIDATION.md）；OpenAI 自家的 API（api.openai.com）與 NVIDIA NIM 還沒以真模型跑過，威脅建模員拒答時由備援代答也還沒在真模型上看到。最後一步的七組公平預算比較只跑過合成資料，正式效果指標維持 null，所以不宣稱減偏、檢出率或成本改善。
+
 ---
 
 # 0.2.1 Delivery Scope Compared with the Original Plan
 
-0.2.0 continues from 0.1.0, adding the isolated worker, PostgreSQL integration, dynamic tool adapters, fixture reset, side-effect collection, the standards catalog and the console workbench; 0.2.1 adds the blind-review matching tool, per-endpoint header lists and several rounds of review fixes (the latest is "2026-10-10 in-depth review fixes" in [VALIDATION.md](VALIDATION.md)). The user has specified completing the engineering and local integration first; the real three-model endpoints are not yet prepared.
+0.2.0 continues from 0.1.0, adding the isolated worker, PostgreSQL integration, dynamic tool adapters, fixture reset, side-effect collection, the standards catalog and the console workbench; 0.2.1 adds the blind-review matching tool, per-endpoint header lists and several rounds of review fixes (the latest is "2026-10-10 in-depth review fixes" in [VALIDATION.md](VALIDATION.md)). The user has specified completing the engineering and local integration first; since then there have been 28 runs on real models against the synthetic ranges, 14 of which ran the whole flow (see "2026-10-10–11 Real-Model Acceptance" and "2026-10-11 Fallback Model and Unredacted Test Literal Acceptance" in VALIDATION.md), and no efficacy comparison has been made yet.
 
 "Implemented" and "verified" are recorded separately. Actual test results are governed by [VALIDATION.md](VALIDATION.md) and the accompanying JUnit XML; the mere existence of code does not mean the effects of models or tools have been proven.
 
 | Phase | Engineering deliverables | External acceptance boundary |
 |---|---|---|
-| P0 | schema v2, per-Agent models, no implicit fallback (only an operator-configured fallback may answer), synthetic transport contracts for the four provider SDK types, pinned dependency versions (the npm lockfile includes integrity hashes; the Python lockfile pins versions item by item and carries release hashes, with installation verified via --require-hashes), image/rule/database hashes, license sources | Real Claude/OpenAI/Nemotron model names, quotas and usage await endpoint acceptance |
+| P0 | schema v2, per-Agent models, no implicit fallback (only an operator-configured fallback may answer), synthetic transport contracts for the four provider SDK types, pinned dependency versions (the npm lockfile includes integrity hashes; the Python lockfile pins versions item by item and carries release hashes, with installation verified via --require-hashes), image/rule/database hashes, license sources | Claude (Bedrock), Gemini (through an OpenAI-compatible endpoint), Gemma, and Nemotron and Qwen on a local LM Studio have been accepted on real models (28 runs; models and usage in VALIDATION.md); OpenAI's own API (api.openai.com), NVIDIA NIM, each vendor's quotas and model quality are not yet accepted |
 | P1 | LangGraph, PostgreSQL job ledger (recovery follows the run records and the ledger, not LangGraph checkpoints), atomic commits, an independent supervisor, persistent leases, network revocation before stopping, loopback UI, settings, SSE | Local single-user; no multi-user SaaS or cross-host worker fleet commitments |
 | P2 | Private read-only staging, three first-pass reviews of the same core questions, parallel static tools, one round of Challenger, program citations, a union of the minority findings, Semgrep/Gitleaks/OSV runners | Program summaries are capped; model quality and deep analysis of arbitrary frameworks cannot be inferred from contract tests |
 | P3 | Threat/Requirement gates, version freezing, traceability, ZAP/Schemathesis/Playwright, login/logout fixtures, positive controls and oracles | ZAP is an approved-path requestor + passive; Schemathesis uses explicit examples; Playwright is API flows, not arbitrary exploration, full-site fuzzing or arbitrary browser scripts |
@@ -57,3 +59,5 @@
 ## Real Model Acceptance
 
 Prepare the exact model names, endpoints and VIBEAUDIT_* credential environment variables; run the per-endpoint contracts first, then run the full flow with an isolated staging environment and synthetic data. Only at the end run the seven-group fair budget comparison on a manually adjudicated, project-partitioned and unpublished test set. For the manual adjudication, the blind-review matching tool shipped with 0.2.1 (`python -m vibe_audit.benchmark_matching`, usage in benchmarks/README.md) produces the blinded worksheet, records the two reviewers' verdicts and backfills the gold; the tool records adjudication declarations only — the review itself must still be performed by real humans. Unknown usage, incomplete runs and missing observations cannot be treated as zero-cost or as passes.
+
+Where it stands: the step that runs the full flow on real models and synthetic ranges has had 28 runs, from 2026-10-10 to 11-03, 14 of which ran the whole flow while the others stopped part-way and led to fixes (at least about 4.22 million tokens, usage not fully reported; each run's settings and results are in VALIDATION.md); OpenAI's own API (api.openai.com) and NVIDIA NIM have not yet run on a real model, and a fallback answering for a refusing threat modeler has not yet been seen on a real model. The final step, the seven-group fair budget comparison, has run on synthetic data only, and the formal efficacy metrics stay null, so no bias-reduction, detection-rate or cost improvement is claimed.
