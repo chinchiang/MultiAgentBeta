@@ -175,7 +175,7 @@ benchmarks/results-synthetic 有七組、每組六件的 42 次合成比較，�
 
 ## 尚未驗證或不包含的能力
 
-- 真實三個模型的確切型號、端點、額度、用量與模型品質；使用者自己的 staging 和後端觀測。這些依使用者決定留待配置完成後驗收。
+- 模型品質與效果：上面兩節的 28 次真模型 run（Claude Opus 5.5／Sonnet 5.5 經 Bedrock、Gemini 3.8 Flash、Gemma 4、本地 Nemotron 3 Super 與 Qwen）只以合成靶場驗收流程，不代表模型的品質、檢出率或成本表現。OpenAI 端點還沒以真模型驗收，各家額度也沒驗收；使用者自己的 staging 和後端觀測，依使用者決定留待配置完成後驗收。
 - 任意 repository/framework 的完整語意分析、無限長程式碼、全站探索與主動 fuzz、任意瀏覽器腳本。此版動態工具只執行核准的有限案例。
 - promptfoo/PyRIT 的全部上游外掛或任意多步驟紅隊工作流；本版驗證固定受控 target + fixture/effect protocol。
 - 跨主機高可用部署、macOS live worker、多人 SaaS、獨立第三方滲透審查或法證級不可竄改儲存。
@@ -379,7 +379,7 @@ Known limitation: the gold's human_reviewed, reviewers and oracle_evidence are d
 
 ## Capabilities Not Yet Verified or Not Included
 
-- The exact model names, endpoints, quotas, usage and model quality of the three real models; the user's own staging and backend observations. At the user's decision, these are left for acceptance after configuration is complete.
+- Model quality and efficacy: the 28 real-model runs of the two sections above (Claude Opus 5.5 and Sonnet 5.5 via Bedrock, Gemini 3.8 Flash, Gemma 4, and the local Nemotron 3 Super and Qwen) accepted the flow on synthetic ranges only and say nothing of the models' quality, detection rate or cost. An OpenAI endpoint has not yet been accepted on a real model, nor any vendor's quotas; the user's own staging and backend observations are, at the user's decision, left for acceptance after configuration is complete.
 - Full semantic analysis of arbitrary repositories/frameworks, unbounded code length, full-site exploration and active fuzzing, and arbitrary browser scripting. The dynamic tools in this version only execute the approved, limited cases.
 - All upstream plugins of promptfoo/PyRIT or arbitrary multi-step red-team workflows; this version verifies a fixed, controlled target + fixture/effect protocol.
 - Cross-host high-availability deployment, macOS live workers, multi-user SaaS, independent third-party penetration review, or forensic-grade tamper-proof storage.
