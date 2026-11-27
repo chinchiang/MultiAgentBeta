@@ -13,6 +13,20 @@ ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / "backend" / "vibe_audit"
 
 
+def test_every_direct_pin_equals_the_lock_file():
+    # pip install -e . resolves pyproject's own pins, without hashes: one left behind the lock would put back the
+    # version the lock moved away from (an advisory fix, say) and pip check would not notice.
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    def normal(name):
+        return re.sub(r"[-_.]+", "-", name).lower()
+    lock = {normal(name): version for name, version in
+            re.findall(r"^([A-Za-z0-9][A-Za-z0-9._-]*)==([^ ;\\\r\n]+)", (ROOT / "requirements.lock.txt").read_text(encoding="ascii"), re.M)}
+    specs = project["dependencies"] + project["optional-dependencies"]["test"]
+    pins = [re.fullmatch(r"([A-Za-z0-9._-]+)(?:\[[^\]]*\])?==(\S+)", spec) for spec in specs]
+    assert all(pins), [spec for spec, pin in zip(specs, pins) if not pin]
+    assert {normal(pin[1]): pin[2] for pin in pins if lock.get(normal(pin[1])) != pin[2]} == {}
+
+
 def test_every_direct_third_party_import_is_a_declared_dependency():
     declared = {re.split(r"[\[=<>~!]", spec, maxsplit=1)[0].lower()
                 for spec in tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["dependencies"]}
