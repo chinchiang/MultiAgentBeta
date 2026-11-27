@@ -106,6 +106,24 @@ def dialect(statements: dict, postgres: bool) -> dict:
     return {name: placeholders(text, postgres) for name, text in statements.items()}
 
 
+async def to_the_end(work, *args):
+    """Run work in a thread and wait until it has ended, even when the caller is cancelled meanwhile: the thread goes
+    on regardless, so a caller that stopped waiting could not know what it did. Returns the finished future and the
+    cancellation that came meanwhile (None if none came), for the caller to raise once it has acted on the outcome.
+
+    It is what asyncio.to_thread does, but on the executor's own future rather than a task: a loop that closes cancels
+    every task it still has, and a cancelled task would end the wait while the thread still runs."""
+    done = asyncio.get_running_loop().run_in_executor(None, functools.partial(contextvars.copy_context().run, work, *args))
+    stopped = None
+    while not done.done():
+        try:
+            # wait() leaves the thread's future alone when this task is cancelled; each cancellation is kept for after.
+            await asyncio.wait({done})
+        except asyncio.CancelledError as exc:
+            stopped = exc
+    return done, stopped
+
+
 class RunNotFound(KeyError):
     """Only an unknown run is a 404; any other KeyError is a bug and must not read as one."""
 
@@ -388,27 +406,19 @@ class Store:
         end the save early: the thread goes on regardless and its write may land, so the run's turn lasts until it
         has. The copy then knows the version the row holds, no later save of the run overlaps the thread, and the
         cancellation is raised after."""
-        # What asyncio.to_thread does, but as the executor's own future rather than a task: a loop that closes cancels
-        # every task it still has, and a cancelled task would end this wait while the thread is still writing.
-        saving = asyncio.get_running_loop().run_in_executor(None, functools.partial(contextvars.copy_context().run, work, *args))
-        stopped = None
-        while not saving.done():
-            try:
-                # wait() leaves the save running when this task is cancelled; each cancellation is kept for after.
-                await asyncio.wait({saving})
-            except asyncio.CancelledError as exc:
-                stopped = exc
+        saving, stopped = await to_the_end(work, *args)
         if stopped is None:
             run["version"] = saving.result()
             return
         # Stopped meanwhile: a save that landed still gives its version. A save that failed gives way to the
-        # cancellation, which is what the caller asked for, and its failure is logged rather than lost.
+        # cancellation, which is what the caller asked for; its failure is logged, and is the cancellation's cause,
+        # so a caller can tell an overtaken copy (RunConflict) from a save that may be tried again.
         failure = saving.exception()
         if failure is None:
             run["version"] = saving.result()
-        else:
-            note_failure(f"run {run['id']} save cancelled", failure)
-        raise stopped
+            raise stopped
+        note_failure(f"run {run['id']} save cancelled", failure)
+        raise stopped from failure
 
     def _turn(self, run_id: str) -> asyncio.Lock:
         return self.persisting.setdefault(asyncio.get_running_loop(), {}).setdefault(run_id, asyncio.Lock())
