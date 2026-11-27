@@ -16,7 +16,7 @@ BACKEND = ROOT / "backend" / "vibe_audit"
 from_checkout = pytest.mark.skipif(not BACKEND.is_dir(), reason="the backend sources are not next to these tests")
 CJK = re.compile(r"[一-鿿]")
 RAISERS = {"PolicyError", "HTTPException", "problem", "AdapterBlocked", "ResponseLimitError", "OutcomeUnknown", "ProviderError",
-           "CatalogError", "LeaseError", "ControllerBusy"}
+           "CatalogError", "LeaseError", "ControllerBusy", "RunConflict"}
 # Calls whose message argument is shown to the operator: activity events, snapshot gaps, run gaps and the reason of an
 # adapter execution result.
 REPORTERS = {"event": 1, "record_event": 0, "gap": 0, "_result": 1}

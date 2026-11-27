@@ -53,7 +53,9 @@ SUMMARY_FIELDS = ("id", "name", "mode", "status", "stage", "created_at", "update
 # Every statement, written once with SQLite's "?" placeholders; a Store converts the table to its dialect at construction,
 # so no SQL is rewritten per call and tests can check the constants. Values are always bound, never spliced in.
 SQL = {
-    "create_runs": "CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, payload TEXT NOT NULL, updated TEXT NOT NULL)",
+    # version counts the run's saves; writer is a token of the in-memory copy whose save the row holds (Store.save).
+    "create_runs": "CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, payload TEXT NOT NULL, updated TEXT NOT NULL, "
+                   "version INTEGER NOT NULL DEFAULT 0, writer TEXT)",
     "create_jobs": "CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, run_id TEXT NOT NULL, case_id TEXT NOT NULL, status TEXT NOT NULL, payload TEXT NOT NULL)",
     "create_entity_versions": "CREATE TABLE IF NOT EXISTS entity_versions (run_id TEXT NOT NULL, kind TEXT NOT NULL, entity_id TEXT NOT NULL, version TEXT NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(run_id,kind,entity_id,version))",
     "create_relations": "CREATE TABLE IF NOT EXISTS relations (run_id TEXT NOT NULL, version TEXT NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(run_id,version))",
@@ -64,15 +66,21 @@ SQL = {
     "events": "SELECT payload FROM events WHERE run_id=? ORDER BY seq",
     "events_after": "SELECT payload FROM events WHERE run_id=? AND seq>? ORDER BY seq",
     "all_events": "SELECT run_id,payload FROM events ORDER BY run_id,seq",
-    "upsert_run": "INSERT INTO runs (id,payload,updated) VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,updated=excluded.updated",
+    # A run's first save inserts version 1; every later one updates the row only if it still holds what this copy
+    # last read or wrote, so a save from a stale copy changes nothing and raises RunConflict instead.
+    "insert_run": "INSERT INTO runs (id,payload,updated,version,writer) VALUES (?,?,?,1,?) ON CONFLICT(id) DO NOTHING RETURNING version",
+    "update_run": "UPDATE runs SET payload=?,updated=?,version=version+1,writer=? WHERE id=? AND (version=? OR writer=?) RETURNING version",
+    "run_columns": "SELECT * FROM runs LIMIT 0",
+    "add_run_version": "ALTER TABLE runs ADD COLUMN version INTEGER NOT NULL DEFAULT 0",
+    "add_run_writer": "ALTER TABLE runs ADD COLUMN writer TEXT",
     "insert_entity": "INSERT INTO entity_versions VALUES (?,?,?,?,?) ON CONFLICT DO NOTHING",
     "insert_relation": "INSERT INTO relations VALUES (?,?,?) ON CONFLICT DO NOTHING",
     "entities": "SELECT kind,entity_id,version,payload FROM entity_versions WHERE run_id=? ORDER BY kind,entity_id",
     "relations": "SELECT payload FROM relations WHERE run_id=?",
     "upsert_setting": "INSERT INTO settings VALUES (?,?,?) ON CONFLICT(kind,id) DO UPDATE SET payload=excluded.payload",
     "settings": "SELECT payload FROM settings WHERE kind=? ORDER BY id",
-    "run": "SELECT payload FROM runs WHERE id=?",
-    "runs": "SELECT payload FROM runs ORDER BY updated DESC",
+    "run": "SELECT payload,version FROM runs WHERE id=?",
+    "runs": "SELECT payload,version FROM runs ORDER BY updated DESC",
     "insert_job": "INSERT INTO jobs VALUES (?,?,?,?,?)",
     "update_job": "UPDATE jobs SET status=?,payload=? WHERE id=?",
     "jobs": "SELECT id,case_id,status,payload FROM jobs WHERE run_id=?",
@@ -91,6 +99,10 @@ def dialect(statements: dict, postgres: bool) -> dict:
 
 class RunNotFound(KeyError):
     """Only an unknown run is a 404; any other KeyError is a bug and must not read as one."""
+
+
+class RunConflict(RuntimeError):
+    """A save from a copy of the run that another save has overtaken: writing it would undo that save's changes."""
 
 
 class ControllerBusy(RuntimeError):
@@ -215,6 +227,12 @@ class Store:
         private_dirs(self.root, self.artifacts)
         self.lock = threading.RLock()
         self.transacting = False
+        # What the outermost transaction undoes in memory if it rolls back (a copy's version, see _write_run).
+        self.undo: list = []
+        # run id -> (id() of the in-memory copy whose save the row was last given, that copy's token). No reference is
+        # kept: a copy made after the one named here died was read after that copy's last save, so even one that
+        # reuses its id() holds that save.
+        self.writers: dict[str, tuple[int, str]] = {}
         self.claims: list[str] = []
         self.postgres = bool(database_url)
         self.database_url = database_url
@@ -226,6 +244,11 @@ class Store:
             self.conn.execute("PRAGMA journal_mode=WAL")
         for name in ("create_runs", "create_jobs", "create_entity_versions", "create_relations", "create_settings", "create_events"):
             self._execute(self.sql[name])
+        # A runs table made before runs had a version gains the two columns; its rows start at version 0.
+        columns = {column[0] for column in self._execute(self.sql["run_columns"]).description}
+        for column in ("version", "writer"):
+            if column not in columns:
+                self._execute(self.sql["add_run_" + column])
 
     def claim_controller(self):
         """Claim the data directory, and the database when there is one, for this process; raises ControllerBusy.
@@ -288,6 +311,7 @@ class Store:
             if not active:
                 self._execute("BEGIN")
                 self.transacting = True
+                self.undo = []
             try:
                 yield
                 if not active:
@@ -299,26 +323,33 @@ class Store:
                     except Exception:
                         # A connection the failure itself closed has nothing left to roll back.
                         pass
+                    for step in reversed(self.undo):
+                        step()
                 raise
             finally:
                 if not active:
                     self.transacting = False
+                    self.undo = []
 
     def save(self, run: dict):
         """Write the run; its events are appended to their own table, so a run with thousands of them is not rewritten
-        whole on every event, and an event once stored is never rewritten."""
+        whole on every event, and an event once stored is never rewritten.
+
+        Raises RunConflict, writing nothing, when another save has overtaken the copy given: see _write_run."""
         self.confirm_controller()
         run["updated_at"] = now()
         payload = json.dumps(run, ensure_ascii=False)
         if _SURROGATE.search(payload):
             # Model or target JSON carried an invalid escape; keep the run saveable rather than stuck as running.
+            # scrub rebuilds the dict: the copy's own identity (see _write_run) is kept by refilling it in place.
             clean = scrub(run)
             run.clear()
             run.update(clean)
         events = run.get("events") or []
-        payload = json.dumps({key: value for key, value in run.items() if key != "events"}, ensure_ascii=False)
+        # The version lives in its own column: the body never carries a stale one.
+        payload = json.dumps({key: value for key, value in run.items() if key not in ("events", "version")}, ensure_ascii=False)
         with self.transaction():
-            self._execute(self.sql["upsert_run"], (run["id"], payload, run["updated_at"]))
+            self._write_run(run, payload)
             stored = self._execute(self.sql["last_event"], (run["id"],)).fetchone()[0] or 0
             for event in events[stored:]:
                 self._execute(self.sql["insert_event"], (run["id"], event["seq"], json.dumps(event, ensure_ascii=False)))
@@ -328,6 +359,37 @@ class Store:
                 self._execute(self.sql["insert_entity"], (run["id"],item["kind"],item["id"],item["version"],json.dumps(item["value"],ensure_ascii=False)))
             for item in links:
                 self._execute(self.sql["insert_relation"], (run["id"],digest(item),json.dumps(item,ensure_ascii=False)))
+
+    def _write_run(self, run: dict, payload: str):
+        """Store the run's row if this copy has seen every save of it, and give the copy the version it now holds.
+
+        A copy has seen them all when the row still has the version the copy last read or wrote, or when its last
+        save is this copy's own: a save whose reply was lost (a dropped connection, a failed commit) may have landed,
+        and the copy that sent it still holds everything it wrote. Any other copy is stale: an engine attempt's copy
+        that a decision overtook, or a decision's that an attempt overtook. Writing it would undo the other save's
+        changes, so RunConflict is raised and nothing is written."""
+        run_id = run["id"]
+        known = run.get("version")
+        previous = self.writers.get(run_id)
+        token = previous[1] if previous and previous[0] == id(run) else uuid.uuid4().hex
+        # Recorded before the write: if its reply is lost, the next save of this copy still owns the row.
+        self.writers[run_id] = (id(run), token)
+        row = None
+        if known is None:
+            row = self._execute(self.sql["insert_run"], (run_id, payload, run["updated_at"], token)).fetchone()
+        if row is None:
+            # A copy never saved that finds the row taken matches by its token alone: version -1 is never stored.
+            row = self._execute(self.sql["update_run"], (payload, run["updated_at"], token, run_id,
+                                                         -1 if known is None else known, token)).fetchone()
+        if row is None:
+            if previous is None:
+                self.writers.pop(run_id, None)
+            else:
+                self.writers[run_id] = previous
+            raise RunConflict("The run was changed by another action since this copy was read; reload it and try again")
+        run["version"] = row[0]
+        # A rollback leaves the row as it was, so the copy goes back to the version it had.
+        self.undo.append(lambda: run.__setitem__("version", known) if known is not None else run.pop("version", None))
 
     def trace(self, run_id: str):
         from .traceability import entities_and_links
@@ -348,9 +410,10 @@ class Store:
             return [json.loads(r[0]) for r in self._execute(self.sql["settings"],(kind,)).fetchall()]
 
     @staticmethod
-    def _assemble(run: dict, events: list[dict]) -> dict:
-        """A run as its callers know it: the stored body with its events in sequence. A row written before events had
-        their own table still carries them in its body; those are read until the next save moves them."""
+    def _assemble(run: dict, version: int, events: list[dict]) -> dict:
+        """A run as its callers know it: the stored body with its version and its events in sequence. A row written
+        before events had their own table still carries them in its body; those are read until the next save moves them."""
+        run["version"] = version
         if events or "events" not in run:
             run["events"] = events
         return run
@@ -361,7 +424,7 @@ class Store:
             if not row:
                 raise RunNotFound(run_id)
             events = [json.loads(r[0]) for r in self._execute(self.sql["events"], (run_id,)).fetchall()]
-        return self._assemble(json.loads(row[0]), events)
+        return self._assemble(json.loads(row[0]), row[1], events)
 
     def events_after(self, run_id: str, seq: int) -> list[dict]:
         """The run's events with a sequence number above seq, in order: what a progress stream still has to send."""
@@ -378,8 +441,8 @@ class Store:
             events: dict[str, list] = {}
             for run_id, payload in self._execute(self.sql["all_events"]).fetchall():
                 events.setdefault(run_id, []).append(json.loads(payload))
-        runs = [json.loads(r[0]) for r in rows]
-        return [self._assemble(run, events.get(run["id"], [])) for run in runs]
+        runs = [(json.loads(payload), version) for payload, version in rows]
+        return [self._assemble(run, version, events.get(run["id"], [])) for run, version in runs]
 
     def summary(self, run_id: str) -> dict:
         """One run's inventory entry: its status and sizes, without its events or records."""

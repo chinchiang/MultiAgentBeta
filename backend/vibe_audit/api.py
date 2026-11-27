@@ -21,7 +21,7 @@ from .messages import PATTERNS, STATUS_ZH, ZH, zh
 from .policy import PolicyError
 from .service import REPORT_LANGUAGES, Engine, report_markdown, report_sarif
 from .settings import DEFAULT_CONSOLE_ORIGINS, ROOT, Settings, startup_token_strong  # noqa: F401  (startup_token_strong: kept for callers)
-from .store import ControllerBusy, RunNotFound, Store
+from .store import ControllerBusy, RunConflict, RunNotFound, Store
 
 LIMITATIONS=[
     "Demo uses synthetic reviewers and fixtures, not real model or target validation.",
@@ -165,6 +165,11 @@ def _error_handlers(app,console):
     @app.exception_handler(ControllerBusy)
     async def controller_busy(request,exc):
         # A database restart let another process take the controller lock: this one must not act on the runs.
+        return problem(str(exc),409)
+
+    @app.exception_handler(RunConflict)
+    async def run_conflict(request,exc):
+        # Another save overtook the copy this action changed; nothing of this action was stored.
         return problem(str(exc),409)
 
     @app.exception_handler(RunNotFound)

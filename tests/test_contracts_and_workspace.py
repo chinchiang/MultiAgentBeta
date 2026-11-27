@@ -268,7 +268,8 @@ def test_postgres_store_connects_with_a_timeout_and_survives_a_dropped_connectio
     monkeypatch.setattr(psycopg,"connect",recording)
     store=Store(tmp_path,url)
     assert kwargs[-1]["connect_timeout"]==5 and kwargs[-1]["autocommit"] is True
-    run=new_run("run-dropped",RunInput(name="dropped connection"))
+    # The shared test database keeps earlier runs' rows: a fixed id would be a second insert of a stored run.
+    run=new_run("run-dropped-"+uuid.uuid4().hex,RunInput(name="dropped connection"))
     store.save(run)
     # A database restart drops the connection: the next statement outside a transaction reconnects once.
     store.conn.close()
@@ -517,7 +518,7 @@ def test_events_are_appended_once_and_never_rewritten_with_the_run(tmp_path,back
         # A row written before events had their own table carries them in its body: read as they are, moved on the next save.
         legacy_id="run-"+uuid.uuid4().hex
         legacy={**run,"id":legacy_id,"events":[event(1),event(2)]}
-        execute(store.sql["upsert_run"],(legacy_id,json.dumps(legacy),"2026-10-09T00:00:00Z"))
+        execute(placeholders("INSERT INTO runs (id,payload,updated) VALUES (?,?,?)",store.postgres),(legacy_id,json.dumps(legacy),"2026-10-09T00:00:00Z"))
         assert [e["seq"] for e in store.get(legacy_id)["events"]]==[1,2] and store.events_after(legacy_id,0)==[]
         stored=store.get(legacy_id)
         stored["events"].append(event(3))

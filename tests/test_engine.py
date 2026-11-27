@@ -1325,7 +1325,7 @@ def test_finish_job_rolls_back_both_journal_and_run_on_failure(engine,monkeypatc
     run["executions"].append(execution)
     execute=engine.store._execute
     def fault(sql,args=()):
-        if ((fail_at=="run_write" and sql.startswith("INSERT INTO runs"))
+        if ((fail_at=="run_write" and sql.startswith(("INSERT INTO runs","UPDATE runs")))
                 or (fail_at=="commit" and sql=="COMMIT")):
             raise RuntimeError("Synthetic transaction interruption")
         return execute(sql,args)

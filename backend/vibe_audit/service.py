@@ -21,13 +21,15 @@ from .messages import zh
 from .policy import Policy, PolicyError, elapsed_seconds, sealed
 from .request_rules import RequestRefused, body_permitted, own_step, plan_case
 from .stage_answers import KEPT_UNDER
-from .store import Store
+from .store import RunConflict, Store
 from .contracts import (CORE_REVIEW_QUESTIONS, CaseDesignProposal, CommanderProposal, ArchitectureProposal,
                         ReviewProposal, ChallengeProposal, ThreatModelProposal, ReportOrderProposal, complete_requirements, partition_source_references)
 
 STAGES = ["preflight","whitebox","adjudication","threat_model","case_design","blackbox","report"]
 # Waits between tries of an attempt's last save: a database restart or failover is usually over within seconds.
 FINAL_SAVE_RETRY_SECONDS = (0.5, 1, 2, 4)
+# A retest's write-back to its parent reads the parent again this many times when a save overtakes its copy.
+RETEST_WRITE_BACK_TRIES = 3
 
 
 class GraphState(TypedDict):
@@ -419,7 +421,16 @@ class Engine:
         if self.executing(parent_id):
             run["gaps"].append("The parent assessment was running, so this retest's outcome was not written back to it")
             return
-        parent=self.store.get(parent_id)
+        # An operator's decision on the parent may be saved between this read and this save: the save then refuses the
+        # stale copy (RunConflict), and the outcome is applied again to the parent as that decision left it.
+        for _ in range(RETEST_WRITE_BACK_TRIES-1):
+            try:
+                return self._record_retest(run,self.store.get(parent_id))
+            except RunConflict:
+                continue
+        self._record_retest(run,self.store.get(parent_id))
+
+    def _record_retest(self,run,parent):
         cases={c["id"]:c for c in run.get("cases",[]) if isinstance(c,dict)}
         changed=[]
         for finding in parent["findings"]:
