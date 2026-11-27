@@ -186,6 +186,24 @@ def test_under_the_default_live_budget_every_model_step_can_hold_a_retry():
     assert len(port.calls) == 2 * steps
 
 
+def test_every_step_has_room_for_a_retry_after_a_first_attempt_that_cost_its_whole_bound():
+    from vibe_audit.answers import reservation, upper_bound
+    from vibe_audit.benchmark import MODEL_FINDINGS_SCHEMA
+    from vibe_audit.providers import MAX_ATTEMPTS
+    steps = []
+    async def models(profile, prompt, payload, policy):
+        steps.append((profile["max_output_tokens"], prompt, payload, policy["max_tokens"]))
+        return {"data": {"finding_ids": [], "rationale": "Injected adapter"}, "usage": {"tokens": 10, "model_calls": 1}}
+    # Profiles that would take more output than a step can give, so every step asks with the fair limit itself.
+    wide = {alias: profile | {"max_output_tokens": 8000} for alias, profile in _profiles().items()}
+    run_benchmark(mode="live", repetitions=1, profiles=wide, model_policy=LOCAL, model_runner=models)
+    assert steps and all(limit < 8000 for limit, *_ in steps)
+    # A retry holds what the first attempt was metered at, at most its whole bound, and its own reservation.
+    for limit, prompt, payload, cap in steps:
+        needed = (MAX_ATTEMPTS - 1) * upper_bound(prompt, payload, MODEL_FINDINGS_SCHEMA, limit) + reservation(prompt, payload, MODEL_FINDINGS_SCHEMA, limit)
+        assert needed <= cap, (limit, needed, cap)
+
+
 def test_every_arm_asks_the_same_question_with_the_same_output_limit_and_room_to_retry():
     import json as jsonlib
     from fakes import FakePort, asked, reply

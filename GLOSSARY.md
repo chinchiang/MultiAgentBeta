@@ -13,7 +13,7 @@ _避免_：模型呼叫、generation
 _避免_：stage output、cached answer
 
 **保留額度（reservation）**：
-送出一次模型呼叫前，從 run 的 token 預算預扣的估計額度（以 token 計，不以位元組計）。重試前，已計量的那次呼叫改以實際用量佔住預算，不再另外疊一份。回答結束時結清：計入實際用量後釋放；取消時整筆算為已用；用量不明時保留下來，之後的付費呼叫一律停止。它不是 run 的預算本身，也不是 lease 的保留帳本。
+送出一次模型呼叫前，從 run 的 token 預算預扣的估計額度（以 token 計，不以位元組計）。重試前，已計量的那次呼叫改以實際用量佔住預算，不再另外疊一份。回答結束時結清：計入實際用量後釋放；取消時，進行中那次呼叫以位元組計的上限算為已用；用量不明時保留下來，之後的付費呼叫一律停止。它不是 run 的預算本身，也不是 lease 的保留帳本。
 _避免_：預扣、hold
 
 **代答（fallback answer）**：
@@ -55,7 +55,7 @@ The model answer a stage obtains for one role, kept only once it passes that sta
 _Avoid_: stage output, cached answer
 
 **Reservation**:
-The estimate, in tokens rather than bytes, held against a run's token budget before one model call is sent. Before a retry, the call already metered holds its actual usage instead, so no second reservation is stacked on it. It settles when the answer ends: released once the actual usage is counted; charged in full as used on cancellation; kept when usage is unknown, which stops every later paid call. It is neither the run's budget itself nor the lease's reservation ledger.
+The estimate, in tokens rather than bytes, held against a run's token budget before one model call is sent. Before a retry, the call already metered holds its actual usage instead, so no second reservation is stacked on it. It settles when the answer ends: released once the actual usage is counted; on cancellation the call in flight is charged as used at its byte bound; kept when usage is unknown, which stops every later paid call. It is neither the run's budget itself nor the lease's reservation ledger.
 _Avoid_: hold, pre-charge
 
 **Fallback answer**:

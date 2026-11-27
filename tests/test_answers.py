@@ -11,7 +11,7 @@ from vibe_audit.answers import ModelAnswers
 from vibe_audit.domain import RunInput, new_run
 from vibe_audit.messages import zh
 from vibe_audit.policy import PolicyError
-from vibe_audit.providers import ProviderError
+from vibe_audit.providers import ProviderError, Reply
 from vibe_audit.store import Store
 
 
@@ -260,20 +260,85 @@ async def test_without_a_fallback_a_refusal_is_the_answers_error(run, store):
     assert run["reserved_tokens"] == 0
 
 
-async def test_a_cancelled_answer_charges_its_whole_reservation_as_estimated_usage(run, store):
+async def test_a_cancelled_answer_charges_the_most_the_call_could_cost_as_estimated_usage(run, store):
+    from vibe_audit.answers import reservation, upper_bound
     run["usage"]["tokens"] = 10
     port = FakePort([asyncio.Event()])
     task = asyncio.create_task(answers(run, store, port).ask(run["manifest"]["models"][0], "Review", {}, contract=Ok))
     while not port.calls:
         await asyncio.sleep(0)
+    shape = ("Review", {}, Ok.model_json_schema(), run["manifest"]["models"][0]["max_output_tokens"])
     held = run["reserved_tokens"]
-    assert held > 0
+    assert held == reservation(*shape)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
-    assert run["usage"]["tokens"] == 10 + held
+    # The reservation is an estimate and no metering will come: the call is charged at its byte bound, which is more.
+    assert run["usage"]["tokens"] == 10 + upper_bound(*shape) and upper_bound(*shape) > held
     assert run["usage"]["tokens_estimated"] is True
     assert run["reserved_tokens"] == 0
+
+
+def stall_saving(store, monkeypatch, call):
+    """The save of the given call's reservation (the first save counting that many calls) waits until the test lets it
+    go; returns that gate and the reservation seen stalled."""
+    saving, gate, stalled = store.persist, asyncio.Event(), []
+    async def persist(copy):
+        if copy["usage"]["model_calls"] == call and not stalled:
+            stalled.append(copy["reserved_tokens"])
+            await gate.wait()
+        await saving(copy)
+    monkeypatch.setattr(store, "persist", persist)
+    return gate, stalled
+
+
+async def test_an_answer_cancelled_while_its_reservation_is_saved_lets_the_call_and_the_reservation_go_unsent(run, store, monkeypatch):
+    _, stalled = stall_saving(store, monkeypatch, 1)
+    port = FakePort([reply()])
+    task = asyncio.create_task(answers(run, store, port).ask(run["manifest"]["models"][0], "Review", {}, contract=Ok))
+    while not stalled:
+        await asyncio.sleep(0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    # Nothing was sent: no call is counted, nothing stays reserved, and no usage is estimated.
+    assert port.calls == [] and stalled[0] > 0
+    assert (run["usage"]["model_calls"], run["usage"]["tokens"], run["reserved_tokens"]) == (0, 0, 0)
+    assert "tokens_estimated" not in run["usage"]
+    saved = store.get(run["id"])
+    assert (saved["usage"]["model_calls"], saved["reserved_tokens"]) == (0, 0)
+
+
+async def test_a_retry_cancelled_while_its_reservation_is_saved_charges_only_the_first_attempt(run, store, monkeypatch):
+    _, stalled = stall_saving(store, monkeypatch, 2)
+    port = FakePort([reply("not json", tokens=15), reply()])
+    task = asyncio.create_task(answers(run, store, port).ask(run["manifest"]["models"][0], "Review", {}, contract=Ok))
+    while not stalled:
+        await asyncio.sleep(0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert len(port.calls) == 1
+    assert (run["usage"]["model_calls"], run["usage"]["tokens"], run["reserved_tokens"]) == (1, 15, 0)
+    assert "tokens_estimated" not in run["usage"]
+
+
+@pytest.mark.parametrize("outcome,error", [(RuntimeError("adapter bug"), RuntimeError),
+                                           (Reply(content='{"ok":true}', usage={"prompt_tokens": 3}, response_model_id="test-model"), KeyError)],
+                         ids=["not-a-provider-error", "reply-without-tokens"])
+async def test_a_call_that_ends_in_neither_a_metered_reply_nor_a_provider_error_has_unknown_usage(run, store, outcome, error):
+    from vibe_audit.answers import reservation
+    port = FakePort([outcome, reply()])
+    model = answers(run, store, port)
+    with pytest.raises(error):
+        await model.ask(run["manifest"]["models"][0], "Review", {}, contract=Ok)
+    # The call may have been billed: its reservation stays held and no later call is sent.
+    assert run["usage_unknown"] is True and run["usage"]["tokens_known"] is False
+    assert run["reserved_tokens"] == reservation("Review", {}, Ok.model_json_schema(), run["manifest"]["models"][0]["max_output_tokens"])
+    assert run["usage"]["tokens"] == 0
+    with pytest.raises(PolicyError, match="^Provider usage is unknown; further model calls stopped$"):
+        await model.ask(run["manifest"]["models"][0], "Review", {}, contract=Ok)
+    assert len(port.calls) == 1
 
 
 async def test_unknown_usage_keeps_the_reservation_and_stops_every_later_answer_unsent(run, store):
@@ -414,6 +479,12 @@ async def test_without_a_contract_any_json_object_is_asked_for_and_accepted(run,
     assert port.calls[0]["messages"][0]["content"].endswith('Required JSON schema: {"type": "object"}')
 
 
+async def test_a_schema_that_is_not_ascii_is_sent_in_utf8_as_its_reservation_counts_it(run, store):
+    port = FakePort([reply("{}")])
+    await answers(run, store, port).ask(run["manifest"]["models"][0], "Review", {}, schema={"type": "object", "description": "審查結果"})
+    assert port.calls[0]["messages"][0]["content"].endswith('Required JSON schema: {"type": "object", "description": "審查結果"}')
+
+
 @pytest.mark.parametrize("seconds,sent", [(None, 60), (0, 1), (5000, 1800), (1800, 1800), (90, 90)], ids=["default", "floor", "ceiling", "at-ceiling", "as-set"])
 async def test_the_send_timeout_is_the_profiles_within_one_second_and_thirty_minutes(run, store, seconds, sent):
     profile = dict(run["manifest"]["models"][0])
@@ -466,6 +537,40 @@ def test_the_reservation_of_a_question_can_be_known_before_it_is_asked():
     # A question that is not ASCII is estimated as it is sent, in UTF-8, not \u-escaped: its request is 83 bytes (42
     # tokens), where escaped it would be 101.
     assert reservation("審查", {"說明": "測試"}, None, 0) == 42 + 139 + 2048
+
+
+def test_the_most_an_attempt_can_cost_counts_its_request_and_system_in_bytes():
+    from vibe_audit.answers import upper_bound
+    # A token is at least one byte: 65 + 277 + 3000 + 2048, and the not-ASCII question in its 83 UTF-8 bytes.
+    assert upper_bound("Review", {}, None, 3000) == 5390
+    assert upper_bound("審查", {"說明": "測試"}, None, 0) == 83 + 277 + 2048
+
+
+async def test_an_answer_metered_above_its_reservation_stops_once_the_run_passes_the_budget(run, store):
+    from vibe_audit.answers import reservation
+    one = reservation("Review", {}, Ok.model_json_schema(), run["manifest"]["models"][0]["max_output_tokens"])
+    # Another answer holds 30000 and the run has spent 10000; this one's reservation fits the 50000 budget.
+    run["usage"]["tokens"], run["reserved_tokens"] = 10000, 30000
+    assert 10000 + 30000 + one <= 50000
+    # Metered at 10001, far below the budget by itself, but the run now holds 50001.
+    port = FakePort([reply(tokens=10001)])
+    with pytest.raises(ProviderError) as error:
+        await answers(run, store, port).ask(run["manifest"]["models"][0], "Review", {}, contract=Ok)
+    assert (error.value.code, str(error.value)) == ("budget_exhausted", "Provider-reported usage exceeded token budget; further calls stopped")
+    assert run["usage"]["tokens"] == 20001 and run["reserved_tokens"] == 30000
+    # Metered at exactly what fills the budget, the answer stands.
+    run["usage"]["tokens"], run["reserved_tokens"] = 10000, 30000
+    answer = await answers(run, store, FakePort([reply(tokens=10000)])).ask(run["manifest"]["models"][0], "Review", {}, contract=Ok)
+    assert answer.data == {"ok": True}
+
+
+async def test_a_refusal_that_overdraws_the_run_stops_without_asking_the_fallback(run, store):
+    primary = with_fallback(run)
+    run["usage"]["tokens"], run["reserved_tokens"] = 10000, 30000
+    port = FakePort([refused(tokens=10001), reply()])
+    with pytest.raises(ProviderError) as error:
+        await answers(run, store, port).ask(primary, "Review", {}, contract=Ok)
+    assert error.value.code == "budget_exhausted" and len(port.calls) == 1
 
 
 def test_the_largest_question_one_attempt_can_send_fits_in_the_largest_budget():
@@ -524,9 +629,10 @@ async def test_a_retry_fits_a_budget_that_two_stacked_reservations_would_not(run
     assert run["usage"]["tokens"] == 35 and run["reserved_tokens"] == 0
 
 
-async def test_a_retry_cancelled_in_flight_charges_the_first_attempts_usage_and_its_own_reservation(run, store):
-    from vibe_audit.answers import reservation
-    one = reservation("Review", {}, Ok.model_json_schema(), run["manifest"]["models"][0]["max_output_tokens"])
+async def test_a_retry_cancelled_in_flight_charges_the_first_attempts_usage_and_its_own_bound(run, store):
+    from vibe_audit.answers import reservation, upper_bound
+    shape = ("Review", {}, Ok.model_json_schema(), run["manifest"]["models"][0]["max_output_tokens"])
+    one = reservation(*shape)
     port = FakePort([reply("not json", tokens=15), asyncio.Event()])
     task = asyncio.create_task(answers(run, store, port).ask(run["manifest"]["models"][0], "Review", {}, contract=Ok))
     while len(port.calls) < 2:
@@ -535,8 +641,8 @@ async def test_a_retry_cancelled_in_flight_charges_the_first_attempts_usage_and_
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
-    # 15 metered, and the retry's whole reservation as estimated usage; the first attempt's reservation is not charged.
-    assert held == 15 + one and run["usage"]["tokens"] == held and run["usage"]["tokens_estimated"] is True
+    # 15 metered, and the most the retry in flight could cost; the first attempt's reservation is not charged.
+    assert held == 15 + one and run["usage"]["tokens"] == 15 + upper_bound(*shape) and run["usage"]["tokens_estimated"] is True
     assert run["reserved_tokens"] == 0
 
 
@@ -867,16 +973,17 @@ async def test_a_probe_reserves_the_estimated_tokens_of_its_request_and_system_b
         await task
 
 
-async def test_a_cancelled_probe_charges_its_whole_reservation_as_estimated_usage(run, store):
+async def test_a_cancelled_probe_charges_the_most_the_call_could_cost_as_estimated_usage(run, store):
+    from vibe_audit.answers import PROBE, upper_bound
+    profile = run["manifest"]["models"][0]
     port = FakePort([asyncio.Event()])
-    task = asyncio.create_task(answers(run, store, port).probe(run["manifest"]["models"][0]))
+    task = asyncio.create_task(answers(run, store, port).probe(profile))
     while not port.calls:
         await asyncio.sleep(0)
-    held = run["reserved_tokens"]
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
-    assert run["usage"]["tokens"] == held
+    assert run["usage"]["tokens"] == upper_bound(PROBE, {"request": "probe"}, PROBE_SCHEMA, min(profile["max_output_tokens"], 1024))
     assert run["usage"]["tokens_estimated"] is True
     assert run["reserved_tokens"] == 0
 

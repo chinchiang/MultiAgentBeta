@@ -354,7 +354,7 @@ async def _tool_context(tool_runner, sample, budget):
 
 async def _run_live_job(job, sample, context, budget, profiles, model_policy, model_runner):
     """One scheduled arm on one sample: the model steps after the shared tool context, scored against the gold when eligible."""
-    from .answers import reservation
+    from .answers import reservation, upper_bound
     from .providers import MAX_ATTEMPTS, ProviderError
     start = time.perf_counter()
     usage = {key: context[key] for key in ["tokens", "requests", "model_calls", "latency_seconds"]}
@@ -389,8 +389,11 @@ async def _run_live_job(job, sample, context, budget, profiles, model_policy, mo
                       "or rule:file:line when none is supplied. Preserve uncertainty in rationale. Never claim to execute tools or reproduce vulnerabilities. "
                       "Do not infer gold labels. " + ("Adjudicate the sealed anonymized candidate reviews against source evidence; votes alone are not proof." if phase == "debate" else "Review independently without peer opinions."))
             # Every arm asks with the output limit the longest arm's step leaves room for, retry included, so a one-step
-            # arm's larger share buys no longer answers and no extra schema repair.
-            fair = fair_step_tokens // MAX_ATTEMPTS - reservation(prompt, payload, MODEL_FINDINGS_SCHEMA, 0)
+            # arm's larger share buys no longer answers and no extra schema repair. A retry holds what the attempts before
+            # it were metered at, at most their upper bound each, and one reservation of its own: with o the output limit,
+            # (attempts-1)*(bound+o) + (reservation+o) must fit the step.
+            fair = (fair_step_tokens - (MAX_ATTEMPTS - 1) * upper_bound(prompt, payload, MODEL_FINDINGS_SCHEMA, 0)
+                    - reservation(prompt, payload, MODEL_FINDINGS_SCHEMA, 0)) // MAX_ATTEMPTS
             exact = profile | {"max_output_tokens": min(profile["max_output_tokens"], fair)}
             try:
                 if fair < 1:

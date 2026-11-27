@@ -120,7 +120,7 @@ components:
   - { id: c-reporter,     name: reporter（只重排發現順序）,                                           kind: agent,            zone: z-agent, maestro_layer: 3 }
   - { id: c-provisioning, name: provisioning 來源（PyPI、npm、OSV archive、映像 registry；只在管理者 provisioning 時）, kind: external_service, zone: z-vendor }
   - { id: c-ci,           name: GitHub Actions ci.yml（push／pull_request、contents read、無 secrets）, kind: ci,              zone: z-github }
-  - { id: c-benchmark,    name: benchmark CLI（python -m vibe_audit.benchmark；live 模式的每一步都是一次 ModelAnswers 模型回答，讓三個模型審查資料集並 debate，benchmark.py:249-256、288-513、514-532）, kind: tool, zone: z-control }
+  - { id: c-benchmark,    name: benchmark CLI（python -m vibe_audit.benchmark；live 模式的每一步都是一次 ModelAnswers 模型回答，讓三個模型審查資料集並 debate，benchmark.py:249-256、288-516、517-535）, kind: tool, zone: z-control }
 
 flows:
   - { from: c-operator,    to: c-console,     data: [startup_token, session_cookie, csrf_token, manifest, source_path, auth_profile_refs], protocol: http-loopback, authenticated: true,  crosses_boundary: true }
@@ -159,7 +159,7 @@ trust_boundaries:
 
 agents:
   # 所有模型呼叫都是 ModelAnswers 的模型回答，經 providers.LiteLLMPort.send 送出一次：不傳 tools，回覆含 tool_calls 即拒絕
-  # （providers.py:391-414、606），輸出須過 JSON schema 與 Pydantic（extra=forbid）（answers.py:173-261）。所以除了 test_designer，模型的輸出不觸發動作；但會成為下一個模型的輸入
+  # （providers.py:391-414、606），輸出須過 JSON schema 與 Pydantic（extra=forbid）（answers.py:173-278）。所以除了 test_designer，模型的輸出不觸發動作；但會成為下一個模型的輸入
   # （commander → reviewers、reviewers → challenger／threat_modeler／reporter、architecture_mapper → threat_modeler；retest 時上一個 run 的
   # test_designer 案例 → 新 run 的 threat_modeler；test_designer 寫的案例標題成為黑箱發現的標題 → reporter），見 t-agent-trust-propagation。
   # 目標回應從不送回任何模型（service.py:1083；observation 不進模型輸入）。
@@ -221,9 +221,9 @@ agents:
     mitigations: [tool_allowlist]
     trifecta_leg_cut: null
   - id: c-benchmark
-    accesses_private_data: true          # --dataset 可指向任何資料集；內建的是本 repo 的合成案例（benchmark.py:514-532）
+    accesses_private_data: true          # --dataset 可指向任何資料集；內建的是本 repo 的合成案例（benchmark.py:517-535）
     exposed_to_untrusted_content: true   # 資料集程式碼與前幾個模型的 peer_reviews（debate，benchmark.py:378-379）
-    can_communicate_externally: false    # 同樣是 ModelAnswers 經 LiteLLMPort 送出（benchmark.py:292-308、495-496）：不帶 tools，沿用模型 origin 與金鑰綁定；輸出只寫入本機結果檔
+    can_communicate_externally: false    # 同樣是 ModelAnswers 經 LiteLLMPort 送出（benchmark.py:292-308、498-499）：不帶 tools，沿用模型 origin 與金鑰綁定；輸出只寫入本機結果檔
     tools: []
     mitigations: [tool_allowlist]
     trifecta_leg_cut: null
@@ -459,7 +459,7 @@ threats:
     mitigation: >-
       核心審查問題由 harness 持有，commander 不能刪減；commander 的 focus 每項最多 300 字，放在獨立欄位並標為不受信任的模型衍生
       資料交給 reviewer（contracts.py:262-265、service.py:779-781、820）。所有模型的系統提示都把受測 repo、工具內容與其他 agent 的
-      輸出標為資料、不是指示（service.py:27、answers.py:180）。三位 reviewer 須屬不同 family（policy.py:67-79）；這些 agent 沒有
+      輸出標為資料、不是指示（service.py:27、answers.py:194）。三位 reviewer 須屬不同 family（policy.py:67-79）；這些 agent 沒有
       工具，輸出不觸發動作，所以影響限於審查完整性，不開啟對外通訊（見 t-indirect-injection）。retest 複製的模型案例保留 designed_by，
       照樣受 case_gate 的詞彙與身分限制，也要操作者重新核准才送出。threat_modeler 的 provided_cases 只帶追溯所需的欄位
       （id、標題、威脅與需求 ID、adapter、method、path、身分），不帶 header 值與本文，操作者寫進案例的測試帳密不會送到模型
