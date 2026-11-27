@@ -190,6 +190,7 @@ class Engine:
         return run
 
     def event(self,run,message,level="info",agent_id=None,closing=False):
+        """Record an event and save the run: for threads and synchronous code. On the event loop, await note()."""
         run["events"].append(dict(seq=len(run["events"])+1,at=now(),stage=run["stage"],message=message,level=level,agent_id=agent_id))
         # How an attempt ended is decided before its closing event, and the last save (save_final) stores both, in a
         # thread and with retries: saving it here would block the event loop, and a store outage here would turn a
@@ -197,7 +198,19 @@ class Engine:
         if not closing:
             self.store.save(run)
 
+    async def note(self,run,message,level="info",agent_id=None):
+        """Record an event and save the run from the event loop: the database work runs in a thread."""
+        run["events"].append(dict(seq=len(run["events"])+1,at=now(),stage=run["stage"],message=message,level=level,agent_id=agent_id))
+        await self.store.persist(run)
+
     def start(self, run_id: str, resume=False):
+        """Start or resume an attempt in one call, on the event loop; the API does the database work of it in a thread
+        (prepare_start), then launches it here."""
+        return self.launch(self.prepare_start(run_id,resume))
+
+    def prepare_start(self, run_id: str, resume=False):
+        """Every check and the save of an attempt's start; database work only, so it runs in a thread. Two starts that
+        race both read the run, and the second save is refused (RunConflict) or finds it running."""
         if self.executing(run_id):
             raise PolicyError("Run is already executing")
         self.recover(run_id)
@@ -222,6 +235,13 @@ class Engine:
         # The attempt is registered only once its start is stored: a save that fails leaves the run as it was, with
         # no cancel flag or in-memory copy that a later cancel would take for a live attempt.
         self.event(run,"Resuming journaled workflow" if resume else "Starting evidence-gated workflow")
+        return run
+
+    def launch(self, run):
+        """Register a started attempt and run it; on the event loop, after prepare_start has stored its start."""
+        run_id=run["id"]
+        if self.executing(run_id):
+            raise PolicyError("Run is already executing")
         cancel_flag=asyncio.Event()
         lock=asyncio.Lock()
         self.cancel_flags[run_id]=cancel_flag
@@ -246,27 +266,67 @@ class Engine:
             del self.runs[run_id]
 
     def cancel(self,run_id):
+        """Cancel in one call; the API cancels a live attempt on the event loop (cancel_attempt) and a stored run in a
+        thread (cancel_stored)."""
         self.recover(run_id)
-        # Only a live attempt's in-memory copy is newer than the store's row.
-        run=self.runs[run_id] if self.executing(run_id) else self.store.get(run_id)
-        if run["status"]=="awaiting_approval" and not self.executing(run_id):
-            # Declining model-designed cases sends nothing; a resume brings them back for review.
+        if not self.executing(run_id):
+            return self.cancel_stored(run_id)
+        run=self.runs[run_id]
+        if self.revoke_attempt(run):
+            self.event(run,"Execution capabilities revoked; waiting for bounded in-flight operations","warning")
+        return copy.deepcopy(run)
+
+    async def stop(self,run_id):
+        """Cancel from the event loop: a live attempt on the loop, a stored run in a thread."""
+        await asyncio.to_thread(self.recover,run_id)
+        if not self.executing(run_id):
+            stopped=await asyncio.to_thread(self.cancel_stored,run_id)
+            if stopped is not None:
+                return stopped
+            # An attempt started while the thread read the run; it may also have finished since.
+            if not self.executing(run_id):
+                return await asyncio.to_thread(self.store.get,run_id)
+        return await self.cancel_attempt(run_id)
+
+    async def cancel_attempt(self,run_id):
+        """Cancel the live attempt: its in-memory copy is newer than the store's row and only the event loop changes it."""
+        run=self.runs[run_id]
+        if self.revoke_attempt(run):
+            await self.note(run,"Execution capabilities revoked; waiting for bounded in-flight operations","warning")
+        return copy.deepcopy(run)
+
+    def revoke_attempt(self,run):
+        """Stop a running attempt's capabilities; False when it is not running (already cancelling, or finishing)."""
+        if run["status"]!="running" or run["id"] not in self.cancel_flags:
+            return False
+        self.cancel_flags[run["id"]].set()
+        self.policy.revoke(run["id"])
+        run["status"]="cancelling"
+        return True
+
+    def cancel_stored(self,run_id):
+        """Cancel a run no attempt holds; database work only, so it runs in a thread. None when an attempt holds it
+        after all (one started meanwhile): that is cancel_attempt's."""
+        run=self.store.get(run_id)
+        if self.executing(run_id):
+            return None
+        if run["status"]=="awaiting_approval":
+            # Declining model-designed cases sends nothing; a resume brings them back for review. An attempt that
+            # started after the read above saved the run first, so this stale copy's save is refused.
             run["status"]="cancelled"
             self.event(run,"Operator declined the model-designed cases; no request was sent","warning")
-            return copy.deepcopy(run)
-        if run["status"]!="running" or run_id not in self.cancel_flags:
-            return copy.deepcopy(run)
-        self.cancel_flags[run_id].set()
-        self.policy.revoke(run_id)
-        run["status"]="cancelling"
-        self.event(run,"Execution capabilities revoked; waiting for bounded in-flight operations", "warning")
         return copy.deepcopy(run)
 
     def executing(self,run_id):
         return run_id in self.tasks and not self.tasks[run_id].done()
 
     def approve_cases(self,run_id,receipt,actor):
-        """Record the operator's approval of the exact sealed case set, then resume into black-box execution."""
+        """Record the operator's approval of the exact sealed case set, then resume into black-box execution. The API
+        does the database work in a thread (prepare_approved) and launches the attempt on the event loop."""
+        return self.launch(self.prepare_approved(run_id,receipt,actor))
+
+    def prepare_approved(self,run_id,receipt,actor):
+        """The approval's record and the resumed attempt's start; database work only."""
         if self.executing(run_id):
             raise PolicyError("Run is still executing")
         self.recover(run_id)
@@ -280,7 +340,7 @@ class Engine:
         run["artifacts"].append(artifact)
         run["case_approval"]={"receipt":receipt,"actor":actor,"approved_at":now(),"evidence_id":artifact["id"]}
         self.event(run,f"Operator {actor} approved {len(cases)} sealed case(s) for black-box execution")
-        return self.start(run_id,resume=True)
+        return self.prepare_start(run_id,resume=True)
 
     def reconcile(self,run_id,attestation,actor):
         # Only the operator can vouch for workers the supervisor could not confirm removed.
@@ -314,15 +374,15 @@ class Engine:
                     if stage in run.get("completed_stages",[]):
                         return state
                     run["stage"]=stage
-                    self.event(run,"Entering "+stage)
+                    await self.note(run,"Entering "+stage)
                     await getattr(self,"_"+stage)(run)
                     self.check_active(run)
                     run.setdefault("completed_stages",[]).append(stage)
-                    self.store.save(run)
+                    await self.store.persist(run)
                     if stage=="whitebox":
                         # Resume skips completed stages, so nothing reads the staged copy (and its secret files) again.
                         await asyncio.to_thread(self.discard_staging_copy,run)
-                        self.store.save(run)
+                        await self.store.persist(run)
                     return state
                 graph.add_node(stage,node)
                 graph.add_edge(previous,stage)
@@ -339,7 +399,7 @@ class Engine:
             run["stage"]="complete"
             # Before the status, so a write-back gap it records counts against completion.
             try:
-                self.record_retest(run)
+                await asyncio.to_thread(self.record_retest,run)
             except Exception as exc:
                 # The retest itself finished; only the write-back to its parent did not.
                 run["gaps"].append(f"This retest's outcome could not be written back to the parent assessment ({type(exc).__name__})")
@@ -401,7 +461,7 @@ class Engine:
                         settle=False
                     except Exception as exc:
                         note_failure(f"run {run['id']} settling sent jobs",exc)
-                await asyncio.to_thread(self.store.save,run)
+                await self.store.persist(run)
                 return
             except Exception as exc:
                 if delay is None:
@@ -491,7 +551,7 @@ class Engine:
         self.policy.assert_manifest(run)
         if run["mode"]=="demo":
             source={"digest":digest("synthetic-fixture-v1"),"files":[{"path":"synthetic/orders.py","content":"# Synthetic fixture only: vulnerable and corrected tenant authorization paths","sha256":digest("fixture")}],"gaps":[],"routes":["/orders/private"]}
-            self.event(run,"DEMO: synthetic reviewers and in-process fixtures; no cloud model or external target contacted", "warning")
+            await self.note(run,"DEMO: synthetic reviewers and in-process fixtures; no cloud model or external target contacted", "warning")
             run["model_probes"]=[dict(agent_id=p["id"],available=True,simulated=True,detail="Synthetic protocol fixture; not a real model capability test") for p in run["manifest"]["models"]]
         else:
             if not self.store.postgres:
@@ -564,7 +624,7 @@ class Engine:
         # The catalog the policy validates against for the life of this process, so every later gate agrees with it.
         run["catalog_manifest"]=self.policy.catalog_manifest()
         run["source_digest"]=source["digest"]
-        artifact=self.store.put_evidence(run["id"],"source-snapshot",source)
+        artifact=await asyncio.to_thread(self.store.put_evidence,run["id"],"source-snapshot",source)
         # A resumed preflight supersedes its earlier snapshot: the run references
         # the one it actually used, and the orphaned reference is dropped.
         run["artifacts"]=[a for a in run["artifacts"] if a.get("producer")!="source-snapshot"]
@@ -610,14 +670,14 @@ class Engine:
             if len(kept)<len(result.get("findings",[])):
                 result.setdefault("gaps",[]).append(f"{len(result['findings'])-len(kept)} finding(s) named a file or line outside the staged snapshot and were not imported")
                 result["findings"]=kept
-            artifact=self.store.put_evidence(run["id"],tool,{**result,"tool_manifest":run["tool_manifest"]})
+            artifact=await asyncio.to_thread(self.store.put_evidence,run["id"],tool,{**result,"tool_manifest":run["tool_manifest"]})
             run["artifacts"].append(artifact)
             run.setdefault("tool_results",[]).append({**result,"evidence_id":artifact["id"]})
             run["gaps"].extend(tool+": "+str(gap) for gap in result.get("gaps",[]))
             run.setdefault("limitations",[]).extend(tool+": "+str(item) for item in result.get("limitations",[]))
             if result.get("status") not in {"completed","pass","fail"}:
                 run["gaps"].append(tool+": "+result.get("reason","Scanner did not establish coverage"))
-            self.event(run,"Static tool completed: "+tool+" / "+result.get("status","unknown"))
+            await self.note(run,"Static tool completed: "+tool+" / "+result.get("status","unknown"))
 
     def staged_location(self,run,item):
         from .staging import staged_line_count
@@ -743,13 +803,13 @@ class Engine:
                 run["reviews"].append(dict(agent_id=p["id"],provider=p["provider"],model_id=p["model_id"],family=p["family"],status="incomplete",findings=[],gaps=[f"{p['id']}: {reason}"],input_hash=run["source_digest"],simulated=False))
             else:
                 run["reviews"].append(result)
-        self.store.save(run)
+        await self.store.persist(run)
         await scanner_task
         if refusals:
             # A budget or policy stop is the reason the review is incomplete; say that, not only that it is.
             raise refusals[0]
         self.policy.whitebox_gate(run)
-        self.event(run,"Three independent review outputs sealed; minority findings retained")
+        await self.note(run,"Three independent review outputs sealed; minority findings retained")
 
     async def _adjudication(self,run):
         unique={}
@@ -761,7 +821,7 @@ class Engine:
             # A resumed adjudication reuses the sealed review's recorded evidence
             # instead of writing a second artifact for the same content.
             if not review.get("evidence"):
-                review["evidence"]=self.store.put_evidence(run["id"],review["agent_id"],{k:v for k,v in review.items() if k!="evidence"})
+                review["evidence"]=await asyncio.to_thread(self.store.put_evidence,run["id"],review["agent_id"],{k:v for k,v in review.items() if k!="evidence"})
             evidence=review["evidence"]
             if all(a["id"]!=evidence["id"] for a in run["artifacts"]):
                 run["artifacts"].append(evidence)
@@ -801,7 +861,7 @@ class Engine:
                 self.keep_verified_references(run,architecture["assets"]+architecture["dataflows"],"source_refs","Architecture map")
                 run["architecture"]=architecture
                 run["gaps"].extend(architecture["gaps"])
-        self.event(run,"Evidence union recorded; model agreement does not confirm a vulnerability")
+        await self.note(run,"Evidence union recorded; model agreement does not confirm a vulnerability")
 
     async def _threat_model(self,run):
         def freeze(data):
@@ -837,7 +897,7 @@ class Engine:
         for threat in run["threat_model"]["threats"]:
             if threat["testability"]=="blocked":
                 run["gaps"].append(threat["id"]+": "+threat["blocked_reason"])
-        self.event(run,"Threat model validated and frozen before black-box execution")
+        await self.note(run,"Threat model validated and frozen before black-box execution")
 
     async def _case_design(self,run):
         def seal_cases(cases):
@@ -890,7 +950,7 @@ class Engine:
             supplied=[c for c in run["manifest"]["cases"] if c.get("id") not in synthetic_ids]
             if supplied:
                 run["gaps"].append(f"Demo mode executes only the synthetic fixture cases; {len(supplied)} supplied case(s) were not executed")
-                self.event(run,"Demo mode replaced supplied cases with the synthetic fixture set","warning")
+                await self.note(run,"Demo mode replaced supplied cases with the synthetic fixture set","warning")
             common=dict(adapter="demo",method="GET",path="/orders/private",headers={},body=None,identity=None,preconditions=["fixture_ready"],cleanup=None,side_effects=False,repetitions=1,observation_mode="external_observation")
             oracle={"kind":"deny_sensitive","forbidden_text":["B-PRIVATE-CANARY"],"allowed_statuses":[403,404],"required_observations":["http_response"],"expected_role":None}
             cases=[dict(common,id="C-001",threat_ids=["T-001"],requirement_id="R-001",title="Synthetic vulnerable tenant boundary",oracle=oracle),dict(common,id="C-002",threat_ids=["T-001"],requirement_id="R-001",title="Synthetic corrected tenant boundary",oracle=oracle),dict(common,id="C-003",threat_ids=["T-002"],requirement_id="R-002",title="Tool success text without an effect ledger",oracle={"kind":"no_unauthorized_commit","forbidden_text":[],"allowed_statuses":[],"required_observations":["tool_ledger","trace_complete"],"expected_role":None})]
@@ -917,7 +977,7 @@ class Engine:
                         raise PolicyError(str(exc)) from None
                 run["gaps"].extend(data.get("gaps",[]))
                 seal_cases(cases)
-        self.event(run,f"Validated {len(run['cases'])} cases with threat links and executable oracles")
+        await self.note(run,f"Validated {len(run['cases'])} cases with threat links and executable oracles")
 
     async def _blackbox(self,run):
         from .adapters import evaluate_oracle
@@ -933,15 +993,15 @@ class Engine:
                 if any(e["case_id"]==case["id"] and e.get("repetition")==repetition for e in run["executions"]):
                     continue
                 self.check_active(run)
-                job_id=self.store.job(run["id"],case)
+                job_id=await asyncio.to_thread(self.store.job,run["id"],case)
                 # The case's own step of its request plan: whether it writes (model-designed cases cannot declare an
                 # unsafe request free of side effects) and whether it may carry a body. Without that step, it writes.
                 own=own_step(case,run["manifest"]) or {}
                 side_effects=own.get("read_only") is not True
                 async def request_hook(*args,**kwargs):
                     self.policy.authorize(run,case,self.cancel_flags[run["id"]],method=kwargs.get("method"),path=kwargs.get("path"),identity=kwargs.get("identity"))
-                    self.store.update_job(job_id,"sent",{"case_hash":case["hash"],"side_effects":side_effects,"sent_at":now(),"repetition":repetition})
-                    self.store.save(run)
+                    await asyncio.to_thread(self.store.update_job,job_id,"sent",{"case_hash":case["hash"],"side_effects":side_effects,"sent_at":now(),"repetition":repetition})
+                    await self.store.persist(run)
                 if run["mode"]=="demo":
                     await request_hook()
                     await asyncio.sleep(.08)
@@ -974,14 +1034,14 @@ class Engine:
                     if "security_status" in result:
                         result["tool_status"]=result["status"]
                         result["status"]=result["security_status"]
-                artifact=self.store.put_evidence(run["id"],"blackbox-worker",{"case_hash":case["hash"],"result":result,"simulated":run["mode"]=="demo"})
+                artifact=await asyncio.to_thread(self.store.put_evidence,run["id"],"blackbox-worker",{"case_hash":case["hash"],"result":result,"simulated":run["mode"]=="demo"})
                 run["artifacts"].append(artifact)
                 execution={"id":job_id,"case_id":case["id"],"case_hash":case["hash"],"repetition":repetition,"evidence_id":artifact["id"],"simulated":run["mode"]=="demo" or result.get("synthetic",False),**result}
                 run["executions"].append(execution)
                 if result["status"]=="fail":
                     run["findings"].append(dict(id=str(uuid.uuid4()),title=case["title"],severity="high",state="validated_dynamic",description=result["reason"],file=None,line=None,cwe=None,agent_ids=["blackbox-worker"],evidence_ids=[artifact["id"]],threat_ids=case["threat_ids"],simulated=run["mode"]=="demo"))
-                self.store.finish_job(job_id,execution,run)
-                self.event(run,case["title"]+": "+result["status"])
+                await self.store.finish(job_id,execution,run)
+                await self.note(run,case["title"]+": "+result["status"])
                 if result.get("cleanup_confirmed") is False:
                     run["workers_pending_cleanup"]=True
                     raise PolicyError("Worker cleanup is unconfirmed; all subsequent cases are stopped")
@@ -993,7 +1053,7 @@ class Engine:
 
     async def _report(self,run):
         for record in run["artifacts"]:
-            self.store.evidence(record,run["id"])
+            await asyncio.to_thread(self.store.evidence,record,run["id"])
         ids={a["id"] for a in run["artifacts"]}
         if any(not set(f["evidence_ids"])<=ids for f in run["findings"]):
             raise PolicyError("Finding references evidence outside this run")
@@ -1025,7 +1085,7 @@ class Engine:
                 run["report_order"]=order
                 run["findings"].sort(key=lambda f:ids.index(f["id"]))
         run["report_note"]="SYNTHETIC DEMO ONLY: not real model or application validation" if run["mode"]=="demo" else "Results cover only executed cases and available evidence; unresolved gaps remain visible"
-        self.event(run,"Evidence attribution and integrity verified for report")
+        await self.note(run,"Evidence attribution and integrity verified for report")
 
 
 # Report languages: English (the default, for existing callers) and Traditional Chinese for the console's Chinese interface.

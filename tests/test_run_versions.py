@@ -129,6 +129,47 @@ def test_a_rolled_back_save_leaves_the_copy_at_the_version_the_row_kept(store, m
     assert store.get(run["id"])["name"] == "after rollback"
 
 
+async def test_saves_from_the_event_loop_take_turns_so_a_later_snapshot_stands(store, monkeypatch):
+    import asyncio
+    import time
+    run = new_run()
+    store.save(run)
+    write = store.write
+    order = []
+    def first_slow(copy, text):
+        name = json.loads(text)["name"]
+        if name == "first":
+            # A thread that happens to finish late: without turns, its older snapshot would land last.
+            time.sleep(0.3)
+        order.append(name)
+        return write(copy, text)
+    monkeypatch.setattr(store, "write", first_slow)
+    run["name"] = "first"
+    earlier = asyncio.create_task(store.persist(run))
+    await asyncio.sleep(0)
+    run["name"] = "second"
+    later = asyncio.create_task(store.persist(run))
+    await asyncio.gather(earlier, later)
+    assert order == ["first", "second"]
+    assert store.get(run["id"])["name"] == "second" and run["version"] == 3 == store.get(run["id"])["version"]
+
+
+def test_one_store_serves_saves_from_one_event_loop_after_another(tmp_path):
+    import asyncio
+    store = Store(tmp_path)
+    try:
+        run = new_run()
+        store.save(run)
+        async def two_at_once():
+            # Two saves at once: the second waits on the run's lock, which ties that lock to this loop.
+            await asyncio.gather(store.persist(run), store.persist(run))
+        asyncio.run(two_at_once())
+        asyncio.run(two_at_once())
+        assert store.get(run["id"])["version"] == 5
+    finally:
+        store.close()
+
+
 def test_a_runs_table_from_before_versions_gains_them(tmp_path):
     conn = sqlite3.connect(str(tmp_path / "demo.sqlite3"))
     conn.execute("CREATE TABLE runs (id TEXT PRIMARY KEY, payload TEXT NOT NULL, updated TEXT NOT NULL)")

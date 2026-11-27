@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import builtins
 import hashlib
 import json
@@ -238,6 +239,9 @@ class Store:
         # run id -> the (kind, id, version) entity keys and relation digests already stored for it, read from the
         # database on the run's first save here. Rows are never deleted, and only this controller writes them.
         self.stored: dict[str, tuple[set, set]] = {}
+        # (run id, event loop) -> the lock that makes saves of the run from that loop take turns (persist, finish). Keyed
+        # by loop too: an asyncio lock serves one loop, and tests drive one store from several in turn.
+        self.persisting: dict[tuple[str, int], asyncio.Lock] = {}
         self.claims: list[str] = []
         self.postgres = bool(database_url)
         self.database_url = database_url
@@ -337,24 +341,54 @@ class Store:
                     self.undo = []
 
     def save(self, run: dict):
-        """Write the run; its events are appended to their own table, so a run with thousands of them is not rewritten
-        whole on every event, and an event once stored is never rewritten.
+        """Write the run from a thread or synchronous code; on the event loop, await persist() instead.
 
         Raises RunConflict, writing nothing, when another save has overtaken the copy given: see _write_run."""
-        self.confirm_controller()
+        with self.lock:
+            known = run.get("version")
+            run["version"] = self.write(id(run), self.snapshot(run))
+            if self.transacting:
+                # Inside a caller's transaction (finish_job): if that rolls back, the row keeps its version and so does
+                # the copy.
+                self.undo.append(lambda: run.__setitem__("version", known) if known is not None else run.pop("version", None))
+
+    async def persist(self, run: dict):
+        """Save from the event loop: the snapshot is taken here, the database work runs in a thread, and the loop
+        serves other requests meanwhile. Saves of one run take turns, so a snapshot is never overwritten by an earlier
+        one whose thread happened to finish later."""
+        async with self._turn(run["id"]):
+            text = self.snapshot(run)
+            run["version"] = await asyncio.to_thread(self.write, id(run), text)
+
+    def _turn(self, run_id: str) -> asyncio.Lock:
+        return self.persisting.setdefault((run_id, id(asyncio.get_running_loop())), asyncio.Lock())
+
+    def snapshot(self, run: dict) -> str:
+        """The run as it is now, as the text a write stores: only serialization, cheap enough for the event loop."""
         run["updated_at"] = now()
-        payload = json.dumps(run, ensure_ascii=False)
-        if _SURROGATE.search(payload):
+        text = json.dumps(run, ensure_ascii=False)
+        if _SURROGATE.search(text):
             # Model or target JSON carried an invalid escape; keep the run saveable rather than stuck as running.
             # scrub rebuilds the dict: the copy's own identity (see _write_run) is kept by refilling it in place.
             clean = scrub(run)
             run.clear()
             run.update(clean)
-        events = run.get("events") or []
+            text = json.dumps(run, ensure_ascii=False)
+        return text
+
+    def write(self, copy: int, text: str) -> int:
+        """Store a snapshot of the run held by the in-memory copy whose id() is copy, and return the row's version.
+
+        Its events are appended to their own table, so a run with thousands of them is not rewritten whole on every
+        event, and an event once stored is never rewritten. Runs in a thread when the snapshot came from the loop."""
+        self.confirm_controller()
+        run = json.loads(text)
+        events = run.pop("events", None) or []
         # The version lives in its own column: the body never carries a stale one.
-        payload = json.dumps({key: value for key, value in run.items() if key not in ("events", "version")}, ensure_ascii=False)
+        known = run.pop("version", None)
+        payload = json.dumps(run, ensure_ascii=False)
         with self.transaction():
-            self._write_run(run, payload)
+            version = self._write_run(run["id"], copy, known, payload, run["updated_at"])
             stored = self._execute(self.sql["last_event"], (run["id"],)).fetchone()[0] or 0
             for event in events[stored:]:
                 self._execute(self.sql["insert_event"], (run["id"], event["seq"], json.dumps(event, ensure_ascii=False)))
@@ -375,6 +409,7 @@ class Store:
                     continue
                 self._execute(self.sql["insert_relation"], (run["id"],key,json.dumps(item,ensure_ascii=False)))
                 self._remember(stored_links, key)
+        return version
 
     def _stored_keys(self, run_id: str) -> tuple[set, set]:
         """The entity keys and relation digests stored for the run, read once per store."""
@@ -389,36 +424,32 @@ class Store:
         keys.add(key)
         self.undo.append(lambda: keys.discard(key))
 
-    def _write_run(self, run: dict, payload: str):
-        """Store the run's row if this copy has seen every save of it, and give the copy the version it now holds.
+    def _write_run(self, run_id: str, copy: int, known, payload: str, updated: str) -> int:
+        """Store the run's row if this copy has seen every save of it, and return the version the row now holds.
 
         A copy has seen them all when the row still has the version the copy last read or wrote, or when its last
         save is this copy's own: a save whose reply was lost (a dropped connection, a failed commit) may have landed,
         and the copy that sent it still holds everything it wrote. Any other copy is stale: an engine attempt's copy
         that a decision overtook, or a decision's that an attempt overtook. Writing it would undo the other save's
-        changes, so RunConflict is raised and nothing is written."""
-        run_id = run["id"]
-        known = run.get("version")
+        changes, so RunConflict is raised and nothing is written. known is the version the copy holds (None for a copy
+        never saved)."""
         previous = self.writers.get(run_id)
-        token = previous[1] if previous and previous[0] == id(run) else uuid.uuid4().hex
+        token = previous[1] if previous and previous[0] == copy else uuid.uuid4().hex
         # Recorded before the write: if its reply is lost, the next save of this copy still owns the row.
-        self.writers[run_id] = (id(run), token)
+        self.writers[run_id] = (copy, token)
         row = None
         if known is None:
-            row = self._execute(self.sql["insert_run"], (run_id, payload, run["updated_at"], token)).fetchone()
+            row = self._execute(self.sql["insert_run"], (run_id, payload, updated, token)).fetchone()
         if row is None:
             # A copy never saved that finds the row taken matches by its token alone: version -1 is never stored.
-            row = self._execute(self.sql["update_run"], (payload, run["updated_at"], token, run_id,
-                                                         -1 if known is None else known, token)).fetchone()
+            row = self._execute(self.sql["update_run"], (payload, updated, token, run_id, -1 if known is None else known, token)).fetchone()
         if row is None:
             if previous is None:
                 self.writers.pop(run_id, None)
             else:
                 self.writers[run_id] = previous
             raise RunConflict("The run was changed by another action since this copy was read; reload it and try again")
-        run["version"] = row[0]
-        # A rollback leaves the row as it was, so the copy goes back to the version it had.
-        self.undo.append(lambda: run.__setitem__("version", known) if known is not None else run.pop("version", None))
+        return row[0]
 
     def trace(self, run_id: str):
         from .traceability import entities_and_links
@@ -509,6 +540,17 @@ class Store:
         with self.transaction():
             self._execute(self.sql["update_job"], ("finished",json.dumps(execution),job_id))
             self.save(run)
+
+    async def finish(self, job_id: str, execution: dict, run: dict):
+        """finish_job from the event loop: both are serialized here and committed together in a thread."""
+        async with self._turn(run["id"]):
+            job, text = json.dumps(execution), self.snapshot(run)
+            run["version"] = await asyncio.to_thread(self._finish, job_id, job, id(run), text)
+
+    def _finish(self, job_id: str, job: str, copy: int, text: str) -> int:
+        with self.transaction():
+            self._execute(self.sql["update_job"], ("finished",job,job_id))
+            return self.write(copy, text)
 
     def jobs(self, run_id: str):
         with self.lock:

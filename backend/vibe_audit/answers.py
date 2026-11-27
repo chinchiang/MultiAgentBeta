@@ -110,7 +110,7 @@ class ModelAnswers:
             if exc.code not in FALLBACK_CODES or not fallback:
                 raise
             refused = exc.code == "refusal"
-            self.record_event(f"{profile['id']} refused; asking its fallback {fallback['id']} ({fallback['model_id']})" if refused
+            await self.record_event(f"{profile['id']} refused; asking its fallback {fallback['id']} ({fallback['model_id']})" if refused
                        else f"{profile['id']} was truncated; asking its fallback {fallback['id']} ({fallback['model_id']})", "warning", profile["id"])
             try:
                 data, attempts = await self.validated_answer(fallback, instruction, payload, contract, cost, schema=schema)
@@ -120,7 +120,7 @@ class ModelAnswers:
             # Recorded only once the fallback has answered: a fallback that fails too leaves its own error instead.
             note = (f"Fallback {fallback['id']} ({fallback['model_id']}) answered for {profile['id']} at stage {self.run['stage']} after it refused" if refused
                     else f"Fallback {fallback['id']} ({fallback['model_id']}) answered for {profile['id']} at stage {self.run['stage']} after it was truncated")
-            self.record_event(note, "warning", fallback["id"])
+            await self.record_event(note, "warning", fallback["id"])
             limitations = self.run.setdefault("limitations", [])
             if note not in limitations:
                 limitations.append(note)
@@ -210,7 +210,7 @@ class ModelAnswers:
                         hint = _rule_hint(exc)
                         messages.append({"role": "user", "content": f"The previous response did not validate ({site}{'; ' + hint if hint else ''}). Return a JSON object satisfying the supplied schema. Do not add prose or code fences."})
                         if self.events:
-                            self.record_event(f"{profile['id']}'s answer at stage {self.run['stage']} did not validate ({site}); asking again, attempt {attempt + 2} of {MAX_ATTEMPTS}", "warning", profile["id"])
+                            await self.record_event(f"{profile['id']}'s answer at stage {self.run['stage']} did not validate ({site}); asking again, attempt {attempt + 2} of {MAX_ATTEMPTS}", "warning", profile["id"])
                         continue
                     raise ProviderError(f"Model output failed local JSON/schema validation ({site})", code="schema_validation") from None
                 return data, attempt + 1
@@ -228,16 +228,16 @@ class ModelAnswers:
                 self.run["usage"]["tokens"] += spent
             if not keep:
                 self.run["reserved_tokens"] = max(0, self.run.get("reserved_tokens", 0) - sum(held))
-            self.store.save(self.run)
+            await self.store.persist(self.run)
 
     def spent(self):
         """What this account's answers have cost so far, every attempt included, and whether that is all of it."""
         usage = self.run["usage"]
         return {"model_calls": usage["model_calls"], "tokens": usage["tokens"], "tokens_known": not self.run.get("usage_unknown")}
 
-    def record_event(self, message, level, agent_id):
+    async def record_event(self, message, level, agent_id):
         self.run["events"].append(dict(seq=len(self.run["events"]) + 1, at=now(), stage=self.run["stage"], message=message, level=level, agent_id=agent_id))
-        self.store.save(self.run)
+        await self.store.persist(self.run)
 
     async def reserve(self, amount):
         """Count one call and hold its upper-bound tokens, or refuse before anything is sent."""
@@ -253,7 +253,7 @@ class ModelAnswers:
                 raise PolicyError("Insufficient token budget for bounded model request")
             usage["model_calls"] += 1
             self.run["reserved_tokens"] = self.run.get("reserved_tokens", 0) + amount
-            self.store.save(self.run)
+            await self.store.persist(self.run)
 
     def policy(self):
         manifest = self.run["manifest"]
@@ -263,7 +263,7 @@ class ModelAnswers:
 class Unsaved:
     """A console probe's store: its account lives in memory and is never saved."""
 
-    def save(self, _run):
+    async def persist(self, _run):
         pass
 
 
