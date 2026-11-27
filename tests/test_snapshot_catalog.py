@@ -33,12 +33,13 @@ def digest_of(files):
 
 
 def excluded(result):
-    """What the snapshot left out by design: its limitations after the fixed note on how it is bounded."""
-    return result["limitations"][1:]
+    """What the snapshot left out by design: its limitations but for the fixed note on how it is bounded and the
+    operator's notice of literals left unredacted, wherever either stands."""
+    return [item for item in result["limitations"] if item != snapshot.BOUNDED and not item.startswith("Operator-declared test literals")]
 
 
 def gaps_read_in_chinese(result):
-    assert all(zh(item) is not None for item in result["gaps"] + excluded(result)), (result["gaps"], excluded(result))
+    assert all(zh(item) is not None for item in result["gaps"] + result["limitations"]), (result["gaps"], result["limitations"])
 
 
 def test_snapshot_is_sorted_hashed_and_summed_exactly(tmp_path):
@@ -203,8 +204,9 @@ def test_binary_non_utf8_bom_and_redacted_files(tmp_path):
         ("bom.py", "bom = 1\n", False), ("config.py", '{"password": "[REDACTED]"}\n', True)]
     assert result["files"][1]["sha256"] == hashlib.sha256(b'{"password": "hunter2"}\n').hexdigest()
     assert result["files"][1]["content_sha256"] == hashlib.sha256(b'{"password": "[REDACTED]"}\n').hexdigest()
-    assert result["gaps"] == []
-    assert excluded(result) == ["Binary content omitted: bin.py", "Secret-like literals redacted: config.py", "Non-UTF-8 file omitted: latin.py"]
+    # Named as source but not readable as UTF-8 text, they were not reviewed: gaps. Redaction leaves the file read.
+    assert result["gaps"] == ["Binary content omitted: bin.py", "Non-UTF-8 file omitted: latin.py"]
+    assert excluded(result) == ["Secret-like literals redacted: config.py"]
     gaps_read_in_chinese(result)
 
 
@@ -318,7 +320,7 @@ def test_an_unreadable_encoding_does_not_end_the_directory(tmp_path):
     write(tmp_path, "latin.py", b"caf\xe9 = 1\n")
     write(tmp_path, "z.py", "z = 1\n")
     result = snapshot_source(str(tmp_path))
-    assert [f["path"] for f in result["files"]] == ["z.py"] and excluded(result) == ["Non-UTF-8 file omitted: latin.py"]
+    assert [f["path"] for f in result["files"]] == ["z.py"] and result["gaps"] == ["Non-UTF-8 file omitted: latin.py"]
 
 
 def test_routes_are_capped_per_file_and_per_snapshot(tmp_path):

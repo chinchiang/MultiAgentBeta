@@ -1437,6 +1437,24 @@ async def test_what_staging_leaves_out_by_design_is_a_limitation_and_the_run_com
     assert any(".semgrepignore" in item for item in stored["limitations"]),stored["limitations"]
 
 
+async def test_a_link_named_as_source_that_staging_skips_keeps_the_run_incomplete(postgres_engine,monkeypatch,tmp_path):
+    source=tmp_path/"repository"
+    source.mkdir()
+    (source/"app.py").write_text("print('orders')\n")
+    try:
+        (source/"auth.py").symlink_to(source/"app.py")
+        (source/"logo.png").symlink_to(source/"app.py")
+    except OSError:
+        pytest.skip("OS does not permit creating symlinks for this account")
+    run=await live_preflight(postgres_engine,monkeypatch,source)
+    await postgres_engine._run(run)
+    stored=postgres_engine.store.get(run["id"])
+    # Neither scanners nor models read a link: one named as source is source nobody reviewed, a gap; any other link
+    # is left out by design, a limitation.
+    assert (stored["status"],stored["gaps"])==("incomplete",["Scanner and model intake skipped links named as source files: auth.py"]),stored["error"]
+    assert "Scanner and model intake omitted skipped directories, links and repository-controlled ignore/config files: logo.png" in stored["limitations"]
+
+
 async def test_test_literals_the_operator_leaves_unredacted_are_named_first_and_the_run_completes(postgres_engine,monkeypatch,tmp_path):
     source=tmp_path/"repository"
     source.mkdir()
@@ -1465,10 +1483,13 @@ async def test_source_not_tied_to_the_deployment_still_keeps_the_run_incomplete(
 
 
 @pytest.mark.parametrize("name,content,status,note",[
-    # Binary content is never source to read: leaving it out is by design, a limitation.
-    ("fixture.json",b'{"blob": "\x00"}',"completed","Binary content omitted: fixture.json"),
-    # A source file past the size limit is source nobody read: the review did not cover it, a gap.
-    ("large.py",b"#"*(64*1024+1),"incomplete","File/byte limit omitted: large.py")],ids=["by-design","not-covered"])
+    # A secret file is left out by design, unread: a limitation.
+    (".env",b"SECRET=synthetic\n","completed","Secret-designated file excluded without reading: .env"),
+    # Source nobody read is a gap: past the size limit, or not in UTF-8 (UTF-16 carries NUL bytes and reads as binary).
+    ("large.py",b"#"*(64*1024+1),"incomplete","File/byte limit omitted: large.py"),
+    ("latin.py",b"caf\xe9 = 1\n","incomplete","Non-UTF-8 file omitted: latin.py"),
+    ("Auth.cs","class Auth {}\n".encode("utf-16"),"incomplete","Binary content omitted: Auth.cs")],
+    ids=["by-design","past-the-limit","not-utf-8","utf-16"])
 async def test_only_source_the_snapshot_could_not_read_keeps_the_run_incomplete(postgres_engine,monkeypatch,tmp_path,name,content,status,note):
     source=tmp_path/"repository"
     source.mkdir()

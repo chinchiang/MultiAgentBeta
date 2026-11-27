@@ -10,7 +10,7 @@ import shutil
 import stat
 import uuid
 
-from .snapshot import _safe_ancestors, _linklike
+from .snapshot import _safe_ancestors, _linklike, _source_name
 
 _SKIP = {".git", "node_modules", ".venv", "venv", "__pycache__", ".npm-cache", ".pytest_cache", "dist", "build"}
 
@@ -61,6 +61,8 @@ def _copy_source(source: Path, target: Path, expected_snapshot: dict | None, max
     entries: list[dict] = []
     total = 0
     omitted = []
+    # Links named as source: never copied, so source nobody reviews, kept apart from what is left out by design.
+    unread_links: list[str] = []
     def unreadable(error):
         # os.walk skips a directory it cannot list; the record must still name it.
         omitted.append(Path(error.filename).relative_to(source).as_posix() + "/")
@@ -80,7 +82,7 @@ def _copy_source(source: Path, target: Path, expected_snapshot: dict | None, max
                 omitted.append(relative)
                 continue
             if _linklike(item) or not _safe_ancestors(item):
-                omitted.append(relative)
+                (unread_links if _linklike(item) and _source_name(item) else omitted).append(relative)
                 continue
             info = item.lstat()
             if not stat.S_ISREG(info.st_mode) or info.st_nlink > 1:
@@ -117,7 +119,7 @@ def _copy_source(source: Path, target: Path, expected_snapshot: dict | None, max
             if by_path.get(item["path"]) != item["sha256"]:
                 raise ValueError("Source changed between model intake and scanner snapshot")
     checksum = hashlib.sha256(json.dumps(entries, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-    return {"path": str(target), "digest": checksum, "files": entries, "omitted": omitted, "bytes": total}
+    return {"path": str(target), "digest": checksum, "files": entries, "omitted": omitted, "unread_links": unread_links, "bytes": total}
 
 
 def remove_private_tree(path: str | Path) -> bool:

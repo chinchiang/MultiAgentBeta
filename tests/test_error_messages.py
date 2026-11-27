@@ -17,9 +17,11 @@ from_checkout = pytest.mark.skipif(not BACKEND.is_dir(), reason="the backend sou
 CJK = re.compile(r"[一-鿿]")
 RAISERS = {"PolicyError", "HTTPException", "problem", "AdapterBlocked", "ResponseLimitError", "OutcomeUnknown", "ProviderError",
            "CatalogError", "LeaseError", "ControllerBusy", "RunConflict"}
-# Calls whose message argument is shown to the operator: activity events, snapshot gaps, run gaps and the reason of an
-# adapter execution result.
-REPORTERS = {"event": 1, "note": 1, "record_event": 0, "gap": 0, "_result": 1}
+# Calls whose message argument is shown to the operator: activity events, snapshot gaps and what the snapshot leaves out
+# by design, run gaps and capability limits, and the reason of an adapter execution result.
+REPORTERS = {"event": 1, "note": 1, "record_event": 0, "gap": 0, "left_out": 0, "limit": 1, "_result": 1}
+# The run's lists of gaps and capability limits: what is appended to either is shown to the operator.
+SHOWN_LISTS = {"gaps", "limitations"}
 # The separate benchmark tool and the table itself report nothing to the console.
 SKIPPED_MODULES = {"benchmark.py", "benchmark_matching.py", "messages.py"}
 def sample(node, top=True):
@@ -46,8 +48,11 @@ def message_args(node):
         if name in REPORTERS and len(node.args) > REPORTERS[name]:
             return [node.args[REPORTERS[name]]]
         target = getattr(node.func, "value", None)
-        gaps = (isinstance(target, ast.Subscript) and getattr(target.slice, "value", None) == "gaps") or getattr(target, "id", None) == "gaps"
-        if name in {"append", "extend"} and gaps:
+        # run["gaps"], gaps, or run.setdefault("limitations", []): each names one of the lists shown.
+        named = (getattr(target.slice, "value", None) if isinstance(target, ast.Subscript) else getattr(target, "id", None)
+                 if isinstance(target, ast.Name) else target.args[0].value if isinstance(target, ast.Call) and getattr(target.func, "attr", None) == "setdefault"
+                 and target.args and isinstance(target.args[0], ast.Constant) else None)
+        if name in {"append", "extend"} and named in SHOWN_LISTS:
             return node.args[:1]
         return [keyword.value for keyword in node.keywords if keyword.arg == "reason"]
     if isinstance(node, ast.Dict):
@@ -102,6 +107,14 @@ def test_every_reported_message_has_chinese_wording(message):
 def test_messages_built_in_two_steps_have_chinese_wording():
     # policy.py builds this gap in a variable before adding it.
     assert zh("Automated threats without a provided case were not tested: T-001") == "沒有提供案例的自動化威脅未經測試：T-001"
+
+
+def test_the_capability_limits_the_snapshot_and_a_scan_always_state_have_chinese_wording():
+    # The snapshot's fixed limit opens a list, and a scanner's tool name comes before the scan's own limit.
+    from vibe_audit.snapshot import BOUNDED
+    assert zh(BOUNDED) == "快照有上限；路由抽取與機密遮蔽都是啟發式，並非窮盡。未執行儲存庫的程式碼。"
+    assert zh("gitleaks: 2 finding(s) named a file or line outside the staged snapshot and were not imported") == \
+        "gitleaks：2 筆發現指向暫存快照之外的檔案或行號，未匯入"
 
 
 def test_every_engine_written_text_of_the_demo_run_reads_in_chinese():
