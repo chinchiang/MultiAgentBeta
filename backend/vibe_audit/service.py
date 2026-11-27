@@ -923,8 +923,10 @@ class Engine:
             for item in result.get("findings",[]):
                 path=item.get("file")
                 if path and path not in staged:
-                    # Not imported, as at scan time: a limitation, not a check this run left undone.
-                    self.limit(run,"Scanner finding location is outside the staged snapshot")
+                    # The scan already left out what lay outside the snapshot, so one found here means the staged files
+                    # changed since: the scan no longer covers them, a gap. Kept once; the finding is not imported.
+                    if "Scanner finding location is outside the staged snapshot" not in run["gaps"]:
+                        run["gaps"].append("Scanner finding location is outside the staged snapshot")
                     continue
                 run["findings"].append(dict(id=str(uuid.uuid4()),title=item.get("title","Static scanner finding"),description="Reproducible static rule result; exploitability remains a separate question.",severity=item.get("severity","medium"),state="corroborated_static",file=path,line=item.get("line"),cwe=item.get("cwe"),rule_id=item.get("rule_id"),agent_ids=[item.get("scanner_id",result.get("scanner_id","scanner"))],evidence_ids=[result["evidence_id"]],threat_ids=[]))
         if run["mode"]=="live":
@@ -1047,7 +1049,7 @@ class Engine:
             cases=copy.deepcopy(run["manifest"]["cases"])
             seal_cases(cases)
         else:
-            async with self.stage_answers(run).answer("test_designer",'Return {"cases":[{id,threat_ids,requirement_id,title,adapter:"http"|"ai_http",method:"GET"|"POST",path,headers:{},body:null,identity:null,preconditions:[],oracle:{kind:"deny_sensitive"|"canary_absent"|"no_unauthorized_commit",forbidden_text:[],allowed_statuses:[],required_observations:["http_response"],expected_role:null},cleanup:null,side_effects:false,repetitions:1,observation_mode:"external_observation"}],"gaps":[]}. Use only provided fixtures and business requirements, do not invent canary values or authentication. identity is null or one of the given identities. headers may hold only the values listed for that method and path in allowed_headers, one listed value per header; a method and path not in allowed_headers takes headers:{}. No generic shell or arbitrary scripts. Mark untestable requirements in gaps.',{"threat_model":run["threat_model"],"target":run["manifest"]["target_url"],"requirements":run["manifest"]["notes"],"identities":[p["id"] for p in run["manifest"]["auth_profiles"] if p.get("model_selectable") is True],"allowed_headers":[{"method":r["method"],"path":r["path"],"headers":r["model_headers"]} for r in run["manifest"]["allowed_requests"] if r.get("model_headers")]},CaseDesignProposal) as answer:
+            async with self.stage_answers(run).answer("test_designer",'Return {"cases":[{id,threat_ids,requirement_id,title,adapter:"http"|"ai_http",method:"GET"|"POST",path,headers:{},body:null,identity:null,preconditions:[],oracle:{kind:"deny_sensitive"|"canary_absent"|"no_unauthorized_commit",forbidden_text:[],allowed_statuses:[],required_observations:["http_response"],expected_role:null},cleanup:null,side_effects:false,repetitions:1,observation_mode:"external_observation"}],"gaps":[]}. Use only provided fixtures and business requirements, do not invent canary values or authentication. identity is null or one of the given identities. headers may hold only the values listed for that method and path in allowed_headers, one listed value per header; a method and path not in allowed_headers takes headers:{}. No generic shell or arbitrary scripts. In gaps, name each requirement you cannot test and why; they are reported as limits of this design, not as tested.',{"threat_model":run["threat_model"],"target":run["manifest"]["target_url"],"requirements":run["manifest"]["notes"],"identities":[p["id"] for p in run["manifest"]["auth_profiles"] if p.get("model_selectable") is True],"allowed_headers":[{"method":r["method"],"path":r["path"],"headers":r["model_headers"]} for r in run["manifest"]["allowed_requests"] if r.get("model_headers")]},CaseDesignProposal) as answer:
                 # Every check in this block, sealing included, depends on this answer; it is kept only if they all pass.
                 data=answer.data
                 cases=data.get("cases",[])
@@ -1218,6 +1220,10 @@ def report_markdown(run:dict,lang:str="en")->str:
         value=re.sub(r"(?i)\bwww\.","www[.]",value.replace("://","[:]//"))
         return "".join("\\"+c if c in "\\\x60*_{}[]()#!|" else c for c in value)
     run=copy.deepcopy(run)
+    # Real values went to the models as written: the operator's notice stands in the header too, before any finding.
+    # Picked while the limitations still read in English, so it is found in either report.
+    from .snapshot import UNREDACTED
+    relaxed=[index for index,value in enumerate(run.get("limitations",[])) if str(value).startswith(UNREDACTED)]
     if lang=="zh-Hant":
         # Codes become labels before escaping, so every value still passes through safe().
         label=lambda kind,value:_REPORT_LABELS_ZH[kind].get(value,value) if isinstance(value,str) else value
@@ -1256,7 +1262,8 @@ def report_markdown(run:dict,lang:str="en")->str:
     # A retest report says what it re-checks, so a clean result is not read as a fresh assessment.
     retest=[text["retest"].format(parent=safe(manifest["parent_run_id"]),findings=text["sep"].join(safe(value) for value in manifest.get("parent_finding_ids",[])))] if manifest.get("parent_run_id") else []
     error=[text["error"].format(error=safe(run["error"]))] if run.get("error") else []
-    lines=[f"# {run['name']}","",text["run"].format(id=run["id"]),*retest,text["mode"].format(mode=run["mode"],status=run["status"]),*error,"",run.get("report_note",text["note"]),"",text["findings"],""]
+    notices=[safe(run["limitations"][index]) for index in relaxed]
+    lines=[f"# {run['name']}","",text["run"].format(id=run["id"]),*retest,text["mode"].format(mode=run["mode"],status=run["status"]),*error,*notices,"",run.get("report_note",text["note"]),"",text["findings"],""]
     for f in run["findings"]:
         lines.extend([f"- [{f['severity']} / {f['state']}] {f['title']}",text["evidence"].format(ids=text["sep"].join(f["evidence_ids"])),*f["notes"]])
     lines.extend(["",text["gaps"],""]+["- "+str(g) for g in run["gaps"]])

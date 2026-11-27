@@ -2192,6 +2192,17 @@ async def model_designed_case_stage(engine,*answers):
     return run
 
 
+async def test_the_test_designer_is_told_its_gaps_are_limits_of_its_design(engine):
+    demo=await finished_demo(engine)
+    run=await model_designed_case_stage(engine,model_proposal(demo))
+    await engine._case_design(run)
+    system,_=asked(engine.model_port.calls[0]["messages"])
+    # What it cannot test is reported as a limit of the design; an automated threat left without a case is the
+    # run's gap, found by the case gate, whatever the model says.
+    assert "Mark untestable requirements in gaps" not in system
+    assert "In gaps, name each requirement you cannot test and why; they are reported as limits of this design, not as tested." in system
+
+
 async def test_limits_the_test_designer_names_leave_the_run_completed(engine):
     demo=await finished_demo(engine)
     run=only_left(await model_designed_case_stage(engine),"case_design")
@@ -2653,6 +2664,16 @@ async def test_the_report_names_what_was_left_out_by_design_as_a_capability_limi
     assert section(chinese,"## 能力限制")==["- 省略二進位內容：blob.bin","- reviewer-a: Deployment configuration was not supplied"]
 
 
+async def test_the_report_opens_with_the_operators_notice_that_test_literals_went_unredacted(engine):
+    run=await finished_demo(engine)
+    notice="Operator-declared test literals left unredacted: 1 of 2 appear in the snapshot"
+    run.update(limitations=[notice,"Binary content omitted: blob.bin"])
+    # Real values went to the models as written: a reader sees that in the header, before any finding.
+    for lang,heading,shown in [("en","## Findings",notice),("zh-Hant","## 發現","操作者宣告的測試字面值未遮蔽：2 個中有 1 個出現在快照裡")]:
+        head=report_markdown(run,lang).split("\n"+heading+"\n",1)[0]
+        assert shown in head,head
+
+
 def test_markdown_defangs_bare_urls_and_shows_challenges():
     run={"name":"r","id":"r","mode":"demo","status":"complete","gaps":[],"executions":[],"limitations":[],
          "challenges":[{"finding_id":"f","counterevidence":"guarded upstream","missing_evidence":""}],
@@ -2955,7 +2976,7 @@ async def test_a_challenge_naming_no_finding_is_dropped_and_the_run_completes(en
     assert "Challenger: dropped 1 challenge(s) naming a finding that does not exist" in stored["limitations"]
 
 
-async def test_a_scanner_finding_outside_the_staged_files_is_left_out_and_the_run_completes(engine,monkeypatch):
+async def test_a_scanner_finding_outside_the_staged_files_at_adjudication_keeps_the_run_incomplete(engine,monkeypatch):
     def answer(profile,messages,schema):
         system,payload=asked(messages)
         if "candidates" in payload:
@@ -2967,8 +2988,10 @@ async def test_a_scanner_finding_outside_the_staged_files_is_left_out_and_the_ru
     run["tool_results"]=[{"scanner_id":"semgrep","evidence_id":evidence,"findings":[{"file":"elsewhere.py","line":1,"title":"Outside"}]}]
     await engine._run(run)
     stored=engine.store.get(run["id"])
-    assert (stored["status"],stored["gaps"])==("completed",[]),stored["gaps"]
-    assert "Scanner finding location is outside the staged snapshot" in stored["limitations"]
+    # The scan already left out what lay outside the snapshot: one found here means the staged files changed since,
+    # so the scan no longer covers them, a gap. The finding itself is still not imported.
+    assert (stored["status"],stored["gaps"])==("incomplete",["Scanner finding location is outside the staged snapshot"])
+    assert "Scanner finding location is outside the staged snapshot" not in stored["limitations"]
     assert not any(f["title"]=="Outside" for f in stored["findings"])
 
 

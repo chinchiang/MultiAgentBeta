@@ -23,6 +23,8 @@ MAX_GAPS = 256
 _SKIP_DIRS = {".git", ".hg", ".svn", "node_modules", ".venv", "venv", "env", "dist", "build", ".next", ".cache", "__pycache__", ".idea", ".vscode", ".ssh", ".aws", ".azure", ".config", ".docker", ".kube", ".gnupg", ".terraform"}
 # Every snapshot's first capability limit, after the operator's notice when literals were left unredacted.
 BOUNDED = "Snapshot is bounded; route extraction and secret redaction are heuristic, not exhaustive. Repository code was not executed."
+# How the operator's notice of literals left unredacted opens: the report shows it in its header as well.
+UNREDACTED = "Operator-declared test literals left unredacted"
 _TEXT_SUFFIXES = {".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json", ".yaml", ".yml", ".toml", ".md", ".html", ".css", ".sql", ".txt", ".go", ".rs", ".java", ".cs", ".php", ".rb", ".tf", ".sh", ".ps1"}
 _SECRET_SUFFIXES = {".pem", ".key", ".p12", ".pfx", ".jks", ".keystore", ".kdbx", ".crt", ".cer"}
 _SECRET_NAMES = {"credentials", "credentials.json", "credential.json", "secrets.json", "secrets.yaml", "secrets.yml", "id_rsa", "id_ed25519", "id_ecdsa", "id_dsa", ".npmrc", ".pypirc", ".netrc", "service-account.json", "service_account.json"}
@@ -280,5 +282,5 @@ def snapshot_source(path: str, keep: frozenset[str] = frozenset()) -> dict:
         found = sum(any(item in f["content"] for f in files) for item in keep)
         # The operator's own choice, so no gap; but first and outside the limit: the readers of the report must see
         # that redaction was relaxed.
-        limitations.insert(0, f"Operator-declared test literals left unredacted: {found} of {len(keep)} appear in the snapshot")
+        limitations.insert(0, f"{UNREDACTED}: {found} of {len(keep)} appear in the snapshot")
     return {"digest": digest, "files": files, "gaps": gaps, "routes": routes[:500], "bytes_read": total_bytes, "limitations": limitations}
