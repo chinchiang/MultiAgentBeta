@@ -487,27 +487,35 @@ class Engine:
         hide a request whose result was not recorded; a settle that fails does not hold back the save, and the next
         recover() settles what is left. Each try runs in a thread: against an unreachable database one waits out the
         connect timeout, and the console must keep serving meanwhile."""
-        for delay in (*FINAL_SAVE_RETRY_SECONDS,None):
-            try:
-                if settle:
-                    try:
-                        await asyncio.to_thread(self.settle_sent_jobs,run,"The workflow stopped before this request's result was recorded; its outcome is unknown")
-                        settle=False
-                    except Exception as exc:
-                        note_failure(f"run {run['id']} settling sent jobs",exc)
-                await self.store.persist(run)
-                return
-            except RunConflict as exc:
-                # Another save overtook this attempt's copy: no retry can store it. The stored run is closed as an
-                # interrupted attempt by the next recover, instead of every action on it failing with 409.
-                note_failure(f"run {run['id']} final save overtaken",exc)
-                return
-            except Exception as exc:
-                if delay is None:
-                    note_failure(f"run {run['id']} final save",exc)
-                    self.unsaved[run["id"]]=run
+        known=run.get("version")
+        try:
+            for delay in (*FINAL_SAVE_RETRY_SECONDS,None):
+                try:
+                    if settle:
+                        try:
+                            await asyncio.to_thread(self.settle_sent_jobs,run,"The workflow stopped before this request's result was recorded; its outcome is unknown")
+                            settle=False
+                        except Exception as exc:
+                            note_failure(f"run {run['id']} settling sent jobs",exc)
+                    await self.store.persist(run)
                     return
-                await asyncio.sleep(delay)
+                except RunConflict as exc:
+                    # Another save overtook this attempt's copy: no retry can store it. The stored run is closed as an
+                    # interrupted attempt by the next recover, instead of every action on it failing with 409.
+                    note_failure(f"run {run['id']} final save overtaken",exc)
+                    return
+                except Exception as exc:
+                    if delay is None:
+                        note_failure(f"run {run['id']} final save",exc)
+                        self.unsaved[run["id"]]=run
+                        return
+                    await asyncio.sleep(delay)
+        except asyncio.CancelledError:
+            # Stopped before this state is stored, in a try or between two: it stays in memory for flush_unsaved and
+            # recover(), as when every try fails. A save that landed first has moved the copy's version on.
+            if run.get("version")==known:
+                self.unsaved[run["id"]]=run
+            raise
 
     def record_retest(self,run):
         """Write a finished retest's outcome onto each parent finding it re-checked.
