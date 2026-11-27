@@ -1,6 +1,7 @@
 # Weekly dependency drift report (scripts/dependency-drift.py): how far each pin in requirements.lock.txt,
-# requirements.mutation.lock.txt and frontend/package-lock.json lags behind its registry, and which pinned
-# versions OSV lists an advisory for. The report lands in the job summary; the job fails only on an advisory.
+# requirements.mutation.lock.txt, frontend/package-lock.json and the tool image's deploy/worker/locks
+# (python-requirements.txt, python-build-requirements.txt, package-lock.json) lags behind its registry, and which
+# pinned versions OSV lists an advisory for. The report lands in the job summary; the job fails only on an advisory.
 # Nothing is upgraded here: pins change through scripts/hash-lock.py and npm after a review.
 name: dependency-drift
 

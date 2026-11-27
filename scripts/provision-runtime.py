@@ -10,9 +10,14 @@ from urllib.parse import quote
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"backend"))
 from vibe_audit.worker_entry import docker_api
 
-REFERENCES={"worker":"vibeaudit-worker:test","semgrep":"semgrep/semgrep:1.153.0",
+# The two upstream images are named by digest, never by tag: a tag can be re-pushed, as ghcr.io/zaproxy/zaproxy:2.17.0
+# was after it was validated. Both are the references and image IDs docs/runtime-images.json records; ZAP's is also
+# the validated image in docs/image-validation.json (tests/test_packaging.py keeps them equal).
+SEMGREP_IMAGE="semgrep/semgrep@sha256:6fe804189b0cc51d2f174882a228666ddb8835685bced62ab3aa8b231b7e6af1"  # 1.153.0
+ZAP_IMAGE="ghcr.io/zaproxy/zaproxy@sha256:781a2bdaea47324e7bab583e2263f21d257b0aee61ed51521a5be45f5f5081ef"  # 2.17.0
+REFERENCES={"worker":"vibeaudit-worker:test","semgrep":SEMGREP_IMAGE,
     "gitleaks":"vibeaudit-gitleaks:8.30.1","osv":"vibeaudit-osv:2.3.5",
-    "zap":"ghcr.io/zaproxy/zaproxy:2.17.0",**{tool:"vibeaudit-tools:integration" for tool in ("schemathesis","playwright","promptfoo","pyrit")}}
+    "zap":ZAP_IMAGE,**{tool:"vibeaudit-tools:integration" for tool in ("schemathesis","playwright","promptfoo","pyrit")}}
 
 DIGEST_REFERENCE=re.compile(r"[^@\s]+@sha256:[0-9a-f]{64}")
 BASE_LABEL="org.opencontainers.image.base.name"

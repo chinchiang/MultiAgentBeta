@@ -1,13 +1,14 @@
 {
   "worker": {
     "reference": "vibeaudit-worker:test",
-    "image_id": "sha256:f36919dd1e762fcde1a0fcdb246a183b57ec5731988b1bac5214d93eecde8ad9",
+    "image_id": "sha256:fdd51f7f42f615a1205d7b17f9477bee8d51d14f6e591248546b94ae94b78305",
     "repository_digests": [
-      "vibeaudit-worker@sha256:f36919dd1e762fcde1a0fcdb246a183b57ec5731988b1bac5214d93eecde8ad9"
-    ]
+      "vibeaudit-worker@sha256:fdd51f7f42f615a1205d7b17f9477bee8d51d14f6e591248546b94ae94b78305"
+    ],
+    "base_image_label": "python@sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b94cd8ebbe06a9"
   },
   "semgrep": {
-    "reference": "semgrep/semgrep:1.153.0",
+    "reference": "semgrep/semgrep@sha256:6fe804189b0cc51d2f174882a228666ddb8835685bced62ab3aa8b231b7e6af1",
     "image_id": "sha256:6fe804189b0cc51d2f174882a228666ddb8835685bced62ab3aa8b231b7e6af1",
     "repository_digests": [
       "semgrep/semgrep@sha256:6fe804189b0cc51d2f174882a228666ddb8835685bced62ab3aa8b231b7e6af1"
@@ -28,7 +29,7 @@
     ]
   },
   "zap": {
-    "reference": "ghcr.io/zaproxy/zaproxy:2.17.0",
+    "reference": "ghcr.io/zaproxy/zaproxy@sha256:781a2bdaea47324e7bab583e2263f21d257b0aee61ed51521a5be45f5f5081ef",
     "image_id": "sha256:781a2bdaea47324e7bab583e2263f21d257b0aee61ed51521a5be45f5f5081ef",
     "repository_digests": [
       "ghcr.io/zaproxy/zaproxy@sha256:781a2bdaea47324e7bab583e2263f21d257b0aee61ed51521a5be45f5f5081ef"
@@ -36,30 +37,30 @@
   },
   "schemathesis": {
     "reference": "vibeaudit-tools:integration",
-    "image_id": "sha256:f4f438037d33ae77aa0f845b9b6989dd3396c7ac103fd9b8b27d6c94eb8b3b72",
+    "image_id": "sha256:cf07323ce2ee65e64adf1f0321bfead321e0d9d934d9224f153e670b07a67dec",
     "repository_digests": [
-      "vibeaudit-tools@sha256:f4f438037d33ae77aa0f845b9b6989dd3396c7ac103fd9b8b27d6c94eb8b3b72"
+      "vibeaudit-tools@sha256:cf07323ce2ee65e64adf1f0321bfead321e0d9d934d9224f153e670b07a67dec"
     ]
   },
   "playwright": {
     "reference": "vibeaudit-tools:integration",
-    "image_id": "sha256:f4f438037d33ae77aa0f845b9b6989dd3396c7ac103fd9b8b27d6c94eb8b3b72",
+    "image_id": "sha256:cf07323ce2ee65e64adf1f0321bfead321e0d9d934d9224f153e670b07a67dec",
     "repository_digests": [
-      "vibeaudit-tools@sha256:f4f438037d33ae77aa0f845b9b6989dd3396c7ac103fd9b8b27d6c94eb8b3b72"
+      "vibeaudit-tools@sha256:cf07323ce2ee65e64adf1f0321bfead321e0d9d934d9224f153e670b07a67dec"
     ]
   },
   "promptfoo": {
     "reference": "vibeaudit-tools:integration",
-    "image_id": "sha256:f4f438037d33ae77aa0f845b9b6989dd3396c7ac103fd9b8b27d6c94eb8b3b72",
+    "image_id": "sha256:cf07323ce2ee65e64adf1f0321bfead321e0d9d934d9224f153e670b07a67dec",
     "repository_digests": [
-      "vibeaudit-tools@sha256:f4f438037d33ae77aa0f845b9b6989dd3396c7ac103fd9b8b27d6c94eb8b3b72"
+      "vibeaudit-tools@sha256:cf07323ce2ee65e64adf1f0321bfead321e0d9d934d9224f153e670b07a67dec"
     ]
   },
   "pyrit": {
     "reference": "vibeaudit-tools:integration",
-    "image_id": "sha256:f4f438037d33ae77aa0f845b9b6989dd3396c7ac103fd9b8b27d6c94eb8b3b72",
+    "image_id": "sha256:cf07323ce2ee65e64adf1f0321bfead321e0d9d934d9224f153e670b07a67dec",
     "repository_digests": [
-      "vibeaudit-tools@sha256:f4f438037d33ae77aa0f845b9b6989dd3396c7ac103fd9b8b27d6c94eb8b3b72"
+      "vibeaudit-tools@sha256:cf07323ce2ee65e64adf1f0321bfead321e0d9d934d9224f153e670b07a67dec"
     ]
   }
 }

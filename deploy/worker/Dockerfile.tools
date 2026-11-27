@@ -1,5 +1,10 @@
 # Original recipe, kept only to refresh deploy/worker/locks. Release images are built from
 # Dockerfile.tools.locked, which installs exactly the captured closure.
+# pip freeze writes no hashes, and Dockerfile.tools.locked installs with --require-hashes: after copying the frozen
+# list over locks/python-requirements.txt, run
+#   python scripts/hash-lock.py --lock deploy/worker/locks/python-requirements.txt --write
+# (and the same for locks/python-build-requirements.txt when setuptools moves). A new sdist-only pin also has to join
+# the --no-binary list in Dockerfile.tools.locked; tests/test_packaging.py checks both locks carry hashes.
 # Build-time internet is allowed for provisioning. Runtime has --network none.
 # The final image ID is recorded and is the only value accepted by the runtime.
 FROM public.ecr.aws/docker/library/node@sha256:a9f5f7c91a432850b2a8a7797adf5eadb6c733ceed61167806cee7ea7fbc29df AS node
@@ -14,8 +19,7 @@ RUN pip install --no-cache-dir schemathesis==4.28.0 pyrit==1.1.0 \
  && pip freeze > /opt/python-tool-versions.lock.txt
 WORKDIR /opt/vibe-tools
 RUN npm init -y \
- && npm install --save-exact --no-audit --no-fund playwright@1.63.0 promptfoo@0.124.1 \
- && npm pkg set overrides.basic-ftp=6.2.1 && npm install --no-audit --no-fund \
+ && npm install --save-exact --no-audit --no-fund playwright@1.63.0 promptfoo@0.126.0 \
  && ln -s /opt/vibe-tools/node_modules/.bin/promptfoo /usr/local/bin/promptfoo \
  && npm cache clean --force
 RUN mkdir -p /node_modules \

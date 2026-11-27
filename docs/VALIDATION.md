@@ -4,6 +4,19 @@
 
 本次已實際使用 Windows 控制台、WSL2/Linux、Docker 29.1.3、PostgreSQL 18.6 及固定版本的八種安全工具。09-24 原始驗證主機的 Windows 收據為 Python 3.12.14；10-05 的 Windows 收據為 Python 3.13.15（另以 Windows Python 3.12.10 驗證雜湊鎖定安裝），Linux 測試 venv 為 Python 3.14.4，Node 為 24.19.0。完整 Python/npm 相依套件與工具映像鎖定檔隨原始碼交付。映像與離線 OSV 資料本身不放進 ZIP。
 
+## 2026-11-27 工具映像相依套件、雜湊檢查與上游映像 digest
+
+處理 deploy/worker 工具映像的供應鏈缺口，並升級帶 osv.dev 公告的釘選版本。
+
+- 雜湊檢查：deploy/worker/locks/python-requirements.txt 的 121 個釘選版本都記錄 PyPI 發佈檔的 sha256（scripts/hash-lock.py），Dockerfile.tools.locked 以 `--require-hashes --only-binary :all:` 安裝。唯一只發佈 sdist 的 ecoji 改以 `--no-build-isolation` 建置，建置後端是先依雜湊裝好的 setuptools 84.2.1（python-build-requirements.txt），不再另外下載沒釘版的 setuptools。映像不再需要 build-essential，已移除。
+- Python 升級：aiohttp 3.14.5、certifi 2026.11.20、filelock 4.3.1、pillow 13.0.0、pypdf 6.21.4（維持 6.x）；av 18.1.0 已被 PyPI 撤回（yanked），升到 18.1.1。以 pip 在同一個基礎映像解析，套件數仍為 121。
+- npm 升級：promptfoo 0.124.1 → 0.126.0。新的相依樹已不含 node-forge（原經由 jks-js 引入，GHSA-86w9-cpqp-85rv 沒有修正版），所以 scripts/dependency-drift.py 的 ACCEPTED 清空；get-uri 8.0.2 本身要求 basic-ftp ^6.2.4，basic-ftp 的 override 也移除。Playwright 維持 1.63.0。
+- 前端開發相依：eslint 10.15.0、typescript-eslint 8.74.0（兩者改用 minimatch 11）、happy-dom 21.0.4，zod 更新為 4.6.7。dist 重建後沒有變動。
+- semgrep 1.153.0 與 ZAP 2.17.0 改以 digest 拉取與查詢（scripts/provision-runtime.py、integration.yml、LINUX_SETUP.md、DOCKER_INTEGRATION_TESTING.md）。ghcr.io/zaproxy/zaproxy:2.17.0 這個 tag 在驗收後被重新推送，現在指向 sha256:9624669d…；釘的是 image-validation.json 記錄的已驗收 digest sha256:781a2bda…。tests/test_packaging.py 檢查各處用的是同一個 digest，以及工具映像每一步 pip 安裝都檢查雜湊。
+- 公告查詢（osv.dev，2026-11-27）：工具映像的 121 個 Python 釘選版本與 589 個不重複的 npm 套件版本（package-lock.json 共 645 項）、前端 219 個 npm 套件版本都沒有公告。requirements.lock.txt 的 filelock 3.32.7 仍有公告，litellm 要求 <4.0，見 #112。
+- 驗收：以重建的工具映像（本機 containerd 映像儲存讀出的 ID 為 sha256:cf07323c…）跑含全部 Docker 整合的 Linux 全套回歸，1745 passed、1 skipped、4 subtests passed，沒有失敗（linux-docker-integration-2026-11-27.xml）。skip 的是只在 Windows 執行的 redirector 後備測試。五種動態工具都經過真實 Docker 與 broker。環境：Python 3.12.15、Docker 29.1.3、PostgreSQL 18.6、Node 24.19.0。前端型別檢查、lint、40 個 vitest 測試、check:i18n、check:messages 與 production build 通過。
+- 沒有做的：apt-get 仍未釘版；Windows 回歸沒有重跑；CI 重建的工具映像 ID 與本機不同，以 integration.yml 的結果為準。
+
 ## 2026-10-11 備援模型與不遮蔽測試字面值的驗收
 
 PR #44 加入兩項功能：操作者設定的備援模型（`fallback`），以及不遮蔽的合成測試憑證（`unredacted_literals`）。接著以真模型跑了 #18～#28。模型、環境與限制都和上一節相同；每次 run 的資料也已補進 real-model-acceptance-2026-10-11.json。這 11 次共約 211 萬 tokens，28 次合計約 422 萬 tokens。
@@ -161,7 +174,7 @@ docs/history 保留 Schemathesis header 修正前的兩份失敗收據，分別�
 
 ## 映像與可重現性
 
-runtime-images.json 保存 provision 時讀出的 image IDs。工具的相依套件先以實際工作映像驗證，再以 deploy/worker/locks 的完整 Python/npm 鎖定檔重建。測試使用的 image ID 及對應報告另見 image-validation.json。 2026-10-07 起 worker 的 Dockerfile 強制 BASE_IMAGE 為 digest，並加上基礎映像標籤；runtime-images.json 中的 worker image ID 早於這次變更，重建 worker 後要重新執行 provision-runtime.py 記錄新的 ID。
+runtime-images.json 保存 provision 時讀出的 image IDs。工具的相依套件先以實際工作映像驗證，再以 deploy/worker/locks 的完整 Python/npm 鎖定檔重建。測試使用的 image ID 及對應報告另見 image-validation.json。 2026-10-07 起 worker 的 Dockerfile 強制 BASE_IMAGE 為 digest，並加上基礎映像標籤；重建 worker 後要重新執行 provision-runtime.py 記錄新的 ID；runtime-images.json 2026-11-27 起記錄的是帶基礎映像標籤的 worker。2026-11-27 起工具映像的 Python 套件以雜湊檢查安裝（Dockerfile.tools.locked），semgrep 與 ZAP 改以 digest 拉取；ZAP 的 2.17.0 tag 在驗收後已被重新推送，指向另一個映像，image-validation.json 記錄的仍是驗收時的 digest。
 
 固定版本與 hash 提供可追溯輸入，不保證所有 CPU 架構產出完全相同的 image ID。Dockerfile 仍包含作業系統套件安裝，系統套件來源未作完整時間快照；換環境重建必須重新驗收。所有來源、工具、規則、標準和模型分別保留授權。
 
@@ -207,6 +220,19 @@ verify-linux.sh 只在設定 `VIBEAUDIT_JUNIT_XML` 時寫出 JUnit 收據；放�
 Validation date: 2026-09-24; after follow-up fixes from review, the full Windows regression and the frontend build were re-run on 2026-10-02; after the fixes from the in-depth review were completed on 2026-10-03, the full regression (including PostgreSQL integration and the Node 24 fixture), the frontend type check and production build, and the real API + React SSR contract checks were re-run on WSL2/Linux, and the full Linux regression including all Docker integrations was run with Docker 29.1.3; after the third-round review fixes (controller state reclamation, worker lifecycle teardown and deadline alignment, lease log result/request binding and completed-task reuse, dead-code cleanup, etc., PR #6) were merged on 2026-10-04, both full regression suites, the frontend type check and the production build were re-run on Linux; the Docker integrations covered the isolated worker, the three offline scanners, the five dynamic tools and the full pipeline, and the SSR/API contract checks (including fetch-based SSE and download) were re-run against the current code; on 2026-10-05, after the blind-review matching tool and adjudication-file examples were added, both full Linux regressions, the full Windows regression, the frontend type check and production build, the SSR/API contract and the Edge real-browser checks were re-run, and a fresh-venv install with `--require-hashes` was verified on Windows Python 3.12.10; the same day, after hardening reviewer-name normalization and restricting worksheet rationales to independent phases, all of the above receipts were refreshed again. As specified by the user, this round completed the engineering work and the local integrations that do not require model credentials. **These receipts of 2026-09-24 to 10-05 did NOT call real Claude, OpenAI or Nemotron; the 28 real-model runs of 2026-10-10 to 11-03 that came later are recorded in the two sections below, and OpenAI's own API and NVIDIA NIM have still not been called; no multi-model bias reduction, vulnerability-detection-rate or cost improvement has been demonstrated.**
 
 This round actually used the Windows console, WSL2/Linux, Docker 29.1.3, PostgreSQL 18.6 and eight security tools at pinned versions. The original 2026-09-24 verification host's Windows receipts ran Python 3.12.14; the 2026-10-05 Windows receipts ran Python 3.13.15 (a hash-pinned install was also verified on Windows Python 3.12.10), the Linux test venv used Python 3.14.4, and Node was 24.19.0. The complete Python/npm dependency and tool image lockfiles are delivered with the source code. The images and the offline OSV data themselves are not packed into the ZIP.
+
+## 2026-11-27 Tool Image Dependencies, Hash Checking and Upstream Image Digests
+
+Closes the supply-chain gaps in the deploy/worker tool image and upgrades the pins that carried osv.dev advisories.
+
+- Hash checking: each of the 121 pins in deploy/worker/locks/python-requirements.txt records the sha256 of PyPI's published files (scripts/hash-lock.py), and Dockerfile.tools.locked installs them with `--require-hashes --only-binary :all:`. ecoji, the one package published only as an sdist, is built with `--no-build-isolation`, so its build backend is setuptools 84.2.1 installed from its hashes first (python-build-requirements.txt) rather than an unpinned setuptools fetched for the build. The image no longer needs build-essential, which is removed.
+- Python upgrades: aiohttp 3.14.5, certifi 2026.11.20, filelock 4.3.1, pillow 13.0.0 and pypdf 6.21.4 (kept on 6.x); av 18.1.0 was yanked from PyPI and moves to 18.1.1. Resolved by pip on the same base image; the closure still has 121 packages.
+- npm upgrade: promptfoo 0.124.1 → 0.126.0. The new tree no longer contains node-forge (it came through jks-js, and GHSA-86w9-cpqp-85rv has no fix), so ACCEPTED in scripts/dependency-drift.py is now empty; get-uri 8.0.2 itself requires basic-ftp ^6.2.4, so the basic-ftp override is removed too. Playwright stays at 1.63.0.
+- Frontend development dependencies: eslint 10.15.0 and typescript-eslint 8.74.0 (both now on minimatch 11), happy-dom 21.0.4, and zod updated to 4.6.7. The rebuilt dist is unchanged.
+- semgrep 1.153.0 and ZAP 2.17.0 are pulled and looked up by digest (scripts/provision-runtime.py, integration.yml, LINUX_SETUP.md, DOCKER_INTEGRATION_TESTING.md). The ghcr.io/zaproxy/zaproxy:2.17.0 tag was re-pushed after validation and now names sha256:9624669d…; the pin is the validated digest image-validation.json records, sha256:781a2bda…. tests/test_packaging.py checks that every place uses the same digest and that every pip install step of the tool image is hash-checked.
+- Advisory query (osv.dev, 2026-11-27): none of the tool image's 121 Python pins and 589 distinct npm package versions (645 package-lock.json entries) or the frontend's 219 npm package versions has an advisory. filelock 3.32.7 in requirements.lock.txt still has advisories; litellm requires <4.0 (see #112).
+- Acceptance: the full Linux regression with every Docker integration, run on the rebuilt tool image (ID sha256:cf07323c… as read from this host's containerd image store): 1745 passed, 1 skipped, 4 subtests passed, no failures (linux-docker-integration-2026-11-27.xml). The skip is the redirector fallback test that runs only on Windows. All five dynamic tools went through real Docker and the broker. Environment: Python 3.12.15, Docker 29.1.3, PostgreSQL 18.6, Node 24.19.0. Frontend typecheck, lint, 40 vitest tests, check:i18n, check:messages and the production build passed.
+- Not done: apt-get is still unpinned; the Windows regression was not re-run; a CI rebuild of the tool image has a different ID, and integration.yml's result is what counts there.
 
 ## 2026-10-11 Fallback Model and Unredacted Test Literal Acceptance
 
@@ -365,7 +391,7 @@ docs/history keeps the two failed receipts from before the Schemathesis header f
 
 ## Images and Reproducibility
 
-runtime-images.json stores the image IDs read at provision time. Tool dependencies were first verified against the actual working images, then rebuilt with the complete Python/npm lockfiles under deploy/worker/locks. The image IDs used in testing and the corresponding reports are in image-validation.json. Since 2026-10-07 the worker Dockerfile requires a digest BASE_IMAGE and adds a base-image label; the worker image ID in runtime-images.json predates that change, so after rebuilding the worker re-run provision-runtime.py to record the new ID.
+runtime-images.json stores the image IDs read at provision time. Tool dependencies were first verified against the actual working images, then rebuilt with the complete Python/npm lockfiles under deploy/worker/locks. The image IDs used in testing and the corresponding reports are in image-validation.json. Since 2026-10-07 the worker Dockerfile requires a digest BASE_IMAGE and adds a base-image label; after rebuilding the worker re-run provision-runtime.py to record the new ID; since 2026-11-27 runtime-images.json records a worker that carries the base-image label. Since 2026-11-27 the tool image installs its Python packages hash-checked (Dockerfile.tools.locked), and semgrep and ZAP are pulled by digest; ZAP's 2.17.0 tag was re-pushed after validation and now names a different image, while image-validation.json still records the validated digest.
 
 Pinned versions and hashes provide traceable inputs and do not guarantee that all CPU architectures produce identical image IDs. The Dockerfile still includes operating system package installation, and the system package sources were not fully time-snapshotted; rebuilding in a different environment requires re-acceptance. All sources, tools, rules, standards and models retain their respective licenses.
 
