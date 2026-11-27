@@ -5,7 +5,7 @@
   python scripts/dependency-drift.py --json     the same data as JSON
 
 Reads requirements.lock.txt, requirements.mutation.lock.txt, frontend/package-lock.json and the worker tool image's
-deploy/worker/locks (python-requirements.txt and package-lock.json); asks PyPI and the npm
+deploy/worker/locks (python-requirements.txt, python-build-requirements.txt and package-lock.json); asks PyPI and the npm
 registry for the latest release of each pin and OSV (api.osv.dev) for advisories against the pinned version.
 Nothing is upgraded: the pins change only through scripts/hash-lock.py and npm, after a review. Exits non-zero when
 any pinned version has an advisory, so the weekly workflow turns red for that and only that.
@@ -23,16 +23,14 @@ from packaging.version import InvalidVersion, Version
 
 ROOT = Path(__file__).resolve().parents[1]
 PIN = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)==([A-Za-z0-9._+!-]+)")
-LOCKS = ["requirements.lock.txt", "requirements.mutation.lock.txt", "deploy/worker/locks/python-requirements.txt"]
+LOCKS = ["requirements.lock.txt", "requirements.mutation.lock.txt", "deploy/worker/locks/python-requirements.txt",
+         "deploy/worker/locks/python-build-requirements.txt"]
 PACKAGE_LOCKS = [ROOT / "frontend" / "package-lock.json", ROOT / "deploy" / "worker" / "locks" / "package-lock.json"]
 TIMEOUT = 30
 # Advisories reviewed and accepted, listed in the report but not failing the job: (advisory, package) -> reason.
 # Each needs a reason a reader can check and should be removed as soon as a fixed release exists.
-ACCEPTED = {
-    ("GHSA-86w9-cpqp-85rv", "node-forge"): "No fixed release (2026-10-11). Reached only through jks-js (Java KeyStore parsing) inside "
-                                           "promptfoo; the fixed promptfoo runner never loads a keystore, and the tool container runs "
-                                           "with --network none behind the supervisor.",
-}
+# Empty since promptfoo 0.126.0 no longer depends on node-forge (through jks-js), whose GHSA-86w9-cpqp-85rv had no fix.
+ACCEPTED = {}
 
 
 def fetch(url, data=None):

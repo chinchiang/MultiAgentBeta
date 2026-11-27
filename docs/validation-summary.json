@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-10T11:51:30.724369+00:00",
+  "generated_at": "2026-11-27T01:19:29.655317+00:00",
   "model_endpoints_tested": false,
   "efficacy_established": false,
   "note": "Suites overlap; do not add counts as distinct tests. JUnit successful records include subtests where emitted. Docker, database and synthetic model contracts are separate evidence.",
@@ -65,6 +65,22 @@
       "seconds": 373.059,
       "timestamp": [
         "2026-10-09T01:34:24.119445+00:00"
+      ],
+      "skip_reasons": [
+        "Windows redirector process-tree fallback"
+      ],
+      "failures_detail": []
+    },
+    {
+      "file": "docs/linux-docker-integration-2026-11-27.xml",
+      "tests": 1750,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 1,
+      "passed": 1749,
+      "seconds": 706.509,
+      "timestamp": [
+        "2026-11-27T09:07:03.791054+08:00"
       ],
       "skip_reasons": [
         "Windows redirector process-tree fallback"

@@ -191,6 +191,46 @@ def test_provisioning_writes_nothing_for_a_worker_without_a_digest_pinned_base(t
     assert json.loads(out.with_suffix(".images.json").read_text())["worker"]["base_image_label"] == DIGEST
 
 
+def test_upstream_scanner_images_are_pulled_and_looked_up_by_one_digest():
+    # tag 可以被重新推送（ZAP 的 2.17.0 在驗收後就換過），所以 CI 與文件拉取、查詢的都必須是 provision-runtime.py 記錄的 digest
+    provision = _provision_script()
+    upstream = {provision.REFERENCES["semgrep"], provision.REFERENCES["zap"]}
+    assert upstream == {provision.SEMGREP_IMAGE, provision.ZAP_IMAGE}
+    assert all(provision.DIGEST_REFERENCE.fullmatch(reference) for reference in upstream)
+    for path in (".github/workflows/integration.yml", "docs/LINUX_SETUP.md", "docs/DOCKER_INTEGRATION_TESTING.md"):
+        text = (ROOT / path).read_text(encoding="utf-8")
+        named = [ref for ref in re.findall(r"(?:docker pull|\{\{\.Id\}\}') ([^\s)]+)", text)
+                 if ref.startswith(("semgrep/", "ghcr.io/zaproxy/"))]
+        assert named and set(named) <= upstream, path
+    workflow = (ROOT / ".github" / "workflows" / "integration.yml").read_text(encoding="utf-8")
+    assert all("docker pull " + reference in workflow for reference in upstream)
+
+
+def test_tool_image_installs_every_python_file_by_its_hash():
+    locked = (ROOT / "deploy" / "worker" / "Dockerfile.tools.locked").read_text(encoding="utf-8")
+    copied = dict((target, source) for source, target in re.findall(r"^COPY (locks/\S+\.txt) (\S+)", locked, re.M))
+    installs = [part.split()[2:] for line in re.sub(r"\\\r?\n\s*", " ", locked).splitlines()
+                for part in line.removeprefix("RUN ").split("&&") if part.split()[:2] == ["pip", "install"]]
+    def option(args, name):
+        return args[args.index(name) + 1]
+    # 先裝建置後端，再裝工具閉包；每一步都檢查雜湊、只收 wheel
+    build, tools = installs
+    assert [option(build, "-r"), option(tools, "-r")] == list(copied)
+    for args in installs:
+        assert "--require-hashes" in args and option(args, "--only-binary") == ":all:"
+    # 只有 sdist 的套件不用建置隔離，才會由上一步依雜湊裝好的 setuptools 建置，而不是另外下載一個沒釘版的
+    assert "--no-build-isolation" in tools and "--no-binary" not in build
+    pinned = {}
+    for target, source in copied.items():
+        text = (ROOT / "deploy" / "worker" / source).read_text(encoding="ascii")
+        for requirement in re.split(r"\r?\n(?=\S)", text.strip()):
+            match = re.fullmatch(r"([A-Za-z0-9][A-Za-z0-9._-]*)==\S+(?: \\\r?\n    --hash=sha256:[0-9a-f]{64})+", requirement)
+            assert match, (source, requirement.splitlines()[0])
+            pinned.setdefault(target, set()).add(match[1].lower())
+    assert set(option(tools, "--no-binary").split(",")) <= pinned[option(tools, "-r")]
+    assert pinned[option(build, "-r")] == {"setuptools"}
+
+
 def test_the_published_schema_says_what_a_scope_entry_may_hold():
     import json
     schema = json.loads((ROOT / "docs" / "run-input.schema.json").read_text(encoding="utf-8"))

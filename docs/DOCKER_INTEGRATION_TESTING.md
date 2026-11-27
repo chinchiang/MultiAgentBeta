@@ -35,7 +35,7 @@ export VIBEAUDIT_TEST_RUNTIME_CONFIG=/tmp/va-runtime.json
 export VIBEAUDIT_TEST_WORKER_IMAGE="$(docker image inspect --format '{{.Id}}' vibeaudit-worker:test)"
 export VIBEAUDIT_FIXTURE_IMAGE="$VIBEAUDIT_TEST_WORKER_IMAGE"
 export VIBEAUDIT_INTEGRATION_IMAGE="$(docker image inspect --format '{{.Id}}' vibeaudit-tools:integration)"
-export VIBEAUDIT_ZAP_IMAGE="$(docker image inspect --format '{{.Id}}' ghcr.io/zaproxy/zaproxy:2.17.0)"
+export VIBEAUDIT_ZAP_IMAGE="$(docker image inspect --format '{{.Id}}' ghcr.io/zaproxy/zaproxy@sha256:781a2bdaea47324e7bab583e2263f21d257b0aee61ed51521a5be45f5f5081ef)"
 export VIBEAUDIT_TEST_NODE="$(command -v node)"   # 必須是 Node 24
 .venv/bin/python -m pytest tests -q -rs
 ```
@@ -117,7 +117,7 @@ export VIBEAUDIT_TEST_RUNTIME_CONFIG=/tmp/va-runtime.json
 export VIBEAUDIT_TEST_WORKER_IMAGE="$(docker image inspect --format '{{.Id}}' vibeaudit-worker:test)"
 export VIBEAUDIT_FIXTURE_IMAGE="$VIBEAUDIT_TEST_WORKER_IMAGE"
 export VIBEAUDIT_INTEGRATION_IMAGE="$(docker image inspect --format '{{.Id}}' vibeaudit-tools:integration)"
-export VIBEAUDIT_ZAP_IMAGE="$(docker image inspect --format '{{.Id}}' ghcr.io/zaproxy/zaproxy:2.17.0)"
+export VIBEAUDIT_ZAP_IMAGE="$(docker image inspect --format '{{.Id}}' ghcr.io/zaproxy/zaproxy@sha256:781a2bdaea47324e7bab583e2263f21d257b0aee61ed51521a5be45f5f5081ef)"
 export VIBEAUDIT_TEST_NODE="$(command -v node)"   # must be Node 24
 .venv/bin/python -m pytest tests -q -rs
 ```
