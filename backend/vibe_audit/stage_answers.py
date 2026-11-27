@@ -83,9 +83,9 @@ class StageAnswers:
         except Exception:
             # Whatever is kept under this name no longer stands, so the next resume asks again.
             if self.run.get("model_outputs", {}).pop(name, None) is not None:
-                self.answers.store.save(self.run)
+                await self.answers.store.persist(self.run)
             raise
         if name and not reused:
             # The stage was handed a copy, so what is kept is the model's answer as it came.
             self.run.setdefault("model_outputs", {})[name] = {"binding": binding, "data": data, "answered_by": [fallback_id] if fallback_id else []}
-            self.answers.store.save(self.run)
+            await self.answers.store.persist(self.run)

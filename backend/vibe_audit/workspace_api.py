@@ -47,26 +47,26 @@ def workspace_router(store, engine, source_roots, *, session):
 
     @router.get("/projects")
     async def projects():
-        return {"projects": store.settings("project")}
+        return {"projects": await asyncio.to_thread(store.settings, "project")}
 
     @router.put("/projects/{project_id}")
     async def save_project(project_id: str, data: ProjectSetting):
         if project_id != data.id:
             raise HTTPException(422, "Project ID mismatch")
         value = data.model_dump()
-        store.save_setting("project", data.id, value)
+        await asyncio.to_thread(store.save_setting, "project", data.id, value)
         return value
 
     @router.get("/models")
     async def models():
-        return {"models": store.settings("model")}
+        return {"models": await asyncio.to_thread(store.settings, "model")}
 
     @router.put("/models/{model_id}")
     async def save_model(model_id: str, profile: ModelProfile):
         if model_id != profile.id:
             raise HTTPException(422, "Agent ID mismatch")
         value = profile.model_dump()
-        store.save_setting("model", model_id, value)
+        await asyncio.to_thread(store.save_setting, "model", model_id, value)
         return value
 
     @router.get("/catalogs")
@@ -77,12 +77,12 @@ def workspace_router(store, engine, source_roots, *, session):
 
     @router.get("/runs/{run_id}/trace")
     async def trace(run_id: str):
-        return store.trace(run_id)
+        return await asyncio.to_thread(store.trace, run_id)
 
     @router.post("/runs/{run_id}/retest", status_code=201)
     async def retest(run_id: str, data: RetestRequest):
         from pathlib import Path
-        parent = store.get(run_id)
+        parent = await asyncio.to_thread(store.get, run_id)
         if parent["status"] in {"created", "running", "cancelling"}:
             raise PolicyError("Finish or stop the original assessment before creating a retest")
         manifest = deepcopy(parent["manifest"])
@@ -125,7 +125,7 @@ def workspace_router(store, engine, source_roots, *, session):
             if not any(path == root or path.is_relative_to(root) for root in source_roots):
                 raise HTTPException(403, "Source directory is outside configured source roots")
             model = model.model_copy(update={"source_path": str(path)})
-        return engine.create(model)
+        return await asyncio.to_thread(engine.create, model)
 
     @router.post("/runs/{run_id}/findings/{finding_id}/decision")
     async def decision(run_id: str, finding_id: str, data: FindingDecision, request: Request):

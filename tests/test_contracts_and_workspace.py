@@ -244,9 +244,13 @@ async def test_graph_and_job_commit_rollback_is_atomic(tmp_path,monkeypatch,back
         return execute(sql,args)
     monkeypatch.setattr(store,"_execute",fail)
     run["name"]="must rollback"
+    # The finished execution is a new entity of the run, so its graph rows are written with it.
+    execution={"id":job,"case_id":run["cases"][0]["id"],"status":"pass"}
+    run["executions"].append(execution)
     with pytest.raises(RuntimeError,match="Injected"):
-        store.finish_job(job,{"status":"pass"},run)
+        store.finish_job(job,execution,run)
     assert store.get(run["id"])["name"]==original["name"]
+    assert store.get(run["id"])["executions"]==original["executions"]
     assert next(j for j in store.jobs(run["id"]) if j["id"]==job)["status"]=="sent"
     monkeypatch.setattr(store,"_execute",execute)
     restarted=Engine(store,url)
@@ -268,7 +272,8 @@ def test_postgres_store_connects_with_a_timeout_and_survives_a_dropped_connectio
     monkeypatch.setattr(psycopg,"connect",recording)
     store=Store(tmp_path,url)
     assert kwargs[-1]["connect_timeout"]==5 and kwargs[-1]["autocommit"] is True
-    run=new_run("run-dropped",RunInput(name="dropped connection"))
+    # The shared test database keeps earlier runs' rows: a fixed id would be a second insert of a stored run.
+    run=new_run("run-dropped-"+uuid.uuid4().hex,RunInput(name="dropped connection"))
     store.save(run)
     # A database restart drops the connection: the next statement outside a transaction reconnects once.
     store.conn.close()
@@ -517,13 +522,69 @@ def test_events_are_appended_once_and_never_rewritten_with_the_run(tmp_path,back
         # A row written before events had their own table carries them in its body: read as they are, moved on the next save.
         legacy_id="run-"+uuid.uuid4().hex
         legacy={**run,"id":legacy_id,"events":[event(1),event(2)]}
-        execute(store.sql["upsert_run"],(legacy_id,json.dumps(legacy),"2026-10-09T00:00:00Z"))
+        execute(placeholders("INSERT INTO runs (id,payload,updated) VALUES (?,?,?)",store.postgres),(legacy_id,json.dumps(legacy),"2026-10-09T00:00:00Z"))
         assert [e["seq"] for e in store.get(legacy_id)["events"]]==[1,2] and store.events_after(legacy_id,0)==[]
         stored=store.get(legacy_id)
         stored["events"].append(event(3))
         store.save(stored)
         assert [e["seq"] for e in store.get(legacy_id)["events"]]==[1,2,3] and [e["seq"] for e in store.events_after(legacy_id,0)]==[1,2,3]
         assert "events" not in json.loads(execute(store.sql["run"],(legacy_id,)).fetchone()[0])
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("backend",["sqlite","postgres"])
+def test_a_save_writes_only_the_graph_rows_not_stored_yet(tmp_path,monkeypatch,backend):
+    url=os.getenv("VIBEAUDIT_TEST_DATABASE_URL") if backend=="postgres" else None
+    if backend=="postgres" and not url:
+        pytest.skip("Provide dedicated PostgreSQL integration database")
+    store=Store(tmp_path,url)
+    try:
+        cases=[{"id":f"C-{n}","title":f"case {n}","requirement_id":"R-1","threat_ids":["T-1"]} for n in (1,2)]
+        run={"id":"run-"+uuid.uuid4().hex,"name":"graph","mode":"demo","status":"running","stage":"intake","created_at":"2026-11-27T00:00:00Z",
+             "updated_at":"","manifest":{"name":"graph","mode":"demo","parent_run_id":None},"events":[],"cases":cases,"executions":[],
+             "usage":{"requests":0},"error":None}
+        store.save(run)
+        writes=[]
+        execute=store._execute
+        graph={store.sql["insert_entity"]:"entity",store.sql["insert_relation"]:"relation"}
+        def counting(sql,args=()):
+            if sql in graph:
+                writes.append(graph[sql])
+            return execute(sql,args)
+        monkeypatch.setattr(store,"_execute",counting)
+        # Nothing of the graph changed: no row is sent again.
+        store.save(run)
+        assert writes==[]
+        # One case changed: its new version is the one row written; its links are the same links.
+        cases[1]["title"]="changed"
+        store.save(run)
+        assert writes==["entity"]
+        # A save that rolls back forgets what it wrote, so the next one writes it again.
+        cases[0]["title"]="rolled back"
+        writes.clear()
+        def failing_commit(sql,args=()):
+            if sql=="COMMIT":
+                raise RuntimeError("synthetic commit failure")
+            return counting(sql,args)
+        monkeypatch.setattr(store,"_execute",failing_commit)
+        with pytest.raises(RuntimeError):
+            store.save(run)
+        monkeypatch.setattr(store,"_execute",counting)
+        store.save(run)
+        assert writes==["entity","entity"]
+        versions=[e for e in store.trace(run["id"])["entities"] if e["kind"]=="case"]
+        assert sorted((e["id"],e["current"]) for e in versions)==[("C-1",False),("C-1",True),("C-2",False),("C-2",True)]
+        # A store opened later reads what is stored and sends none of it again.
+        writes.clear()
+        reopened=Store(tmp_path,url)
+        try:
+            again=reopened.get(run["id"])
+            monkeypatch.setattr(reopened,"_execute",lambda sql,args=(),execute=reopened._execute:(writes.append(sql) if sql in graph else None) or execute(sql,args))
+            reopened.save(again)
+            assert writes==[]
+        finally:
+            reopened.close()
     finally:
         store.close()
 

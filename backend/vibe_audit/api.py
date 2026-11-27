@@ -21,7 +21,7 @@ from .messages import PATTERNS, STATUS_ZH, ZH, zh
 from .policy import PolicyError
 from .service import REPORT_LANGUAGES, Engine, report_markdown, report_sarif
 from .settings import DEFAULT_CONSOLE_ORIGINS, ROOT, Settings, startup_token_strong  # noqa: F401  (startup_token_strong: kept for callers)
-from .store import ControllerBusy, RunNotFound, Store
+from .store import ControllerBusy, RunConflict, RunNotFound, Store
 
 LIMITATIONS=[
     "Demo uses synthetic reviewers and fixtures, not real model or target validation.",
@@ -167,6 +167,11 @@ def _error_handlers(app,console):
         # A database restart let another process take the controller lock: this one must not act on the runs.
         return problem(str(exc),409)
 
+    @app.exception_handler(RunConflict)
+    async def run_conflict(request,exc):
+        # Another save overtook the copy this action changed; nothing of this action was stored.
+        return problem(str(exc),409)
+
     @app.exception_handler(RunNotFound)
     async def not_found(request,exc):
         return problem("Run or artifact not found",404)
@@ -290,29 +295,27 @@ def _run_routes(api,console):
             # The run keeps the path that was checked: a later scan reads it literally, so a ".." after a link
             # that is swapped for a directory cannot lead outside the roots.
             data=data.model_copy(update={"source_path":str(path)})
-        return console.engine.create(data)
+        return await asyncio.to_thread(console.engine.create,data)
 
     @api.get("/runs/{run_id}")
     async def get_run(run_id:str):
         # Database reads run off the event loop, so a slow database stalls one request, not every other one.
         return await asyncio.to_thread(console.store.get,run_id)
 
-    # What a lost attempt left behind is settled off the event loop first: against an unreachable database that waits
-    # out the connect timeout. The engine's own call that follows on the loop then finds nothing left to do.
+    # The database work of an action (settling what a lost attempt left behind, the checks, the save) runs off the event
+    # loop: against an unreachable database it waits out the connect timeout, and the console keeps serving meanwhile.
+    # Only registering an attempt, and changing a live attempt's in-memory copy, happen on the loop.
     @api.post("/runs/{run_id}/start")
     async def start(run_id:str):
-        await asyncio.to_thread(console.engine.recover,run_id)
-        return console.engine.start(run_id)
+        return await console.engine.begin(console.engine.prepare_start,run_id)
 
     @api.post("/runs/{run_id}/cancel")
     async def cancel(run_id:str):
-        await asyncio.to_thread(console.engine.recover,run_id)
-        return console.engine.cancel(run_id)
+        return await console.engine.stop(run_id)
 
     @api.post("/runs/{run_id}/resume")
     async def resume(run_id:str):
-        await asyncio.to_thread(console.engine.recover,run_id)
-        return console.engine.start(run_id,resume=True)
+        return await console.engine.begin(console.engine.prepare_start,run_id,True)
 
     @api.post("/runs/{run_id}/approve-cases")
     async def approve_cases(run_id:str,request:Request):
@@ -324,12 +327,12 @@ def _run_routes(api,console):
             receipt=None
         if not isinstance(receipt,str):
             raise HTTPException(422,"Approve with the receipt of the cases you reviewed")
-        await asyncio.to_thread(console.engine.recover,run_id)
-        return console.engine.approve_cases(run_id,receipt,request.state.actor)
+        return await console.engine.begin(console.engine.prepare_approved,run_id,receipt,request.state.actor)
 
     @api.get("/runs/{run_id}/events")
     async def events(run_id:str,request:Request):
-        console.store.get(run_id)
+        # An unknown run is a 404 before the stream starts; the summary is the cheapest read that says so.
+        await asyncio.to_thread(console.store.summary,run_id)
         try:
             cursor=max(0,int(request.headers.get("last-event-id","0")))
         except ValueError:
@@ -363,12 +366,12 @@ def _run_routes(api,console):
 
     @api.get("/runs/{run_id}/evidence/{artifact_id}")
     async def evidence(run_id:str,artifact_id:str):
-        run=console.store.get(run_id)
+        run=await asyncio.to_thread(console.store.get,run_id)
         record=next((a for a in run["artifacts"] if a["id"]==artifact_id),None)
         if not record:
             raise HTTPException(404,"Evidence not found in this run")
         try:
-            return console.store.evidence(record,run_id)
+            return await asyncio.to_thread(console.store.evidence,record,run_id)
         except (ValueError,OSError):
             raise HTTPException(409,"Evidence integrity check failed") from None
 
@@ -377,12 +380,14 @@ def _run_routes(api,console):
         # lang only changes the Markdown report's wording; JSON and SARIF are data for other tools.
         if lang not in REPORT_LANGUAGES:
             raise HTTPException(400,"Choose lang en or zh-Hant")
-        run=console.store.get(run_id)
-        for artifact in run["artifacts"]:
-            try:
+        run=await asyncio.to_thread(console.store.get,run_id)
+        def verify():
+            for artifact in run["artifacts"]:
                 console.store.evidence(artifact,run_id)
-            except (ValueError,OSError):
-                raise HTTPException(409,"Report blocked: evidence integrity failure") from None
+        try:
+            await asyncio.to_thread(verify)
+        except (ValueError,OSError):
+            raise HTTPException(409,"Report blocked: evidence integrity failure") from None
         if format=="markdown":
             return PlainTextResponse(report_markdown(run,lang),media_type="text/markdown")
         if format=="sarif":
@@ -441,9 +446,14 @@ def create_app(data_dir=None, database_url=None, testing=False, session_token=No
     @asynccontextmanager
     async def lifespan(app):
         yield
-        for run_id,task in console.engine.tasks.items():
+        for run_id,task in list(console.engine.tasks.items()):
             if not task.done():
-                console.engine.cancel(run_id)
+                # On the loop, as any change to a live attempt's copy; one that fails does not keep the rest from
+                # stopping, or the unsaved final states below from being saved.
+                try:
+                    await console.engine.cancel_attempt(run_id)
+                except Exception as exc:
+                    note_failure(f"run {run_id} cancel at shutdown",exc)
         pending=[task for task in console.engine.tasks.values() if not task.done()]
         if pending:
             await asyncio.gather(*pending,return_exceptions=True)

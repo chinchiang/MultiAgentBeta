@@ -64,12 +64,14 @@ def reservations_at_stage_ends(store):
 
     No answer is in flight between stages, so every reservation recorded here is one the model seam left unsettled."""
     ended = []
-    save = store.save
+    write = store.write
 
-    def watched(run):
+    # Every save, from a thread or the event loop, writes a snapshot of the run through write().
+    def watched(copy, text):
+        run = json.loads(text)
         done = run.get("completed_stages", [])
         seen = sum(1 for run_id, _stage, _held in ended if run_id == run["id"])
         ended.extend((run["id"], stage, run.get("reserved_tokens", 0)) for stage in done[seen:])
-        save(run)
-    store.save = watched
+        return write(copy, text)
+    store.write = watched
     return ended

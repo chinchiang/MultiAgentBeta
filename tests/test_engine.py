@@ -836,15 +836,17 @@ def store_outage(engine,monkeypatch,run_id,failures):
     event and the attempt's last save both meet the outage."""
     from vibe_audit import service
     monkeypatch.setattr(service,"FINAL_SAVE_RETRY_SECONDS",(0,0))
-    save=engine.store.save
+    # Every save, from a thread or the event loop, writes a snapshot of the run through write().
+    write=engine.store.write
     outage={"left":failures,"tries":0}
-    def flaky(record):
+    def flaky(copy,text):
+        record=json.loads(text)
         if record["id"]==run_id and record["stage"]=="complete" and outage["left"]:
             outage["left"]-=1
             outage["tries"]+=1
             raise OSError("synthetic database outage")
-        return save(record)
-    monkeypatch.setattr(engine.store,"save",flaky)
+        return write(copy,text)
+    monkeypatch.setattr(engine.store,"write",flaky)
     return outage
 
 
@@ -946,20 +948,21 @@ async def test_the_last_save_runs_off_the_event_loop(engine,monkeypatch):
     import threading
     loop_thread=threading.current_thread()
     run=engine.create(RunInput(name="Off the loop"))
-    save=engine.store.save
+    write=engine.store.write
     settle=engine.settle_sent_jobs
     threads=[]
     settled_in=[]
-    def recording(record):
+    def recording(copy,text):
         # Once the workflow is complete only the closing is left: its event, its settle and the last save.
+        record=json.loads(text)
         if record["id"]==run["id"] and record["stage"]=="complete":
             threads.append(threading.current_thread())
-        return save(record)
+        return write(copy,text)
     def recording_settle(record,reason):
         if record["stage"]=="complete":
             settled_in.append(threading.current_thread())
         return settle(record,reason)
-    monkeypatch.setattr(engine.store,"save",recording)
+    monkeypatch.setattr(engine.store,"write",recording)
     monkeypatch.setattr(engine,"settle_sent_jobs",recording_settle)
     engine.start(run["id"])
     await engine.tasks[run["id"]]
@@ -967,6 +970,56 @@ async def test_the_last_save_runs_off_the_event_loop(engine,monkeypatch):
     assert threads and loop_thread not in threads
     assert settled_in and loop_thread not in settled_in
     assert engine.store.get(run["id"])["events"][-1]["message"]=="Workflow finished. Completion is not a guarantee of security."
+
+
+async def test_an_attempt_writes_to_the_database_only_off_the_event_loop(engine,monkeypatch):
+    import threading
+    loop_thread=threading.current_thread()
+    run=engine.create(RunInput(name="Every save off the loop"))
+    prepared=await asyncio.to_thread(engine.prepare_start,run["id"])
+    write=engine.store.write
+    threads=[]
+    def recording(copy,text):
+        threads.append(threading.current_thread())
+        return write(copy,text)
+    monkeypatch.setattr(engine.store,"write",recording)
+    engine.launch(prepared)
+    await engine.tasks[run["id"]]
+    # Each stage's events, reservations, journal entries and its last save: all written by threads, none by the loop.
+    assert len(threads)>20 and loop_thread not in threads
+    assert engine.store.get(run["id"])["stage"]=="complete"
+    # The attempt is over: what the store kept in memory for its saves is gone with it.
+    assert run["id"] not in engine.store.stored and not any(run["id"] in locks for locks in engine.store.persisting.values())
+
+
+def test_the_api_does_the_database_work_of_an_action_in_a_thread(tmp_path,monkeypatch):
+    import threading
+    with TestClient(create_app(tmp_path,testing=True)) as client:
+        authorize(client)
+        engine=client.app.state.engine
+        seen=[]
+        def watch(name,function):
+            def recorded(*args,**kwargs):
+                seen.append((name,threading.current_thread()))
+                return function(*args,**kwargs)
+            monkeypatch.setattr(engine,name,recorded)
+        for name in ("prepare_start","prepare_approved","cancel_stored","launch","create"):
+            watch(name,getattr(engine,name))
+        run=client.post("/api/runs",json={"name":"threads","mode":"demo"}).json()
+        assert client.post(f"/api/runs/{run['id']}/cancel").status_code==200
+        assert client.post(f"/api/runs/{run['id']}/start").status_code==200
+        loop=next(thread for name,thread in seen if name=="launch")
+        # Creating, checking and saving ran in threads; registering the attempt ran on the loop.
+        assert {name for name,_ in seen}=={"create","cancel_stored","prepare_start","launch"}
+        assert all(thread is not loop for name,thread in seen if name!="launch")
+
+
+async def test_a_cancel_that_finds_the_attempt_already_gone_returns_the_stored_run(engine,monkeypatch):
+    run=engine.create(RunInput(name="Gone"))
+    # The thread saw an attempt that had finished again by the time the loop looked.
+    monkeypatch.setattr(engine,"cancel_stored",lambda run_id:None)
+    stopped=await engine.stop(run["id"])
+    assert stopped["id"]==run["id"] and stopped["status"]=="created"
 
 
 def test_recoveries_of_one_run_take_turns(engine,monkeypatch):
@@ -1103,13 +1156,13 @@ def test_actions_settle_a_lost_attempt_off_the_event_loop(tmp_path,route,body):
         engine.store.save(run)
         where=[]
         recover=engine.recover
-        def recording(run_id):
+        def recording(run_id,*args,**kwargs):
             try:
                 asyncio.get_running_loop()
                 where.append("loop")
             except RuntimeError:
                 where.append("thread")
-            return recover(run_id)
+            return recover(run_id,*args,**kwargs)
         engine.recover=recording
         client.post(f"/api/runs/{run['id']}/{route}",json=body)
     assert where and where[0]=="thread"
@@ -1325,7 +1378,7 @@ def test_finish_job_rolls_back_both_journal_and_run_on_failure(engine,monkeypatc
     run["executions"].append(execution)
     execute=engine.store._execute
     def fault(sql,args=()):
-        if ((fail_at=="run_write" and sql.startswith("INSERT INTO runs"))
+        if ((fail_at=="run_write" and sql.startswith(("INSERT INTO runs","UPDATE runs")))
                 or (fail_at=="commit" and sql=="COMMIT")):
             raise RuntimeError("Synthetic transaction interruption")
         return execute(sql,args)
@@ -1906,7 +1959,9 @@ async def test_paused_run_records_approval_and_resumes(engine,monkeypatch):
     assert stored["status"]=="awaiting_approval" and stored["executions"]==[]
     assert "wait for operator approval" in stored["events"][-1]["message"]
     resumed=[]
-    monkeypatch.setattr(engine,"start",lambda run_id,resume=False:resumed.append((run_id,resume)) or {})
+    # The approval resumes the run: its start is prepared, then launched.
+    monkeypatch.setattr(engine,"prepare_start",lambda run_id,resume=False:resumed.append((run_id,resume)) or {"id":run_id})
+    monkeypatch.setattr(engine,"launch",lambda run:run)
     with pytest.raises(PolicyError,match="does not match the sealed cases"):
         engine.approve_cases(run["id"],"stale-receipt","local_operator:abc")
     receipt=stored["gate_receipts"]["cases"]
@@ -2275,7 +2330,9 @@ def test_operator_decisions_name_the_session_that_acted(tmp_path,monkeypatch):
         run.update(status="awaiting_approval",gate_receipts={"cases":"r1"})
         engine.store.save(run)
         calls=[]
-        monkeypatch.setattr(engine,"start",lambda run_id,resume=False:calls.append((run_id,resume)) or {"id":run_id})
+        # The approval resumes the run: its start is prepared in a thread, then launched on the event loop.
+        monkeypatch.setattr(engine,"prepare_start",lambda run_id,resume=False:calls.append((run_id,resume)) or {"id":run_id})
+        monkeypatch.setattr(engine,"launch",lambda run:run)
         assert client.post(f"/api/runs/{run['id']}/approve-cases",json={}).status_code==422
         assert client.post(f"/api/runs/{run['id']}/approve-cases",json={"receipt":"r0"}).status_code==409
         assert client.post(f"/api/runs/{run['id']}/approve-cases",json={"receipt":"r1"}).status_code==200
