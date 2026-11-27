@@ -188,6 +188,7 @@ ZH.update({
     "Unreadable file omitted": "省略無法讀取的檔案",
     "No eligible source files were included.": "沒有納入任何符合條件的原始碼檔案。",
     "Additional omitted-file gaps suppressed at bounded gap limit.": "已達缺口數上限，其餘省略檔案的缺口不再列出。",
+    "Additional exclusions suppressed at bounded limit.": "已達上限，其餘依設計排除的項目不再列出。",
     # sandbox.py and worker_runtime.py: scanner gaps and reasons
     "Semgrep reported analysis errors; affected coverage is incomplete.": "Semgrep 回報分析錯誤；受影響的涵蓋範圍不完整。",
     "Semgrep did not provide a non-empty scanned path list.": "Semgrep 沒有提供非空的已掃描路徑清單。",

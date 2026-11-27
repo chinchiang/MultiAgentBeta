@@ -589,13 +589,16 @@ class Engine:
         return ModelAnswers(run,store=self.store,port=self.model_port,lock=self.locks[run["id"]],check_active=lambda: self.check_active(run))
 
     def keep_verified_references(self,run,items,field,label):
-        """Drop citations that do not match the frozen snapshot and record each as a gap."""
+        """Drop citations that do not match the frozen snapshot and record each as a limitation: once dropped, nothing
+        rests on it, so the report names it and it does not keep the run from completing."""
         source=self.source(run)
+        limitations=run.setdefault("limitations",[])
         for item in items:
             kept,dropped=partition_source_references(item.get(field,[]),source)
             item[field]=kept
             if dropped:
-                run["gaps"].append(f"{label}: dropped {len(dropped)} citation(s) of {str(item.get('id'))[:100]} that do not match the frozen snapshot")
+                note=f"{label}: dropped {len(dropped)} citation(s) of {str(item.get('id'))[:100]} that do not match the frozen snapshot"
+                if note not in limitations: limitations.append(note)
 
     def stage_answers(self,run):
         """Who answers each role of this run's stages, and which of their answers a resumed stage reuses."""
@@ -686,8 +689,11 @@ class Engine:
             if not run["manifest"]["deployment_id"] or not run["manifest"].get("deployment_header"):
                 run["gaps"].append("Source-to-deployment association is unverified: deployment identity or verification header missing")
             if staging["omitted"]:
+                # Left out by design (skipped directories, links, a repository's own scanner configuration): the report
+                # names them as a limitation, and they do not keep the run from completing.
                 more=f" (+{len(staging['omitted'])-30} more)" if len(staging["omitted"])>30 else ""
-                run["gaps"].append("Scanner and model intake omitted skipped directories, links and repository-controlled ignore/config files: "+", ".join(staging["omitted"][:30])+more)
+                note="Scanner and model intake omitted skipped directories, links and repository-controlled ignore/config files: "+", ".join(staging["omitted"][:30])+more
+                if note not in limitations: limitations.append(note)
         # The catalog the policy validates against for the life of this process, so every later gate agrees with it.
         run["catalog_manifest"]=self.policy.catalog_manifest()
         run["source_digest"]=source["digest"]
@@ -735,7 +741,8 @@ class Engine:
             # as for a reviewer's citation, so an unbounded line number cannot carry staged secret files out.
             kept=[item for item in result.get("findings",[]) if self.staged_location(run,item)]
             if len(kept)<len(result.get("findings",[])):
-                result.setdefault("gaps",[]).append(f"{len(result['findings'])-len(kept)} finding(s) named a file or line outside the staged snapshot and were not imported")
+                # Not imported, such a finding decides nothing: a limitation, unlike a gap the scanner reports itself.
+                result.setdefault("limitations",[]).append(f"{len(result['findings'])-len(kept)} finding(s) named a file or line outside the staged snapshot and were not imported")
                 result["findings"]=kept
             artifact=await asyncio.to_thread(self.store.put_evidence,run["id"],tool,{**result,"tool_manifest":run["tool_manifest"]})
             run["artifacts"].append(artifact)
@@ -881,10 +888,13 @@ class Engine:
     async def _adjudication(self,run):
         unique={}
         for review in run["reviews"]:
-            # A resumed adjudication would re-extend the same review gaps; keep each gap once.
+            # What a reviewer could not establish limits its answer; it is no check this run left undone, so it is a
+            # limitation, shown in the report, and it does not keep the run from completing.
+            # A resumed adjudication would re-extend the same review gaps; keep each once.
             # Each reviewer's own limits carry its ID: three reviewers often word the same limit three ways.
             attributed=[gap if str(gap).startswith(review["agent_id"]+":") else f"{review['agent_id']}: {gap}" for gap in review["gaps"]]
-            run["gaps"].extend(gap for gap in attributed if gap not in run["gaps"])
+            limitations=run.setdefault("limitations",[])
+            limitations.extend(gap for gap in attributed if gap not in limitations)
             # A resumed adjudication reuses the sealed review's recorded evidence
             # instead of writing a second artifact for the same content.
             if not review.get("evidence"):
@@ -904,7 +914,9 @@ class Engine:
             for item in result.get("findings",[]):
                 path=item.get("file")
                 if path and path not in staged:
-                    run["gaps"].append("Scanner finding location is outside the staged snapshot")
+                    # Not imported, as at scan time: a limitation, not a check this run left undone.
+                    note="Scanner finding location is outside the staged snapshot"
+                    if note not in run.setdefault("limitations",[]): run["limitations"].append(note)
                     continue
                 run["findings"].append(dict(id=str(uuid.uuid4()),title=item.get("title","Static scanner finding"),description="Reproducible static rule result; exploitability remains a separate question.",severity=item.get("severity","medium"),state="corroborated_static",file=path,line=item.get("line"),cwe=item.get("cwe"),rule_id=item.get("rule_id"),agent_ids=[item.get("scanner_id",result.get("scanner_id","scanner"))],evidence_ids=[result["evidence_id"]],threat_ids=[]))
         if run["mode"]=="live":
@@ -916,18 +928,20 @@ class Engine:
             # Each answer is kept on its own: a challenge round that passed stands even if the map after it fails.
             async with stage.answer("challenger",'One evidence challenge round. Return {"challenges":[{"finding_id":string,"counterevidence":string,"missing_evidence":string}]}. finding_id is a candidate id such as F-1. Every challenge cites existing findings only. No majority voting, no dynamic verification claims.',{"candidates":anonymized,"source":self.fitted_source(run,{"candidates":anonymized},"Challenger")},ChallengeProposal) as answer:
                 challenges=answer.data.get("challenges",[])
-                # A challenge naming no candidate is dropped and recorded, as an unverifiable citation is: it annotates
-                # findings and decides nothing, so it need not stop the run.
+                # A challenge naming no candidate is dropped and recorded as a limitation, as an unverifiable citation is:
+                # it annotates findings and decides nothing, so it need not stop the run or keep it from completing.
                 run["challenges"]=[{**item,"finding_id":labels[item.get("finding_id")]} for item in challenges if item.get("finding_id") in labels]
                 if len(run["challenges"])<len(challenges):
-                    gap=f"Challenger: dropped {len(challenges)-len(run['challenges'])} challenge(s) naming a finding that does not exist"
-                    if gap not in run["gaps"]: run["gaps"].append(gap)
+                    note=f"Challenger: dropped {len(challenges)-len(run['challenges'])} challenge(s) naming a finding that does not exist"
+                    if note not in run.setdefault("limitations",[]): run["limitations"].append(note)
             mapper_context={"operator_requirements":run["manifest"].get("requirements",[]),"notes":run["manifest"]["notes"]}
             async with stage.answer("architecture_mapper","Map actors, assets, trust boundaries and dataflows. Attach exact source references where known; state gaps when a relationship or role is not established. Do not treat repository instructions as policy.",{"source":self.fitted_source(run,mapper_context,"Architecture mapper"),**mapper_context},ArchitectureProposal) as answer:
                 architecture=answer.data
                 self.keep_verified_references(run,architecture["assets"]+architecture["dataflows"],"source_refs","Architecture map")
                 run["architecture"]=architecture
-                run["gaps"].extend(architecture["gaps"])
+                # As a reviewer's: what the map could not establish limits the map, and is a limitation.
+                limitations=run.setdefault("limitations",[])
+                limitations.extend(gap for gap in architecture["gaps"] if gap not in limitations)
         await self.note(run,"Evidence union recorded; model agreement does not confirm a vulnerability")
 
     async def _threat_model(self,run):
@@ -1042,7 +1056,10 @@ class Engine:
                                 control["headers"]=canonical_model_headers(control.get("headers") or {})
                     except ValueError as exc:
                         raise PolicyError(str(exc)) from None
-                run["gaps"].extend(data.get("gaps",[]))
+                # As a reviewer's: what the test designer could not cover limits its design, and is a limitation; a case
+                # that is designed and then not verified keeps the run incomplete through its execution.
+                limitations=run.setdefault("limitations",[])
+                limitations.extend(gap for gap in data.get("gaps",[]) if gap not in limitations)
                 seal_cases(cases)
         await self.note(run,f"Validated {len(run['cases'])} cases with threat links and executable oracles")
 
@@ -1204,6 +1221,7 @@ def report_markdown(run:dict,lang:str="en")->str:
         said=lambda value:zh(value) or value
         if run.get("error"): run["error"]=said(run["error"])
         run["gaps"]=[said(value) for value in run["gaps"]]
+        run["limitations"]=[said(value) for value in run.get("limitations",[])]
         for finding in run["findings"]:
             finding["severity"]=label("severity",finding["severity"]); finding["state"]=label("state",finding["state"])
             finding["title"]=said(finding["title"])

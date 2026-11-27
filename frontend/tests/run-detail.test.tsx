@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import sample from '../../docs/sample-report.json';
 import { api } from '../src/api';
 import { setLang } from '../src/i18n';
+import { loadMessages } from '../src/messages';
 import { RunDetail } from '../src/run-detail';
 import type { Run } from '../src/types';
 
@@ -74,6 +75,25 @@ describe('RunDetail', () => {
     expect(setTab).toHaveBeenCalledWith('evidence');
     fireEvent.change(screen.getByLabelText('篩選證據狀態'), { target: { value: 'refuted' } });
     expect(screen.getByText('沒有符合篩選的發現')).toBeTruthy();
+  });
+
+  it('lists each capability limit, the engine wording in the interface language and model text as written', async () => {
+    const messages = { exact: { 'Binary content omitted': '省略二進位內容' }, status: {}, patterns: [] };
+    serve.mockImplementation(async path => { if (path === '/messages') return messages; if (path.endsWith('/traceability')) return { entities: [], links: [] }; throw new Error(`unexpected ${path}`); });
+    await loadMessages();
+    const limited = { ...run, limitations: ['Binary content omitted: blob.bin', 'reviewer-a: Deployment configuration was not supplied'] };
+    const limits = () => [...screen.getByRole('heading', { name: label }).closest('section')!.querySelectorAll('pre')].map(item => item.textContent);
+    let label = '能力限制';
+    const { unmount } = detail({ run: limited });
+    expect(limits()).toEqual(['省略二進位內容：blob.bin', 'reviewer-a: Deployment configuration was not supplied']);
+    unmount();
+    setLang('en');
+    label = 'Capability limits';
+    detail({ run: limited });
+    expect(limits()).toEqual(['Binary content omitted: blob.bin', 'reviewer-a: Deployment configuration was not supplied']);
+    // Later tests read the service's wording: the table goes as it came.
+    serve.mockResolvedValueOnce({ exact: {}, status: {}, patterns: [] });
+    await loadMessages();
   });
 });
 

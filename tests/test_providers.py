@@ -305,8 +305,8 @@ def test_snapshot_redacts_excludes_secret_files_and_hashes(tmp_path):
     assert result["routes"][0]["path"] == "/health"
     assert result["routes"][0]["confidence"] == "heuristic"
     assert snapshot_source(str(tmp_path))["digest"] == result["digest"]
-    assert any("excluded without reading" in gap for gap in result["gaps"])
-    assert all(zh(gap) is not None for gap in result["gaps"]), result["gaps"]
+    assert any("excluded without reading" in item for item in result["limitations"])
+    assert all(zh(item) is not None for item in result["gaps"] + result["limitations"][1:]), (result["gaps"], result["limitations"])
 
 
 def test_snapshot_symlink_is_not_read(tmp_path):
@@ -317,8 +317,8 @@ def test_snapshot_symlink_is_not_read(tmp_path):
         pytest.skip("OS does not permit creating symlinks for this account")
     result = snapshot_source(str(tmp_path))
     assert [f["path"] for f in result["files"]] == ["real.py"]
-    assert any("symlink" in gap for gap in result["gaps"])
-    assert all(zh(gap) is not None for gap in result["gaps"]), result["gaps"]
+    assert any("symlink" in item for item in result["limitations"])
+    assert all(zh(item) is not None for item in result["gaps"] + result["limitations"][1:]), (result["gaps"], result["limitations"])
 
 
 def test_snapshot_limits_and_typescript_routes(tmp_path, monkeypatch):
@@ -531,8 +531,8 @@ def test_snapshot_skips_container_and_cluster_credential_dirs(tmp_path):
     (tmp_path / "app.py").write_text("print('ok')", encoding="utf-8")
     result = snapshot_source(str(tmp_path))
     assert [f["path"] for f in result["files"]] == ["app.py"]
-    assert {"Excluded directory: .docker", "Excluded directory: .kube"} <= set(result["gaps"])
-    assert all(zh(gap) is not None for gap in result["gaps"]), result["gaps"]
+    assert {"Excluded directory: .docker", "Excluded directory: .kube"} <= set(result["limitations"])
+    assert all(zh(item) is not None for item in result["gaps"] + result["limitations"][1:]), (result["gaps"], result["limitations"])
 
 
 def test_next_root_route_is_slash():
@@ -614,7 +614,7 @@ def test_snapshot_refuses_symlinked_ancestors_and_skips_linked_directories(tmp_p
         snapshot_source(str(tmp_path / "link" / "nested"))
     result = snapshot_source(str(real))
     assert [f["path"] for f in result["files"]] == ["app.py"]
-    assert result["gaps"] == ["Skipped symlink/reparse path: linked"]
+    assert result["gaps"] == [] and "Skipped symlink/reparse path: linked" in result["limitations"]
     assert result["files"][0]["redacted"] is False and result["bytes_read"] == len("print('ok')")
     with pytest.raises(ValueError, match="existing source directory"):
         snapshot_source("")

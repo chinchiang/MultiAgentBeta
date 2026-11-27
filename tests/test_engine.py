@@ -226,6 +226,32 @@ async def test_whitebox_resume_keeps_paid_reviews_and_sealed_scans(engine,monkey
     assert run["commander_plan"]["focus"]==focus
 
 
+async def test_scanner_findings_outside_the_snapshot_are_left_out_and_the_run_completes(engine,monkeypatch,tmp_path):
+    from vibe_audit.staging import stage_source, staged_line_count
+    source=tmp_path/"repo"
+    source.mkdir()
+    (source/"app.py").write_text("a = 1\n")
+    run=only_left(await live_whitebox(engine,monkeypatch,static_tools=["gitleaks"]),"whitebox")
+    # A real staged copy, so only its own files count as inside it.
+    run["staging"]=stage_source(str(source),engine.store.root/"scanner-inputs")
+    monkeypatch.setattr("vibe_audit.staging.staged_line_count",staged_line_count)
+    class Runtime:
+        async def run_scanner(self,tool,path,**kwargs):
+            return {"status":"completed","findings":[{"file":"missing.py","line":1,"rule_id":"generic-api-key","title":"t"}],"gaps":[],"limitations":[]}
+    monkeypatch.setattr(engine,"runtime",lambda run:Runtime())
+    reviewers=[p["id"] for p in run["manifest"]["models"] if p["role"]=="reviewer"]
+    def answer(profile,messages,schema):
+        if profile["role"]=="commander":
+            return answer_with({"reviewer_order":reviewers,"focus":["Billing export"],"rationale":"r"})
+        return answer_with({"findings":[],"gaps":[]})
+    engine.model_port=FakePort(answer=answer)
+    await engine._run(run)
+    stored=engine.store.get(run["id"])
+    # Not imported, the finding decides nothing: the report says it was left out, and the scan still covered the source.
+    assert (stored["status"],stored["gaps"])==("completed",[]),(stored["error"],stored["gaps"])
+    assert "gitleaks: 1 finding(s) named a file or line outside the staged snapshot and were not imported" in stored["limitations"]
+
+
 async def test_scanner_locations_must_exist_in_the_staged_copy(engine,monkeypatch,tmp_path):
     from vibe_audit.staging import stage_source
     source=tmp_path/"repo"
@@ -249,7 +275,7 @@ async def test_scanner_locations_must_exist_in_the_staged_copy(engine,monkeypatc
     await engine._scan_source(run)
     result=run["tool_results"][0]
     assert [(f["file"],f["line"]) for f in result["findings"]]==[("app.py",3),(".env",1),("app.py",None)]
-    assert "gitleaks: 3 finding(s) named a file or line outside the staged snapshot and were not imported" in run["gaps"]
+    assert "gitleaks: 3 finding(s) named a file or line outside the staged snapshot and were not imported" in run["limitations"]
     # The sealed evidence holds the bounded result, not the container's claim.
     evidence=engine.store.evidence(next(a for a in run["artifacts"] if a["id"]==result["evidence_id"]),run["id"])["content"]
     assert len(evidence["findings"])==3 and "9"*50 not in json.dumps(evidence)
@@ -1364,6 +1390,97 @@ async def test_live_preflight_refuses_control_plane_targets_and_shared_keys(engi
     assert "db-password" not in str(err.value)
 
 
+@pytest.fixture
+def postgres_engine(tmp_path):
+    """An engine on the PostgreSQL integration database, which a live run requires."""
+    import os
+    url=os.getenv("VIBEAUDIT_TEST_DATABASE_URL")
+    if not url:
+        pytest.skip("Provide dedicated PostgreSQL integration database")
+    store=Store(tmp_path,url)
+    value=Engine(store)
+    yield value
+    store.close()
+
+
+async def live_preflight(engine,monkeypatch,source):
+    """A finished demo turned into a live run with only the preflight and the report left, reading source from disk:
+    its runtime stands in for Docker, its model answers the capability probe, and its deployment is declared."""
+    run=only_left(await finished_demo(engine),"preflight")
+    run.update(mode="live",status="running",model_probes=[],runtime_config_hash="h")
+    manifest=run["manifest"]
+    manifest.update(mode="live",source_path=str(source),static_tools=[],deployment_id="release-1",deployment_header="X-Deployment-Id",
+                    target_url="http://127.0.0.1:11435",allowed_target_ips=["127.0.0.1"])
+    for profile in manifest["models"]:
+        profile.update(provider="openai_compatible",endpoint="http://127.0.0.1:11434/v1")
+    run["manifest_hash"]=digest(manifest)
+    engine.runtime_configs["h"]={}
+    class Runtime:
+        async def capabilities(self): return {"available":True,"production_ready":True}
+    monkeypatch.setattr(engine,"runtime",lambda run:Runtime())
+    monkeypatch.setattr("vibe_audit.resource_manifest.resource_manifest",lambda config,tools:{"tools":0})
+    engine.model_port=FakePort(answer=lambda profile,messages,schema:answer_with({"probe":"vibeaudit","ok":True}))
+    arm_attempt(engine,run)
+    return run
+
+
+async def test_what_staging_leaves_out_by_design_is_a_limitation_and_the_run_completes(postgres_engine,monkeypatch,tmp_path):
+    source=tmp_path/"repository"
+    source.mkdir()
+    (source/"app.py").write_text("print('orders')\n")
+    # A scanner's ignore file in the repository could hide findings, so neither scanners nor models see it.
+    (source/".semgrepignore").write_text("app.py\n")
+    run=await live_preflight(postgres_engine,monkeypatch,source)
+    await postgres_engine._run(run)
+    stored=postgres_engine.store.get(run["id"])
+    assert (stored["status"],stored["gaps"])==("completed",[]),(stored["error"],stored["gaps"])
+    assert any(".semgrepignore" in item for item in stored["limitations"]),stored["limitations"]
+
+
+async def test_test_literals_the_operator_leaves_unredacted_are_named_first_and_the_run_completes(postgres_engine,monkeypatch,tmp_path):
+    source=tmp_path/"repository"
+    source.mkdir()
+    (source/"app.py").write_text("token = 'fixture-web-a'\n")
+    run=await live_preflight(postgres_engine,monkeypatch,source)
+    run["manifest"]["unredacted_literals"]=["fixture-web-a"]
+    run["manifest_hash"]=digest(run["manifest"])
+    await postgres_engine._run(run)
+    stored=postgres_engine.store.get(run["id"])
+    # The operator chose to relax redaction: no check is left undone, but the report says so before anything else.
+    assert (stored["status"],stored["gaps"])==("completed",[]),(stored["error"],stored["gaps"])
+    assert stored["limitations"][0]=="Operator-declared test literals left unredacted: 1 of 1 appear in the snapshot"
+
+
+async def test_source_not_tied_to_the_deployment_still_keeps_the_run_incomplete(postgres_engine,monkeypatch,tmp_path):
+    source=tmp_path/"repository"
+    source.mkdir()
+    (source/"app.py").write_text("print('orders')\n")
+    run=await live_preflight(postgres_engine,monkeypatch,source)
+    run["manifest"]["deployment_header"]=None
+    run["manifest_hash"]=digest(run["manifest"])
+    await postgres_engine._run(run)
+    stored=postgres_engine.store.get(run["id"])
+    # The whitebox findings may describe other code than the target runs: that is a check left undone.
+    assert (stored["status"],stored["gaps"])==("incomplete",["Source-to-deployment association is unverified: deployment identity or verification header missing"]),stored["error"]
+
+
+@pytest.mark.parametrize("name,content,status,note",[
+    # Binary content is never source to read: leaving it out is by design, a limitation.
+    ("fixture.json",b'{"blob": "\x00"}',"completed","Binary content omitted: fixture.json"),
+    # A source file past the size limit is source nobody read: the review did not cover it, a gap.
+    ("large.py",b"#"*(64*1024+1),"incomplete","File/byte limit omitted: large.py")],ids=["by-design","not-covered"])
+async def test_only_source_the_snapshot_could_not_read_keeps_the_run_incomplete(postgres_engine,monkeypatch,tmp_path,name,content,status,note):
+    source=tmp_path/"repository"
+    source.mkdir()
+    (source/"app.py").write_text("print('orders')\n")
+    (source/name).write_bytes(content)
+    run=await live_preflight(postgres_engine,monkeypatch,source)
+    await postgres_engine._run(run)
+    stored=postgres_engine.store.get(run["id"])
+    assert stored["status"]==status,(stored["error"],stored["gaps"])
+    assert note in (stored["limitations"] if status=="completed" else stored["gaps"])
+
+
 def test_artifact_cannot_be_reassigned_to_other_run(tmp_path):
     store=Store(tmp_path)
     artifact=store.put_evidence("run-a","worker",{"result":"fail"})
@@ -2054,6 +2171,16 @@ async def model_designed_case_stage(engine,*answers):
     return run
 
 
+async def test_limits_the_test_designer_names_leave_the_run_completed(engine):
+    demo=await finished_demo(engine)
+    run=only_left(await model_designed_case_stage(engine),"case_design")
+    engine.model_port=FakePort([answer_with({"cases":[model_proposal(demo)],"gaps":["No case covers the bulk export"]})])
+    await engine._run(run)
+    stored=engine.store.get(run["id"])
+    assert (stored["status"],stored["gaps"])==("completed",[]),stored["gaps"]
+    assert "No case covers the bulk export" in stored["limitations"]
+
+
 async def test_designed_cases_that_fail_their_checks_are_asked_for_again_when_the_stage_resumes(engine):
     demo=await finished_demo(engine)
     repeated=model_proposal(demo,headers={"Accept":"text/html","ACCEPT":"text/html"})
@@ -2487,6 +2614,24 @@ async def test_a_resumed_stage_reuses_the_model_answer_it_already_paid_for(engin
     assert (await kept_answer(engine,run,profile,{"q":2})).data=={"value":2}
 
 
+def section(report,heading):
+    """The bullet lines under one heading of a Markdown report."""
+    body=report.split(heading+"\n",1)[1].split("\n## ",1)[0]
+    return [line for line in body.splitlines() if line.startswith("- ")]
+
+
+async def test_the_report_names_what_was_left_out_by_design_as_a_capability_limit(engine):
+    run=await finished_demo(engine)
+    run.update(gaps=[],limitations=["Binary content omitted: blob.bin","reviewer-a: Deployment configuration was not supplied"])
+    english=report_markdown(run)
+    assert section(english,"## Coverage gaps")==[]
+    assert section(english,"## Capability limits")==["- Binary content omitted: blob.bin","- reviewer-a: Deployment configuration was not supplied"]
+    # The engine's own wording reads in Chinese; what a model wrote stays as it wrote it.
+    chinese=report_markdown(run,"zh-Hant")
+    assert section(chinese,"## 涵蓋缺口")==[]
+    assert section(chinese,"## 能力限制")==["- 省略二進位內容：blob.bin","- reviewer-a: Deployment configuration was not supplied"]
+
+
 def test_markdown_defangs_bare_urls_and_shows_challenges():
     run={"name":"r","id":"r","mode":"demo","status":"complete","gaps":[],"executions":[],"limitations":[],
          "challenges":[{"finding_id":"f","counterevidence":"guarded upstream","missing_evidence":""}],
@@ -2540,20 +2685,20 @@ async def test_challenger_works_on_short_labels_and_drops_a_challenge_of_no_find
     assert seen["ids"]==[f"F-{n}" for n in range(1,len(run["findings"])+1)]
     first=list(reversed(run["findings"]))[0]
     assert run["challenges"]==[{"finding_id":first["id"],"counterevidence":"guarded upstream","missing_evidence":""}]
-    assert any("dropped 1 challenge" in gap for gap in run["gaps"])
+    assert any("dropped 1 challenge" in item for item in run["limitations"])
 
 
-async def test_each_reviewer_gap_names_the_reviewer_that_reported_it(engine):
+async def test_each_reviewer_limit_names_the_reviewer_that_reported_it(engine):
     run=await finished_demo(engine)
     arm_attempt(engine,run)
-    run["gaps"]=[]
+    run["limitations"]=[]
     for review in run["reviews"]:
         review.pop("evidence",None)
     run["reviews"][0]["gaps"]=["Source was redacted"]
     run["reviews"][1]["gaps"]=[run["reviews"][1]["agent_id"]+": already attributed"]
     await engine._adjudication(run)
-    assert run["reviews"][0]["agent_id"]+": Source was redacted" in run["gaps"]
-    assert run["reviews"][1]["agent_id"]+": already attributed" in run["gaps"]
+    assert run["reviews"][0]["agent_id"]+": Source was redacted" in run["limitations"]
+    assert run["reviews"][1]["agent_id"]+": already attributed" in run["limitations"]
 
 
 def fallback_models(**fallback):
@@ -2733,6 +2878,77 @@ async def live_adjudication(engine,monkeypatch,answer):
     monkeypatch.setattr(engine,"fitted_source",lambda run,payload,label:{"files":[]})
     engine.model_port=FakePort(answer=answer)
     return run
+
+
+def only_left(run,*stages):
+    """The run with only these stages and the report left, and nothing before them short: no case unverified, no gap."""
+    from vibe_audit.service import STAGES
+    run.update(executions=[],gaps=[],limitations=[],completed_stages=[s for s in STAGES if s not in {*stages,"report"}])
+    return run
+
+
+async def test_limits_the_reviewers_and_the_architecture_map_name_leave_the_run_completed(engine,monkeypatch):
+    def answer(profile,messages,schema):
+        system,payload=asked(messages)
+        if "candidates" in payload:
+            return answer_with({"challenges":[]})
+        return answer_with({"assets":[],"dataflows":[],"roles":[],"gaps":["Who may call the export API is not established"]})
+    run=only_left(await live_adjudication(engine,monkeypatch,answer),"adjudication")
+    reviewer=run["reviews"][0]
+    reviewer["gaps"]=["Deployment configuration was not supplied"]
+    await engine._run(run)
+    stored=engine.store.get(run["id"])
+    # What a model could not establish is a limit of its answer, not a check this run left undone.
+    assert (stored["status"],stored["gaps"])==("completed",[]),stored["gaps"]
+    assert {f"{reviewer['agent_id']}: Deployment configuration was not supplied","Who may call the export API is not established"}<=set(stored["limitations"])
+
+
+async def test_a_citation_dropped_for_not_matching_the_snapshot_leaves_the_run_completed(engine,monkeypatch):
+    unmatched={"file":"synthetic/orders.py","line":1,"quote":"Not in the fixture"}
+    def answer(profile,messages,schema):
+        system,payload=asked(messages)
+        if "candidates" in payload:
+            return answer_with({"challenges":[]})
+        return answer_with({"assets":[{"id":"orders","name":"Orders","kind":"data","source_refs":[unmatched]}],"dataflows":[],"roles":[],"gaps":[]})
+    run=only_left(await live_adjudication(engine,monkeypatch,answer),"adjudication")
+    await engine._run(run)
+    stored=engine.store.get(run["id"])
+    # The citation is gone from the map, so nothing rests on it: the report says so, and the run is complete.
+    assert (stored["status"],stored["gaps"])==("completed",[]),stored["gaps"]
+    assert stored["architecture"]["assets"][0]["source_refs"]==[]
+    assert "Architecture map: dropped 1 citation(s) of orders that do not match the frozen snapshot" in stored["limitations"]
+
+
+async def test_a_challenge_naming_no_finding_is_dropped_and_the_run_completes(engine,monkeypatch):
+    def answer(profile,messages,schema):
+        system,payload=asked(messages)
+        if "candidates" in payload:
+            return answer_with({"challenges":[{"finding_id":"F-99","counterevidence":"guarded upstream","missing_evidence":""}]})
+        return answer_with({"assets":[],"dataflows":[],"roles":[],"gaps":[]})
+    run=only_left(await live_adjudication(engine,monkeypatch,answer),"adjudication")
+    await engine._run(run)
+    stored=engine.store.get(run["id"])
+    # Dropped, the challenge annotates nothing and decides nothing: the report names it, and the run is complete.
+    assert (stored["status"],stored["gaps"])==("completed",[]),stored["gaps"]
+    assert stored["challenges"]==[]
+    assert "Challenger: dropped 1 challenge(s) naming a finding that does not exist" in stored["limitations"]
+
+
+async def test_a_scanner_finding_outside_the_staged_files_is_left_out_and_the_run_completes(engine,monkeypatch):
+    def answer(profile,messages,schema):
+        system,payload=asked(messages)
+        if "candidates" in payload:
+            return answer_with({"challenges":[]})
+        return answer_with({"assets":[],"dataflows":[],"roles":[],"gaps":[]})
+    run=only_left(await live_adjudication(engine,monkeypatch,answer),"adjudication")
+    run["staging"]={"path":"unused","files":[{"path":"app.py"}]}
+    evidence=run["artifacts"][0]["id"]
+    run["tool_results"]=[{"scanner_id":"semgrep","evidence_id":evidence,"findings":[{"file":"elsewhere.py","line":1,"title":"Outside"}]}]
+    await engine._run(run)
+    stored=engine.store.get(run["id"])
+    assert (stored["status"],stored["gaps"])==("completed",[]),stored["gaps"]
+    assert "Scanner finding location is outside the staged snapshot" in stored["limitations"]
+    assert not any(f["title"]=="Outside" for f in stored["findings"])
 
 
 async def test_the_commanders_fallback_answers_a_challenge_the_commander_refused_in_the_challengers_place(engine,monkeypatch):
