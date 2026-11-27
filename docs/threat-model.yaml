@@ -159,7 +159,7 @@ trust_boundaries:
 
 agents:
   # 所有模型呼叫都是 ModelAnswers 的模型回答，經 providers.LiteLLMPort.send 送出一次：不傳 tools，回覆含 tool_calls 即拒絕
-  # （providers.py:391-414、606），輸出須過 JSON schema 與 Pydantic（extra=forbid）（answers.py:157-241）。所以除了 test_designer，模型的輸出不觸發動作；但會成為下一個模型的輸入
+  # （providers.py:391-414、606），輸出須過 JSON schema 與 Pydantic（extra=forbid）（answers.py:173-261）。所以除了 test_designer，模型的輸出不觸發動作；但會成為下一個模型的輸入
   # （commander → reviewers、reviewers → challenger／threat_modeler／reporter、architecture_mapper → threat_modeler；retest 時上一個 run 的
   # test_designer 案例 → 新 run 的 threat_modeler；test_designer 寫的案例標題成為黑箱發現的標題 → reporter），見 t-agent-trust-propagation。
   # 目標回應從不送回任何模型（service.py:1083；observation 不進模型輸入）。
@@ -459,7 +459,7 @@ threats:
     mitigation: >-
       核心審查問題由 harness 持有，commander 不能刪減；commander 的 focus 每項最多 300 字，放在獨立欄位並標為不受信任的模型衍生
       資料交給 reviewer（contracts.py:262-265、service.py:779-781、820）。所有模型的系統提示都把受測 repo、工具內容與其他 agent 的
-      輸出標為資料、不是指示（service.py:27、answers.py:164）。三位 reviewer 須屬不同 family（policy.py:67-79）；這些 agent 沒有
+      輸出標為資料、不是指示（service.py:27、answers.py:180）。三位 reviewer 須屬不同 family（policy.py:67-79）；這些 agent 沒有
       工具，輸出不觸發動作，所以影響限於審查完整性，不開啟對外通訊（見 t-indirect-injection）。retest 複製的模型案例保留 designed_by，
       照樣受 case_gate 的詞彙與身分限制，也要操作者重新核准才送出。threat_modeler 的 provided_cases 只帶追溯所需的欄位
       （id、標題、威脅與需求 ID、adapter、method、path、身分），不帶 header 值與本文，操作者寫進案例的測試帳密不會送到模型
