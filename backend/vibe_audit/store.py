@@ -76,6 +76,8 @@ SQL = {
     "insert_entity": "INSERT INTO entity_versions VALUES (?,?,?,?,?) ON CONFLICT DO NOTHING",
     "insert_relation": "INSERT INTO relations VALUES (?,?,?) ON CONFLICT DO NOTHING",
     "entities": "SELECT kind,entity_id,version,payload FROM entity_versions WHERE run_id=? ORDER BY kind,entity_id",
+    "entity_keys": "SELECT kind,entity_id,version FROM entity_versions WHERE run_id=?",
+    "relation_keys": "SELECT version FROM relations WHERE run_id=?",
     "relations": "SELECT payload FROM relations WHERE run_id=?",
     "upsert_setting": "INSERT INTO settings VALUES (?,?,?) ON CONFLICT(kind,id) DO UPDATE SET payload=excluded.payload",
     "settings": "SELECT payload FROM settings WHERE kind=? ORDER BY id",
@@ -233,6 +235,9 @@ class Store:
         # kept: a copy made after the one named here died was read after that copy's last save, so even one that
         # reuses its id() holds that save.
         self.writers: dict[str, tuple[int, str]] = {}
+        # run id -> the (kind, id, version) entity keys and relation digests already stored for it, read from the
+        # database on the run's first save here. Rows are never deleted, and only this controller writes them.
+        self.stored: dict[str, tuple[set, set]] = {}
         self.claims: list[str] = []
         self.postgres = bool(database_url)
         self.database_url = database_url
@@ -355,10 +360,34 @@ class Store:
                 self._execute(self.sql["insert_event"], (run["id"], event["seq"], json.dumps(event, ensure_ascii=False)))
             from .traceability import entities_and_links
             entities, links = entities_and_links(run)
+            # Only versions and links not stored yet are written: a save after one event does not send every case,
+            # threat and execution of the run again.
+            stored_entities, stored_links = self._stored_keys(run["id"])
             for item in entities:
+                key = (item["kind"], item["id"], item["version"])
+                if key in stored_entities:
+                    continue
                 self._execute(self.sql["insert_entity"], (run["id"],item["kind"],item["id"],item["version"],json.dumps(item["value"],ensure_ascii=False)))
+                self._remember(stored_entities, key)
             for item in links:
-                self._execute(self.sql["insert_relation"], (run["id"],digest(item),json.dumps(item,ensure_ascii=False)))
+                key = digest(item)
+                if key in stored_links:
+                    continue
+                self._execute(self.sql["insert_relation"], (run["id"],key,json.dumps(item,ensure_ascii=False)))
+                self._remember(stored_links, key)
+
+    def _stored_keys(self, run_id: str) -> tuple[set, set]:
+        """The entity keys and relation digests stored for the run, read once per store."""
+        if run_id not in self.stored:
+            entities = {tuple(row) for row in self._execute(self.sql["entity_keys"], (run_id,)).fetchall()}
+            links = {row[0] for row in self._execute(self.sql["relation_keys"], (run_id,)).fetchall()}
+            self.stored[run_id] = (entities, links)
+        return self.stored[run_id]
+
+    def _remember(self, keys: set, key):
+        """Count a row as stored; a rollback of the transaction that wrote it takes it back out."""
+        keys.add(key)
+        self.undo.append(lambda: keys.discard(key))
 
     def _write_run(self, run: dict, payload: str):
         """Store the run's row if this copy has seen every save of it, and give the copy the version it now holds.

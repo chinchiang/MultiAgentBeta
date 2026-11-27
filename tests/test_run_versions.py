@@ -114,10 +114,11 @@ def test_a_rolled_back_save_leaves_the_copy_at_the_version_the_row_kept(store, m
     fresh = store.get(run["id"])
     execute = store._execute
     def fail_after_row(sql, args=()):
-        if sql.startswith("INSERT INTO entity_versions"):
+        if sql.startswith("INSERT INTO events"):
             raise RuntimeError("synthetic failure after the run row")
         return execute(sql, args)
     monkeypatch.setattr(store, "_execute", fail_after_row)
+    fresh["events"].append(event(1))
     with pytest.raises(RuntimeError):
         store.save(fresh)
     monkeypatch.setattr(store, "_execute", execute)

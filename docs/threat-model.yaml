@@ -88,7 +88,7 @@ assets:
   - id: a-evidence
     name: 證據、發現、威脅模型與報告匯出（JSON／Markdown／SARIF）
     sensitivity: confidential
-    store: PostgreSQL + data_dir；SHA-256 存於同一資料庫（store.py:488-504），非防竄改
+    store: PostgreSQL + data_dir；SHA-256 存於同一資料庫（store.py:517-533），非防竄改
   - id: a-config
     name: 執行設定（runtime.json、manifest 的 allowed_requests／allowed_target_ips／allowed_model_origins、image ID）
     sensitivity: internal
@@ -497,7 +497,7 @@ threats:
     description: 目標回應的文字偽造受信任來源或 collector 綁定；或有資料庫權限者竄改證據。
     mitigation: >-
       collector 綁定需操作者另外註冊，目標文字無法註冊或偽造來源（docs/ARCHITECTURE.md）；匯出前驗證證據雜湊。
-      殘留：雜湊與證據存在同一資料庫（store.py:488-504），不是防竄改。
+      殘留：雜湊與證據存在同一資料庫（store.py:517-533），不是防竄改。
     status: accepted
     gate: G5
   - id: t-sarif-injection
@@ -538,7 +538,7 @@ threats:
     description: raw staging 副本保留受測 repo 的機密檔；處理程序被強制終止後到下次啟動之間仍留在磁碟。
     mitigation: >-
       whitebox 結束、每次 attempt 結束（finally）與啟動時都會刪除（service.py:138-161、322-376）；父目錄 0700；resume 須與凍結摘要相符。
-      data_dir 與 artifacts 目錄設為 0700、evidence 檔 0600；POSIX 上無法設成只有擁有者可存取時拒絕啟動（store.py:33-48、224-227、493）。
+      data_dir 與 artifacts 目錄設為 0700、evidence 檔 0600；POSIX 上無法設成只有擁有者可存取時拒絕啟動（store.py:33-48、226-229、522）。
       殘留：只在 POSIX 強制；Windows 只支援 demo（live 需要 Linux Docker runtime），資料為合成資料，目錄權限依上層目錄的 ACL 繼承。
     status: mitigated
     gate: G2
