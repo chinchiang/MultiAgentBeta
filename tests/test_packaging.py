@@ -204,6 +204,16 @@ def test_upstream_scanner_images_are_pulled_and_looked_up_by_one_digest():
         assert named and set(named) <= upstream, path
     workflow = (ROOT / ".github" / "workflows" / "integration.yml").read_text(encoding="utf-8")
     assert all("docker pull " + reference in workflow for reference in upstream)
+    # 換 digest 時，佈建紀錄與驗收紀錄也要跟著換，不能只改腳本、CI 與文件
+    import json
+    recorded = json.loads((ROOT / "docs" / "runtime-images.json").read_text(encoding="utf-8"))
+    for tool in ("semgrep", "zap"):
+        reference = provision.REFERENCES[tool]
+        assert recorded[tool]["reference"] == reference
+        assert recorded[tool]["image_id"] == reference.split("@", 1)[1]
+    validated = json.loads((ROOT / "docs" / "image-validation.json").read_text(encoding="utf-8"))
+    zap = [image for image in validated["images"] if image.get("pull_reference") == provision.ZAP_IMAGE]
+    assert [image["id"] for image in zap] == [provision.ZAP_IMAGE.split("@", 1)[1]]
 
 
 def test_tool_image_installs_every_python_file_by_its_hash():

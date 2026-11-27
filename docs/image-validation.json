@@ -1,5 +1,6 @@
 {
   "date": "2026-09-24",
+  "scope": "date and tool_versions describe the original 2026-09-24 validation; a later image entry's own date and tool_versions supersede them for that image",
   "model_endpoints_tested": false,
   "tool_versions": {
     "semgrep": "1.153.0",
