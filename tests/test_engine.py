@@ -1216,6 +1216,36 @@ async def test_closing_steps_that_fail_still_leave_the_last_save(engine,monkeypa
     assert engine.store.get(run["id"])["status"]=="incomplete" and not engine.unsaved
 
 
+@pytest.mark.parametrize("step",["discard_staging_copy","settle_sent_jobs"])
+async def test_an_attempt_cancelled_while_it_closes_still_stores_its_final_state(engine,monkeypatch,request,step):
+    import threading
+    run=engine.create(RunInput(name="Cancelled while closing"))
+    release,started=threading.Event(),threading.Event()
+    request.addfinalizer(release.set)
+    original=getattr(engine,step)
+    def held(record,*args):
+        # Only the closing step is held: whitebox discards its staged copy through the same call.
+        if record["stage"]=="complete":
+            started.set()
+            assert release.wait(5)
+        return original(record,*args)
+    monkeypatch.setattr(engine,step,held)
+    engine.start(run["id"])
+    task=engine.tasks[run["id"]]
+    while not started.is_set():
+        await asyncio.sleep(0.01)
+    # A cancel that comes while the attempt closes (as a closing loop cancels every task) is held for after the last save.
+    task.cancel()
+    await asyncio.sleep(0.05)
+    assert not task.done()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    stored=engine.store.get(run["id"])
+    # The status the demo finishes with, as when nothing cancels its closing: the final state is stored, not lost.
+    assert stored["status"]=="incomplete" and stored["attempt_started_at"] is None and not engine.unsaved
+
+
 async def test_failure_after_dispatch_leaves_no_silent_sent_job(engine,monkeypatch):
     run=engine.create(RunInput(name="Bug after dispatch"))
     async def crashing_blackbox(run):

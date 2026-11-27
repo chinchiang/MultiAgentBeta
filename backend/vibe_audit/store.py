@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import builtins
+import contextvars
+import functools
 import hashlib
 import json
 import os
@@ -15,6 +17,7 @@ import weakref
 from contextlib import contextmanager
 from pathlib import Path
 
+from .diagnostics import note_failure
 from .domain import digest, now
 
 
@@ -101,6 +104,24 @@ def placeholders(text: str, postgres: bool) -> str:
 def dialect(statements: dict, postgres: bool) -> dict:
     """Every statement of a table in the driver's dialect."""
     return {name: placeholders(text, postgres) for name, text in statements.items()}
+
+
+async def to_the_end(work, *args):
+    """Run work in a thread and wait until it has ended, even when the caller is cancelled meanwhile: the thread goes
+    on regardless, so a caller that stopped waiting could not know what it did. Returns the finished future and the
+    cancellation that came meanwhile (None if none came), for the caller to raise once it has acted on the outcome.
+
+    It is what asyncio.to_thread does, but on the executor's own future rather than a task: a loop that closes cancels
+    every task it still has, and a cancelled task would end the wait while the thread still runs."""
+    done = asyncio.get_running_loop().run_in_executor(None, functools.partial(contextvars.copy_context().run, work, *args))
+    stopped = None
+    while not done.done():
+        try:
+            # wait() leaves the thread's future alone when this task is cancelled; each cancellation is kept for after.
+            await asyncio.wait({done})
+        except asyncio.CancelledError as exc:
+            stopped = exc
+    return done, stopped
 
 
 class RunNotFound(KeyError):
@@ -378,7 +399,26 @@ class Store:
         async with self._turn(run["id"]):
             text = self.snapshot(run)
             # The thread reads only the text; the copy is passed for who it is, never read there.
-            run["version"] = await asyncio.to_thread(self.write, run, text)
+            await self._outlast(run, self.write, run, text)
+
+    async def _outlast(self, run: dict, work, *args):
+        """Run a save's database work in a thread and give the copy the version it wrote. A cancelled caller does not
+        end the save early: the thread goes on regardless and its write may land, so the run's turn lasts until it
+        has. The copy then knows the version the row holds, no later save of the run overlaps the thread, and the
+        cancellation is raised after."""
+        saving, stopped = await to_the_end(work, *args)
+        if stopped is None:
+            run["version"] = saving.result()
+            return
+        # Stopped meanwhile: a save that landed still gives its version. A save that failed gives way to the
+        # cancellation, which is what the caller asked for; its failure is logged, and is the cancellation's cause,
+        # so a caller can tell an overtaken copy (RunConflict) from a save that may be tried again.
+        failure = saving.exception()
+        if failure is None:
+            run["version"] = saving.result()
+            raise stopped
+        note_failure(f"run {run['id']} save cancelled", failure)
+        raise stopped from failure
 
     def _turn(self, run_id: str) -> asyncio.Lock:
         return self.persisting.setdefault(asyncio.get_running_loop(), {}).setdefault(run_id, asyncio.Lock())
@@ -577,7 +617,7 @@ class Store:
         """finish_job from the event loop: both are serialized here and committed together in a thread."""
         async with self._turn(run["id"]):
             job, text = json.dumps(execution), self.snapshot(run)
-            run["version"] = await asyncio.to_thread(self._finish, job_id, job, run, text)
+            await self._outlast(run, self._finish, job_id, job, run, text)
 
     def _finish(self, job_id: str, job: str, copy: dict, text: str) -> int:
         with self.transaction():

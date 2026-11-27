@@ -170,6 +170,223 @@ def test_one_store_serves_saves_from_one_event_loop_after_another(tmp_path):
         store.close()
 
 
+def held_in_thread(store, monkeypatch, request, name, fails=None):
+    """The store's method name, made to wait in its thread until the test lets it go (and then raise fails, if
+    given); returns the event it waits on and the one it sets once it has started. A test that fails first still lets
+    the thread go, so it does not write later through a closed store."""
+    import threading
+    work, release, started = getattr(store, name), threading.Event(), threading.Event()
+    request.addfinalizer(release.set)
+    def held(*args):
+        started.set()
+        assert release.wait(5)
+        if fails is not None:
+            raise fails
+        return work(*args)
+    monkeypatch.setattr(store, name, held)
+    return release, started
+
+
+async def in_thread(started):
+    import asyncio
+    while not started.is_set():
+        await asyncio.sleep(0.01)
+
+
+CONFLICT = "The run was changed by another action since this copy was read; reload it and try again"
+
+
+async def test_a_save_cancelled_in_its_thread_waits_for_it_and_keeps_the_version_it_wrote(store, monkeypatch, request):
+    import asyncio
+    run = new_run()
+    store.save(run)
+    release, started = held_in_thread(store, monkeypatch, request, "write")
+    run["name"] = "first"
+    first = asyncio.create_task(store.persist(run))
+    await in_thread(started)
+    first.cancel()
+    await asyncio.sleep(0.05)
+    # Cancelled, it still holds the run's turn while its thread writes: the next save waits instead of overlapping it.
+    assert not first.done()
+    # The next save writes at once, so only the turn can hold it back.
+    monkeypatch.delattr(store, "write")
+    run["name"] = "second"
+    second = asyncio.create_task(store.persist(run))
+    await asyncio.sleep(0.05)
+    assert not second.done()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+    # The copy learned the version its cancelled save wrote, so its next save is no conflict.
+    await second
+    assert store.get(run["id"])["name"] == "second" and run["version"] == 3 == body(store, run["id"])[1]
+
+
+async def test_a_save_cancelled_again_while_it_waits_still_waits_for_its_thread(store, monkeypatch, request):
+    import asyncio
+    run = new_run()
+    store.save(run)
+    release, started = held_in_thread(store, monkeypatch, request, "write")
+    saving = asyncio.create_task(store.persist(run))
+    await in_thread(started)
+    saving.cancel()
+    await asyncio.sleep(0.01)
+    saving.cancel()
+    await asyncio.sleep(0.05)
+    assert not saving.done()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await saving
+    assert run["version"] == 2 == body(store, run["id"])[1]
+
+
+def test_a_save_still_writing_when_its_loop_closes_keeps_the_version_it_wrote(store, monkeypatch, request):
+    import asyncio
+    import threading
+    run = new_run()
+    store.save(run)
+    release, started = held_in_thread(store, monkeypatch, request, "write")
+    saves = []
+    async def leave_it_saving():
+        saves.append(asyncio.create_task(store.persist(run)))
+        await asyncio.to_thread(started.wait, 5)
+        # The loop closes with the save in its thread: closing cancels every task the loop still has.
+        threading.Timer(0.1, release.set).start()
+    asyncio.run(leave_it_saving())
+    assert saves[0].cancelled()
+    assert run["version"] == 2 == body(store, run["id"])[1]
+
+
+async def test_a_cancelled_save_whose_write_fails_ends_in_the_cancellation_and_logs_the_failure(store, monkeypatch, request, caplog):
+    import asyncio
+    import logging
+    run = new_run()
+    store.save(run)
+    release, started = held_in_thread(store, monkeypatch, request, "write", fails=RunConflict(CONFLICT))
+    saving = asyncio.create_task(store.persist(run))
+    await in_thread(started)
+    saving.cancel()
+    release.set()
+    # The caller asked to stop, so that is what it gets; the copy keeps the version it had, and the failure is logged.
+    with caplog.at_level(logging.WARNING, logger="vibe_audit"), pytest.raises(asyncio.CancelledError):
+        await saving
+    assert [record.getMessage().split(" at ")[0] for record in caplog.records] == [f"run {run['id']} save cancelled: RunConflict"]
+    assert run["version"] == 1 == body(store, run["id"])[1]
+    monkeypatch.delattr(store, "write")
+    await store.persist(run)
+    assert run["version"] == 2
+
+
+async def test_a_finish_cancelled_in_its_thread_keeps_the_version_it_wrote(store, monkeypatch, request):
+    import asyncio
+    run = new_run()
+    store.save(run)
+    release, started = held_in_thread(store, monkeypatch, request, "_finish")
+    finishing = asyncio.create_task(store.finish("job-" + uuid.uuid4().hex, {"status": "finished"}, run))
+    await in_thread(started)
+    finishing.cancel()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await finishing
+    assert run["version"] == 2 == body(store, run["id"])[1]
+    await store.persist(run)
+    assert run["version"] == 3
+
+
+@pytest.mark.parametrize("outcome", ["lands", "fails", "overtaken"])
+async def test_a_final_save_cancelled_in_its_thread_keeps_the_final_state_only_if_it_can_still_be_stored(tmp_path, monkeypatch, request, outcome):
+    import asyncio
+    store = Store(tmp_path)
+    engine = Engine(store)
+    try:
+        run = engine.create(RunInput(name="Cancelled final save"))
+        before = run["version"]
+        run["status"] = "completed"
+        fails = {"lands": None, "fails": RuntimeError("database unreachable"), "overtaken": RunConflict(CONFLICT)}[outcome]
+        release, started = held_in_thread(store, monkeypatch, request, "write", fails=fails)
+        saving = asyncio.create_task(engine.save_final(run))
+        await in_thread(started)
+        saving.cancel()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await saving
+        if outcome == "lands":
+            # Stored: nothing is left for flush_unsaved.
+            assert run["id"] not in engine.unsaved and run["version"] == before + 1 and store.get(run["id"])["status"] == "completed"
+        elif outcome == "overtaken":
+            # Another save overtook the copy: no flush could ever store it, so none is kept.
+            assert run["id"] not in engine.unsaved and run["version"] == before
+        else:
+            # Not stored: the final state stays in memory, and the next flush stores it.
+            assert engine.unsaved[run["id"]] is run and run["version"] == before
+            monkeypatch.delattr(store, "write")
+            assert engine.flush_unsaved(run["id"]) is True and store.get(run["id"])["status"] == "completed"
+    finally:
+        store.close()
+
+
+async def test_a_final_save_cancelled_while_it_settles_waits_for_the_settling_and_then_saves(tmp_path, monkeypatch, request):
+    import asyncio
+    import threading
+    store = Store(tmp_path)
+    engine = Engine(store)
+    release, started, order = threading.Event(), threading.Event(), []
+    request.addfinalizer(release.set)
+    try:
+        run = engine.create(RunInput(name="Cancelled while settling"))
+        run["status"] = "completed"
+        def settling(copy, reason):
+            started.set()
+            assert release.wait(5)
+            order.append("settled")
+        write = store.write
+        def writing(copy, text):
+            order.append("saved")
+            return write(copy, text)
+        monkeypatch.setattr(engine, "settle_sent_jobs", settling)
+        monkeypatch.setattr(store, "write", writing)
+        saving = asyncio.create_task(engine.save_final(run, settle=True))
+        await in_thread(started)
+        saving.cancel()
+        await asyncio.sleep(0.05)
+        # The settling still writes this copy: nothing is decided, and nothing else saves it, until it has ended.
+        assert not saving.done() and order == []
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await saving
+        # Then the save is tried once more and lands, so no final state is left for a flush to settle a second time.
+        assert order == ["settled", "saved"] and run["id"] not in engine.unsaved and store.get(run["id"])["status"] == "completed"
+    finally:
+        store.close()
+
+
+async def test_a_final_save_cancelled_between_its_tries_keeps_the_final_state(tmp_path, monkeypatch):
+    import asyncio
+    from vibe_audit import service
+    store = Store(tmp_path)
+    engine = Engine(store)
+    try:
+        run = engine.create(RunInput(name="Cancelled between tries"))
+        run["status"] = "completed"
+        tries = []
+        def unreachable(copy, text):
+            tries.append(text)
+            raise RuntimeError("database unreachable")
+        monkeypatch.setattr(store, "write", unreachable)
+        monkeypatch.setattr(service, "FINAL_SAVE_RETRY_SECONDS", (30,))
+        saving = asyncio.create_task(engine.save_final(run))
+        while not tries:
+            await asyncio.sleep(0.01)
+        await asyncio.sleep(0.05)
+        # Waiting out the retry delay when it is stopped.
+        saving.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await saving
+        assert len(tries) == 1 and engine.unsaved[run["id"]] is run
+    finally:
+        store.close()
+
+
 def test_a_runs_table_from_before_versions_gains_them(tmp_path):
     conn = sqlite3.connect(str(tmp_path / "demo.sqlite3"))
     conn.execute("CREATE TABLE runs (id TEXT PRIMARY KEY, payload TEXT NOT NULL, updated TEXT NOT NULL)")

@@ -21,7 +21,7 @@ from .messages import zh
 from .policy import Policy, PolicyError, elapsed_seconds, sealed
 from .request_rules import RequestRefused, body_permitted, own_step, plan_case
 from .stage_answers import KEPT_UNDER
-from .store import RunConflict, Store
+from .store import RunConflict, Store, to_the_end
 from .contracts import (CORE_REVIEW_QUESTIONS, CaseDesignProposal, CommanderProposal, ArchitectureProposal,
                         ReviewProposal, ChallengeProposal, ThreatModelProposal, ReportOrderProposal, complete_requirements, partition_source_references)
 
@@ -462,52 +462,78 @@ class Engine:
             self.event(run,run["error"],"error",closing=True)
         finally:
             self.policy.revoke(run["id"])
-            # Each closing step runs even when the one before it failed, so the last save is always tried.
-            try:
-                # Whatever ended the attempt, its copy of the repository's secret files goes; a resume restages.
-                await asyncio.to_thread(self.discard_staging_copy,run)
-            except Exception as exc:
-                note_failure(f"run {run['id']} staging cleanup",exc)
-            settled=True
-            try:
-                await asyncio.to_thread(self.settle_sent_jobs,run,"The workflow stopped before this request's result was recorded; its outcome is unknown")
-            except Exception as exc:
+            # Each closing step runs even when the one before it failed, and runs to its end even when the attempt is
+            # cancelled again meanwhile (a closing loop cancels every task): that cancellation is held until the last
+            # save has been tried, so the final state is stored or kept in unsaved, never lost.
+            # Whatever ended the attempt, its copy of the repository's secret files goes; a resume restages.
+            done,stopped=await to_the_end(self.discard_staging_copy,run)
+            if done.exception() is not None:
+                note_failure(f"run {run['id']} staging cleanup",done.exception())
+            done,again=await to_the_end(self.settle_sent_jobs,run,"The workflow stopped before this request's result was recorded; its outcome is unknown")
+            stopped=stopped or again
+            settled=done.exception() is None
+            if not settled:
                 # The journal still marks them sent: the last save settles them first, or else flush_unsaved, the next
                 # recover or a restart does.
-                note_failure(f"run {run['id']} settling sent jobs",exc)
-                settled=False
+                note_failure(f"run {run['id']} settling sent jobs",done.exception())
             run["active_seconds"]=elapsed_seconds(run)
             run["attempt_started_at"]=None
-            await self.save_final(run,settle=not settled)
+            await self.save_final(run,settle=not settled,stopping=stopped is not None)
+            if stopped is not None:
+                raise stopped
 
-    async def save_final(self,run,settle=False):
+    async def save_final(self,run,settle=False,stopping=False):
         """The attempt's last save, retried through a short store outage. When every try fails, the final state stays
         in memory for recover(): the stored row still says running, and acting on it alone would lose this state.
         With settle, each try first settles the sent jobs the closing could not, so a run saved as finished does not
         hide a request whose result was not recorded; a settle that fails does not hold back the save, and the next
         recover() settles what is left. Each try runs in a thread: against an unreachable database one waits out the
-        connect timeout, and the console must keep serving meanwhile."""
+        connect timeout, and the console must keep serving meanwhile. stopping (the attempt was cancelled while it
+        closed) makes it one try, without waiting out the retries.
+
+        Cancelled before the state is stored, it keeps the state in unsaved as when every try fails, and raises the
+        cancellation; a final state another save overtook (RunConflict) is never kept, cancelled or not."""
+        known=run.get("version")
+        try:
+            stopped=await self._final_tries(run,settle,stopping)
+        except asyncio.CancelledError as exc:
+            # A save that landed first has moved the copy's version on; one that was overtaken can never be stored.
+            if run.get("version")==known and not isinstance(exc.__cause__,RunConflict):
+                self.unsaved[run["id"]]=run
+            raise
+        if stopped is not None:
+            raise stopped
+
+    async def _final_tries(self,run,settle,stopping):
+        """save_final's tries; returns a cancellation that came while a settle ran in its thread, held until the save
+        after it has been tried."""
+        stopped=None
         for delay in (*FINAL_SAVE_RETRY_SECONDS,None):
+            if settle:
+                # To its end, a cancellation meanwhile included: the settling writes this copy, and nothing else may
+                # until it is done.
+                done,again=await to_the_end(self.settle_sent_jobs,run,"The workflow stopped before this request's result was recorded; its outcome is unknown")
+                stopped=stopped or again
+                if done.exception() is None:
+                    settle=False
+                else:
+                    note_failure(f"run {run['id']} settling sent jobs",done.exception())
             try:
-                if settle:
-                    try:
-                        await asyncio.to_thread(self.settle_sent_jobs,run,"The workflow stopped before this request's result was recorded; its outcome is unknown")
-                        settle=False
-                    except Exception as exc:
-                        note_failure(f"run {run['id']} settling sent jobs",exc)
                 await self.store.persist(run)
-                return
+                return stopped
             except RunConflict as exc:
                 # Another save overtook this attempt's copy: no retry can store it. The stored run is closed as an
                 # interrupted attempt by the next recover, instead of every action on it failing with 409.
                 note_failure(f"run {run['id']} final save overtaken",exc)
-                return
+                return stopped
             except Exception as exc:
-                if delay is None:
+                if delay is None or stopping or stopped is not None:
                     note_failure(f"run {run['id']} final save",exc)
                     self.unsaved[run["id"]]=run
-                    return
-                await asyncio.sleep(delay)
+                    return stopped
+            await asyncio.sleep(delay)
+        # Unreachable: the last try returns whatever happens; kept so the loop can never fall through silently.
+        return stopped
 
     def record_retest(self,run):
         """Write a finished retest's outcome onto each parent finding it re-checked.
