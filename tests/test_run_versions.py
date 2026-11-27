@@ -226,6 +226,168 @@ async def test_a_retest_write_back_overtaken_by_a_decision_reads_the_parent_agai
         store.close()
 
 
+async def finished_parent_and_retest(engine):
+    parent = engine.create(RunInput(name="Parent"))
+    engine.start(parent["id"])
+    await engine.tasks[parent["id"]]
+    observed = next(f for f in engine.store.get(parent["id"])["findings"] if f["state"] == "validated_dynamic")
+    retest = engine.create(RunInput(name="Retest", mode="demo", parent_run_id=parent["id"], parent_finding_ids=[observed["id"]]))
+    engine.start(retest["id"])
+    await engine.tasks[retest["id"]]
+    finished = engine.store.get(retest["id"])
+    return parent, observed, {**finished, "id": "second-retest", "executions": [{**e, "status": "pass"} for e in finished["executions"]]}
+
+
+async def test_a_write_back_that_finds_the_parent_started_meanwhile_leaves_it_alone(tmp_path, monkeypatch):
+    store = Store(tmp_path)
+    engine = Engine(store)
+    try:
+        parent, observed, second = await finished_parent_and_retest(engine)
+        get = store.get
+        def resumed(run_id):
+            copy = get(run_id)
+            if run_id == parent["id"] and copy["status"] != "running":
+                # The parent is resumed between the write-back's read and its save.
+                other = get(run_id)
+                other["status"] = "running"
+                store.save(other)
+            return copy
+        monkeypatch.setattr(store, "get", resumed)
+        engine.record_retest(second)
+        monkeypatch.setattr(store, "get", get)
+        after = store.get(parent["id"])
+        # The running parent is not written: its attempt's copy stays the newest one.
+        assert after["status"] == "running" and not any(r.get("run_id") == "second-retest" for f in after["findings"] for r in f.get("retests", []))
+        assert any("parent assessment was running" in gap for gap in second["gaps"])
+    finally:
+        store.close()
+
+
+async def test_a_final_state_another_save_overtook_is_dropped_not_kept_for_ever(tmp_path):
+    store = Store(tmp_path)
+    engine = Engine(store)
+    try:
+        run = engine.create(RunInput(name="Overtaken final state"))
+        run["status"] = "running"
+        store.save(run)
+        other = store.get(run["id"])
+        other["name"] = "renamed"
+        store.save(other)
+        run["status"] = "completed"
+        # The last save of the overtaken copy is refused once; it is not kept for a retry that can never land.
+        await engine.save_final(run)
+        assert run["id"] not in engine.unsaved
+        # One kept from before is dropped by the next recover, which then closes the stored run as interrupted.
+        engine.unsaved[run["id"]] = run
+        engine.recover(run["id"])
+        stored = store.get(run["id"])
+        assert run["id"] not in engine.unsaved and stored["status"] == "incomplete" and stored["name"] == "renamed"
+    finally:
+        store.close()
+
+
+async def test_a_run_whose_start_is_being_prepared_is_left_alone(tmp_path):
+    import asyncio
+    import threading
+    from vibe_audit.policy import PolicyError
+    store = Store(tmp_path)
+    engine = Engine(store)
+    try:
+        run = engine.create(RunInput(name="Starting"))
+        saved, release = threading.Event(), threading.Event()
+        prepare = engine.prepare_start
+        def slow(run_id, *args):
+            prepared = prepare(run_id, *args)
+            saved.set()
+            release.wait(10)
+            return prepared
+        starting = asyncio.create_task(engine.begin(slow, run["id"]))
+        await asyncio.to_thread(saved.wait, 10)
+        # Stored as running, not registered yet: another request's recover must not close it as interrupted.
+        assert store.get(run["id"])["status"] == "running"
+        await asyncio.to_thread(engine.recover, run["id"])
+        assert store.get(run["id"])["status"] == "running"
+        with pytest.raises(PolicyError, match="already executing"):
+            await engine.begin(engine.prepare_start, run["id"], True)
+        with pytest.raises(PolicyError, match="starting"):
+            await engine.stop(run["id"])
+        release.set()
+        await starting
+        await engine.tasks[run["id"]]
+        assert store.get(run["id"])["stage"] == "complete" and run["id"] not in engine.starting
+    finally:
+        store.close()
+
+
+async def test_a_cancel_during_the_write_back_still_cancels_the_retest(tmp_path, monkeypatch):
+    store = Store(tmp_path)
+    engine = Engine(store)
+    try:
+        parent = engine.create(RunInput(name="Parent"))
+        engine.start(parent["id"])
+        await engine.tasks[parent["id"]]
+        observed = next(f for f in store.get(parent["id"])["findings"] if f["state"] == "validated_dynamic")
+        retest = engine.create(RunInput(name="Retest", mode="demo", parent_run_id=parent["id"], parent_finding_ids=[observed["id"]]))
+        record = engine.record_retest
+        def cancelled_meanwhile(run):
+            # The cancel lands while the write-back runs in its thread.
+            engine.cancel_flags[run["id"]].set()
+            return record(run)
+        monkeypatch.setattr(engine, "record_retest", cancelled_meanwhile)
+        engine.start(retest["id"])
+        await engine.tasks[retest["id"]]
+        assert store.get(retest["id"])["status"] == "cancelled"
+    finally:
+        store.close()
+
+
+def test_the_copy_is_held_only_while_its_save_is_uncertain(store, monkeypatch):
+    run = new_run()
+    store.save(run)
+    # Committed: the version alone decides, and the store keeps no reference to the copy.
+    assert run["id"] not in store.writers
+    execute = store._execute
+    def commit_then_fail(sql, args=()):
+        result = execute(sql, args)
+        if sql == "COMMIT":
+            raise OSError("synthetic: reply lost")
+        return result
+    monkeypatch.setattr(store, "_execute", commit_then_fail)
+    with pytest.raises(OSError):
+        store.save(run)
+    monkeypatch.setattr(store, "_execute", execute)
+    # Uncertain: the copy itself is held, so no other object can be taken for it.
+    assert store.writers[run["id"]][0] is run
+    store.save(run)
+    assert run["id"] not in store.writers
+
+
+def test_a_column_another_process_added_first_is_not_an_error(tmp_path, monkeypatch):
+    conn = sqlite3.connect(str(tmp_path / "demo.sqlite3"))
+    conn.execute("CREATE TABLE runs (id TEXT PRIMARY KEY, payload TEXT NOT NULL, updated TEXT NOT NULL)")
+    conn.commit()
+    conn.close()
+    execute = Store._execute
+    def raced(self, sql, args=()):
+        if sql.startswith("ALTER TABLE runs ADD COLUMN"):
+            # The other process's ALTER lands first; this one then fails on the duplicate column.
+            execute(self, sql, args)
+        return execute(self, sql, args)
+    monkeypatch.setattr(Store, "_execute", raced)
+    store = Store(tmp_path)
+    try:
+        assert {"version", "writer"} <= store._run_columns()
+    finally:
+        store.close()
+
+
+def test_a_sqlite_without_returning_is_refused_with_a_reason(tmp_path, monkeypatch):
+    from vibe_audit import store as store_module
+    monkeypatch.setattr(store_module.sqlite3, "sqlite_version_info", (3, 34, 1))
+    with pytest.raises(RuntimeError, match="older than 3.35"):
+        Store(tmp_path)
+
+
 def test_an_action_on_an_overtaken_copy_is_a_conflict(tmp_path, monkeypatch):
     with TestClient(create_app(tmp_path, testing=True)) as client:
         from test_engine import authorize

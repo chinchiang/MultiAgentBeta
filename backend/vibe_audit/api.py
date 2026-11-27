@@ -307,7 +307,7 @@ def _run_routes(api,console):
     # Only registering an attempt, and changing a live attempt's in-memory copy, happen on the loop.
     @api.post("/runs/{run_id}/start")
     async def start(run_id:str):
-        return console.engine.launch(await asyncio.to_thread(console.engine.prepare_start,run_id))
+        return await console.engine.begin(console.engine.prepare_start,run_id)
 
     @api.post("/runs/{run_id}/cancel")
     async def cancel(run_id:str):
@@ -315,7 +315,7 @@ def _run_routes(api,console):
 
     @api.post("/runs/{run_id}/resume")
     async def resume(run_id:str):
-        return console.engine.launch(await asyncio.to_thread(console.engine.prepare_start,run_id,True))
+        return await console.engine.begin(console.engine.prepare_start,run_id,True)
 
     @api.post("/runs/{run_id}/approve-cases")
     async def approve_cases(run_id:str,request:Request):
@@ -327,7 +327,7 @@ def _run_routes(api,console):
             receipt=None
         if not isinstance(receipt,str):
             raise HTTPException(422,"Approve with the receipt of the cases you reviewed")
-        return console.engine.launch(await asyncio.to_thread(console.engine.prepare_approved,run_id,receipt,request.state.actor))
+        return await console.engine.begin(console.engine.prepare_approved,run_id,receipt,request.state.actor)
 
     @api.get("/runs/{run_id}/events")
     async def events(run_id:str,request:Request):
@@ -446,9 +446,14 @@ def create_app(data_dir=None, database_url=None, testing=False, session_token=No
     @asynccontextmanager
     async def lifespan(app):
         yield
-        for run_id,task in console.engine.tasks.items():
+        for run_id,task in list(console.engine.tasks.items()):
             if not task.done():
-                console.engine.cancel(run_id)
+                # On the loop, as any change to a live attempt's copy; one that fails does not keep the rest from
+                # stopping, or the unsaved final states below from being saved.
+                try:
+                    await console.engine.cancel_attempt(run_id)
+                except Exception as exc:
+                    note_failure(f"run {run_id} cancel at shutdown",exc)
         pending=[task for task in console.engine.tasks.values() if not task.done()]
         if pending:
             await asyncio.gather(*pending,return_exceptions=True)

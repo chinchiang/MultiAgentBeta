@@ -59,6 +59,8 @@ class Engine:
         self.runtime_configs: dict[str,dict]={}
         # Finished attempts whose last save failed: their final state, kept until a save succeeds.
         self.unsaved: dict[str,dict]={}
+        # Runs whose start is being prepared in a thread: stored as running, not yet registered on the loop.
+        self.starting: set[str]=set()
         # Recovery rewrites every running run and deletes staged copies: only the one controller of this data may do it.
         store.claim_controller()
         for run in store.list():
@@ -92,8 +94,11 @@ class Engine:
                                else "The attempt ended without saving its final state while a model reservation was unresolved; further paid calls are blocked")
         self.store.save(run)
 
-    def recover(self,run_id):
+    def recover(self,run_id,starting=False):
         """Before acting on a run no attempt in this controller holds, settle what a lost last save left behind.
+
+        A run whose start is being prepared is held too: it is stored as running before its attempt is registered.
+        Only that start's own preparation (starting=True) recovers it.
 
         A finished attempt whose final save failed is saved now. Without that state (the store says running or
         cancelling, yet nothing runs it) the stored run is closed as a restart would close it. A job still marked sent
@@ -103,10 +108,9 @@ class Engine:
         Held under the store's own lock: reconcile recovers from a worker thread that already holds it, and a second
         lock taken in the other order on the event loop would deadlock the console."""
         with self.store.lock:
-            if self.executing(run_id):
+            if self.executing(run_id) or run_id in self.starting and not starting:
                 return
-            if run_id in self.unsaved:
-                self.flush_unsaved(run_id)
+            if run_id in self.unsaved and self.flush_unsaved(run_id):
                 return
             run=self.store.get(run_id)
             # A cancelling run still waiting for worker cleanup is not lost: only an operator reconcile ends it.
@@ -119,7 +123,10 @@ class Engine:
     def flush_unsaved(self,run_id=None):
         """Save the final state of finished attempts whose last save failed: run_id's, raising if it still cannot, or
         every one, logging each that cannot (at shutdown). The requests their closing could not settle are settled
-        first: a request sent without a recorded result must reach the exports."""
+        first: a request sent without a recorded result must reach the exports.
+
+        A final state another save has overtaken (RunConflict) can never be saved: it is dropped, and the stored run
+        is then closed as an interrupted attempt would be. Returns whether run_id's final state was saved."""
         with self.store.lock:
             for key in [run_id] if run_id is not None else list(self.unsaved):
                 pending=self.unsaved.get(key)
@@ -128,12 +135,19 @@ class Engine:
                 try:
                     self.settle_sent_jobs(pending,"The workflow stopped before this request's result was recorded; its outcome is unknown")
                     self.store.save(pending)
+                except RunConflict as exc:
+                    note_failure(f"run {key} unsaved final state overtaken",exc)
+                    self.unsaved.pop(key,None)
+                    if run_id is not None:
+                        return False
+                    continue
                 except Exception as exc:
                     if run_id is not None:
                         raise
                     note_failure(f"run {key} unsaved final state",exc)
                     continue
                 self.unsaved.pop(key,None)
+            return True
 
     def discard_staging_copy(self,run):
         staging=run.get("staging")
@@ -213,7 +227,7 @@ class Engine:
         race both read the run, and the second save is refused (RunConflict) or finds it running."""
         if self.executing(run_id):
             raise PolicyError("Run is already executing")
-        self.recover(run_id)
+        self.recover(run_id,starting=True)
         run=self.store.get(run_id)
         if not resume and run["status"]!="created":
             raise PolicyError("Use resume for an interrupted run or create a new run")
@@ -236,6 +250,19 @@ class Engine:
         # no cancel flag or in-memory copy that a later cancel would take for a live attempt.
         self.event(run,"Resuming journaled workflow" if resume else "Starting evidence-gated workflow")
         return run
+
+    async def begin(self, prepare, run_id, *args):
+        """Prepare a start in a thread (prepare_start or prepare_approved), then launch it here on the event loop.
+
+        Between the two the run is stored as running with no attempt registered yet; it is marked starting meanwhile,
+        so a recover on another request leaves it alone and a second start or a cancel is refused."""
+        if self.executing(run_id) or run_id in self.starting:
+            raise PolicyError("Run is already executing")
+        self.starting.add(run_id)
+        try:
+            return self.launch(await asyncio.to_thread(prepare,run_id,*args))
+        finally:
+            self.starting.discard(run_id)
 
     def launch(self, run):
         """Register a started attempt and run it; on the event loop, after prepare_start has stored its start."""
@@ -264,6 +291,8 @@ class Engine:
             del self.locks[run_id]
         if self.runs.get(run_id) is run:
             del self.runs[run_id]
+            # What the store keeps for the run's saves is read again if the run is saved later.
+            self.store.forget(run_id)
 
     def cancel(self,run_id):
         """Cancel in one call; the API cancels a live attempt on the event loop (cancel_attempt) and a stored run in a
@@ -278,6 +307,8 @@ class Engine:
 
     async def stop(self,run_id):
         """Cancel from the event loop: a live attempt on the loop, a stored run in a thread."""
+        if run_id in self.starting:
+            raise PolicyError("The run is starting; cancel it again once it is running")
         await asyncio.to_thread(self.recover,run_id)
         if not self.executing(run_id):
             stopped=await asyncio.to_thread(self.cancel_stored,run_id)
@@ -329,7 +360,7 @@ class Engine:
         """The approval's record and the resumed attempt's start; database work only."""
         if self.executing(run_id):
             raise PolicyError("Run is still executing")
-        self.recover(run_id)
+        self.recover(run_id,starting=True)
         run=self.store.get(run_id)
         if run["status"]!="awaiting_approval":
             raise PolicyError("Only a run waiting for case approval can be approved")
@@ -403,6 +434,9 @@ class Engine:
             except Exception as exc:
                 # The retest itself finished; only the write-back to its parent did not.
                 run["gaps"].append(f"This retest's outcome could not be written back to the parent assessment ({type(exc).__name__})")
+            # A cancel that came while the write-back ran in its thread still ends the attempt as cancelled.
+            if self.cancel_flags[run["id"]].is_set():
+                raise asyncio.CancelledError()
             run["status"]="incomplete" if any(e["status"] in {"inconclusive","blocked","execution_error","outcome_unknown"} for e in run["executions"]) or run["gaps"] else "completed"
             self.event(run,"Workflow finished. Completion is not a guarantee of security.",closing=True)
         except CaseApprovalRequired as pending:
@@ -463,6 +497,11 @@ class Engine:
                         note_failure(f"run {run['id']} settling sent jobs",exc)
                 await self.store.persist(run)
                 return
+            except RunConflict as exc:
+                # Another save overtook this attempt's copy: no retry can store it. The stored run is closed as an
+                # interrupted attempt by the next recover, instead of every action on it failing with 409.
+                note_failure(f"run {run['id']} final save overtaken",exc)
+                return
             except Exception as exc:
                 if delay is None:
                     note_failure(f"run {run['id']} final save",exc)
@@ -478,17 +517,19 @@ class Engine:
         parent_id=run["manifest"].get("parent_run_id")
         if not parent_id or not run["manifest"].get("parent_finding_ids"):
             return
-        if self.executing(parent_id):
-            run["gaps"].append("The parent assessment was running, so this retest's outcome was not written back to it")
-            return
         # An operator's decision on the parent may be saved between this read and this save: the save then refuses the
-        # stale copy (RunConflict), and the outcome is applied again to the parent as that decision left it.
-        for _ in range(RETEST_WRITE_BACK_TRIES-1):
+        # stale copy (RunConflict), and the outcome is applied again to the parent as that decision left it. A start of
+        # the parent may be what overtook it, so whether the parent runs is asked again before each try.
+        for attempt in range(RETEST_WRITE_BACK_TRIES):
+            parent=None if self.executing(parent_id) or parent_id in self.starting else self.store.get(parent_id)
+            if parent is None or parent["status"] in {"running","cancelling"}:
+                run["gaps"].append("The parent assessment was running, so this retest's outcome was not written back to it")
+                return
             try:
-                return self._record_retest(run,self.store.get(parent_id))
+                return self._record_retest(run,parent)
             except RunConflict:
-                continue
-        self._record_retest(run,self.store.get(parent_id))
+                if attempt==RETEST_WRITE_BACK_TRIES-1:
+                    raise
 
     def _record_retest(self,run,parent):
         cases={c["id"]:c for c in run.get("cases",[]) if isinstance(c,dict)}

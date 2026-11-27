@@ -988,6 +988,8 @@ async def test_an_attempt_writes_to_the_database_only_off_the_event_loop(engine,
     # Each stage's events, reservations, journal entries and its last save: all written by threads, none by the loop.
     assert len(threads)>20 and loop_thread not in threads
     assert engine.store.get(run["id"])["stage"]=="complete"
+    # The attempt is over: what the store kept in memory for its saves is gone with it.
+    assert run["id"] not in engine.store.stored and not any(run["id"] in locks for locks in engine.store.persisting.values())
 
 
 def test_the_api_does_the_database_work_of_an_action_in_a_thread(tmp_path,monkeypatch):
@@ -1154,13 +1156,13 @@ def test_actions_settle_a_lost_attempt_off_the_event_loop(tmp_path,route,body):
         engine.store.save(run)
         where=[]
         recover=engine.recover
-        def recording(run_id):
+        def recording(run_id,*args,**kwargs):
             try:
                 asyncio.get_running_loop()
                 where.append("loop")
             except RuntimeError:
                 where.append("thread")
-            return recover(run_id)
+            return recover(run_id,*args,**kwargs)
         engine.recover=recording
         client.post(f"/api/runs/{run['id']}/{route}",json=body)
     assert where and where[0]=="thread"

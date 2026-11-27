@@ -113,6 +113,8 @@ ZH = {
     "Controller restarted; resume re-checks every gate against the stored run": "controller 已重新啟動；恢復時會依已儲存的執行重新檢查每道閘門",
     "Another Vibe Audit process already controls this database; stop it before starting another": "另一個 Vibe Audit 程序已在控制這個資料庫；請先停止它再啟動另一個",
     "The run was changed by another action since this copy was read; reload it and try again": "讀取這份執行之後，另一個操作已經改過它；請重新載入後再試一次",
+    "The run is starting; cancel it again once it is running": "這個執行正在啟動；等它開始執行後再取消一次",
+    "The SQLite library is older than 3.35; use a Python built with SQLite 3.35 or newer": "SQLite 函式庫早於 3.35；請改用以 SQLite 3.35 或更新版本建置的 Python",
     "The attempt ended without saving its final state after a request was sent; reset the target and continue in a new run": "這次嘗試在請求送出後結束，最終狀態沒有存下來；請重設目標並在新的執行中繼續",
     "The attempt ended without saving its final state; resume re-checks every gate against the stored run": "這次嘗試結束時最終狀態沒有存下來；恢復時會依已儲存的執行重新檢查每道閘門",
     "The controller stopped after this request was sent; its outcome is unknown": "controller 在這個請求送出後停止；結果不明",
