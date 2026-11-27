@@ -15,6 +15,7 @@ from vibe_audit.api import create_app
 from vibe_audit.catalog import default_catalog_root
 from vibe_audit.domain import RunInput, digest
 from vibe_audit.policy import PolicyError, sealed
+from vibe_audit.providers import ProviderError
 from vibe_audit.service import Engine, report_markdown, report_sarif
 from vibe_audit.stage_answers import Seat
 from vibe_audit.store import Store
@@ -209,7 +210,7 @@ async def test_whitebox_resume_keeps_paid_reviews_and_sealed_scans(engine,monkey
         if profile["role"]=="commander":
             return answer_with({"reviewer_order":reviewers,"focus":["Billing export"],"rationale":"r"})
         if profile["id"] in failing:
-            raise RuntimeError("transient provider failure")
+            raise ProviderError("transient provider failure")
         return answer_with({"findings":[],"gaps":[]})
     engine.model_port=FakePort(answer=answer)
     with pytest.raises(PolicyError,match="Incomplete review"):
@@ -430,7 +431,6 @@ async def test_time_budget_counts_active_time_across_resume_and_restart(engine,t
 
 @pytest.mark.parametrize("outcome",["success","known_failure","unknown_failure"])
 async def test_model_call_returns_its_reservation_once_usage_is_counted(engine,outcome):
-    from vibe_audit.providers import ProviderError
     run=engine.create(RunInput(name="Reservation"))
     run["status"]="running"
     engine.cancel_flags[run["id"]]=asyncio.Event()
@@ -2466,7 +2466,7 @@ def test_markdown_defangs_bare_urls_and_shows_challenges():
     assert "Challenger counterevidence: guarded upstream" in text
 
 
-async def test_a_cancel_between_attempts_stays_a_cancel_and_charges_what_was_reserved(engine):
+async def test_a_cancel_between_attempts_stays_a_cancel_and_charges_what_was_metered(engine):
     run=await finished_demo(engine)
     engine.cancel_flags[run["id"]]=asyncio.Event();engine.locks[run["id"]]=asyncio.Lock()
     profile=next(p for p in run["manifest"]["models"] if p["role"]=="reviewer")
@@ -2478,7 +2478,8 @@ async def test_a_cancel_between_attempts_stays_a_cancel_and_charges_what_was_res
     engine.model_port=FakePort(answer=answer)
     with pytest.raises(asyncio.CancelledError):
         await engine.answers(run).ask(profile,"x",{"y":1})
-    assert run["usage"]["tokens"]>before and run["usage"]["tokens_estimated"] is True and run.get("reserved_tokens",0)==0
+    # Nothing was in flight when it stopped: attempt 1 is charged as metered, and no usage is estimated.
+    assert run["usage"]["tokens"]==before+15 and "tokens_estimated" not in run["usage"] and run.get("reserved_tokens",0)==0
 
 
 def test_markdown_shows_apostrophes_as_written_and_still_escapes_html():
@@ -2640,7 +2641,7 @@ def planned_review(plans,failing=()):
         if profile["role"]=="commander":
             return answer_with(plans.pop(0))
         if profile["id"] in failing:
-            raise RuntimeError("transient provider failure")
+            raise ProviderError("transient provider failure")
         return answer_with({"findings":[],"gaps":[]})
     return answer
 
@@ -2730,10 +2731,10 @@ async def test_a_challenge_that_passed_is_kept_when_the_architecture_map_fails_a
             return answer_with({"challenges":[]})
         maps.append(profile["id"])
         if len(maps)==1:
-            raise RuntimeError("transient provider failure")
+            raise ProviderError("transient provider failure")
         return answer_with({"assets":[],"dataflows":[],"roles":[],"gaps":[]})
     run=await live_adjudication(engine,monkeypatch,answer)
-    with pytest.raises(RuntimeError):
+    with pytest.raises(ProviderError):
         await engine._adjudication(run)
     await engine._adjudication(run)
     assert ["candidates" in asked(c["messages"])[1] for c in engine.model_port.calls]==[True,False,False]
