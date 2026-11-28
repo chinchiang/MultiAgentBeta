@@ -2780,6 +2780,57 @@ async def test_adjudication_keeps_unlocated_and_distinct_findings_separate(engin
     assert len(run["findings"])==3
 
 
+async def test_adjudication_does_not_merge_findings_without_a_concrete_location(engine):
+    run=await finished_demo(engine)
+    run.update(mode="demo",findings=[],artifacts=[],gaps=[])
+    for review in run["reviews"]:
+        review.pop("evidence",None)
+    # A located finding needs both file and line. A file without a line, and a cwe with no location (what whitebox
+    # leaves when it removes an out-of-source location), are not concrete identities and must not merge.
+    run["reviews"][0].update(gaps=[],findings=[dict(id="p1",title="Open redirect",severity="high",description="d",file="app/web.py",line=None,cwe=None,agent_ids=["reviewer-a"],evidence_ids=[],threat_ids=[],source_refs=[]),
+                                               dict(id="w1",title="Reflected XSS somewhere",severity="high",description="d",file=None,line=None,cwe="CWE-79",agent_ids=["reviewer-a"],evidence_ids=[],threat_ids=[],source_refs=[])])
+    run["reviews"][1].update(gaps=[],findings=[dict(id="p2",title="Different open redirect",severity="high",description="d",file="app/web.py",line=None,cwe=None,agent_ids=["reviewer-b"],evidence_ids=[],threat_ids=[],source_refs=[]),
+                                               dict(id="w2",title="Stored XSS somewhere",severity="high",description="d",file=None,line=None,cwe="CWE-79",agent_ids=["reviewer-b"],evidence_ids=[],threat_ids=[],source_refs=[])])
+    run["reviews"]=run["reviews"][:2]
+    await engine._adjudication(run)
+    assert len(run["findings"])==4
+
+
+async def test_adjudication_merge_keeps_the_higher_severity_and_unions_source_refs(engine):
+    run=await finished_demo(engine)
+    run.update(mode="demo",findings=[],artifacts=[],gaps=[])
+    for review in run["reviews"]:
+        review.pop("evidence",None)
+    ref_a={"file":"app/auth.py","quote":"first reviewer"}
+    ref_b={"file":"app/auth.py","quote":"second reviewer"}
+    # Same located weakness: reviewer-a rates it low (seen first), reviewer-b rates it critical. The merge must keep
+    # the higher severity and both reviewers' cited sources, not just the first one's.
+    run["reviews"][0].update(gaps=[],findings=[dict(id="s1",title="SQL injection",severity="low",description="d",file="app/auth.py",line=42,cwe="CWE-89",agent_ids=["reviewer-a"],evidence_ids=[],threat_ids=[],source_refs=[ref_a])])
+    run["reviews"][1].update(gaps=[],findings=[dict(id="s2",title="Query is not parameterized",severity="critical",description="d",file="app/auth.py",line=42,cwe="CWE-89",agent_ids=["reviewer-b"],evidence_ids=[],threat_ids=[],source_refs=[ref_b])])
+    run["reviews"]=run["reviews"][:2]
+    await engine._adjudication(run)
+    assert len(run["findings"])==1
+    merged=run["findings"][0]
+    assert merged["severity"]=="critical"
+    assert ref_a in merged["source_refs"] and ref_b in merged["source_refs"]
+
+
+async def test_adjudication_records_a_reviews_evidence_once_for_its_colocated_findings(engine):
+    run=await finished_demo(engine)
+    run.update(mode="demo",findings=[],artifacts=[],gaps=[])
+    for review in run["reviews"]:
+        review.pop("evidence",None)
+    # One review reports two findings at the same concrete location: they merge, and the review's single evidence
+    # record is listed once, not once per finding.
+    run["reviews"][0].update(gaps=[],findings=[dict(id="c1",title="SQL injection",severity="high",description="d",file="app/auth.py",line=42,cwe="CWE-89",agent_ids=["reviewer-a"],evidence_ids=[],threat_ids=[],source_refs=[]),
+                                               dict(id="c2",title="SQL injection variant",severity="high",description="d",file="app/auth.py",line=42,cwe="CWE-89",agent_ids=["reviewer-a"],evidence_ids=[],threat_ids=[],source_refs=[])])
+    run["reviews"]=run["reviews"][:1]
+    await engine._adjudication(run)
+    assert len(run["findings"])==1
+    evidence_ids=run["findings"][0]["evidence_ids"]
+    assert len(evidence_ids)==1 and evidence_ids==list(dict.fromkeys(evidence_ids))
+
+
 def fallback_models(**fallback):
     endpoint="http://127.0.0.1:9/v1"
     models=[{"id":"commander","role":"commander","provider":"openai_compatible","model_id":"m-c","family":"fc","endpoint":endpoint},
