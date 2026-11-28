@@ -604,6 +604,12 @@ class Engine:
         limitations=run.setdefault("limitations",[])
         if message not in limitations: limitations.append(message)
 
+    def limits(self,run,messages):
+        """Record several capability limits at once, each once (see limit()); a resumed stage that re-adds the same
+        ones keeps them single."""
+        limitations=run.setdefault("limitations",[])
+        limitations.extend(message for message in messages if message not in limitations)
+
     def stage_answers(self,run):
         """Who answers each role of this run's stages, and which of their answers a resumed stage reuses."""
         from .stage_answers import StageAnswers
@@ -678,8 +684,7 @@ class Engine:
                 raise PolicyError("No supported source files available")
             # A resumed preflight re-reads the same snapshot; keep each gap and limitation once.
             run["gaps"].extend(gap for gap in source["gaps"] if gap not in run["gaps"])
-            limitations=run.setdefault("limitations",[])
-            limitations.extend(item for item in source.get("limitations",[]) if item not in limitations)
+            self.limits(run,source.get("limitations",[]))
             for profile in run["manifest"]["models"]:
                 # Reserved, metered and settled like every other answer; a probe that fails raises and stops the preflight.
                 result=await self.answers(run).probe(profile)
@@ -902,8 +907,7 @@ class Engine:
             # A resumed adjudication would re-extend the same review gaps; keep each once.
             # Each reviewer's own limits carry its ID: three reviewers often word the same limit three ways.
             attributed=[gap if str(gap).startswith(review["agent_id"]+":") else f"{review['agent_id']}: {gap}" for gap in review["gaps"]]
-            limitations=run.setdefault("limitations",[])
-            limitations.extend(gap for gap in attributed if gap not in limitations)
+            self.limits(run,attributed)
             # A resumed adjudication reuses the sealed review's recorded evidence
             # instead of writing a second artifact for the same content.
             if not review.get("evidence"):
@@ -949,8 +953,7 @@ class Engine:
                 self.keep_verified_references(run,architecture["assets"]+architecture["dataflows"],"source_refs","Architecture map")
                 run["architecture"]=architecture
                 # As a reviewer's: what the map could not establish limits the map, and is a limitation.
-                limitations=run.setdefault("limitations",[])
-                limitations.extend(gap for gap in architecture["gaps"] if gap not in limitations)
+                self.limits(run,architecture["gaps"])
         await self.note(run,"Evidence union recorded; model agreement does not confirm a vulnerability")
 
     async def _threat_model(self,run):
@@ -1067,8 +1070,7 @@ class Engine:
                         raise PolicyError(str(exc)) from None
                 # As a reviewer's: what the test designer could not cover limits its design, and is a limitation; a case
                 # that is designed and then not verified keeps the run incomplete through its execution.
-                limitations=run.setdefault("limitations",[])
-                limitations.extend(gap for gap in data.get("gaps",[]) if gap not in limitations)
+                self.limits(run,data.get("gaps",[]))
                 seal_cases(cases)
         await self.note(run,f"Validated {len(run['cases'])} cases with threat links and executable oracles")
 
