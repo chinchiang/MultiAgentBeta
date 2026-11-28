@@ -180,6 +180,7 @@ BROKER_REFUSALS={
     "revoked":"Egress revoked before the request was sent",
     "connect_timeout":"The request deadline passed before the request was sent",
     "connect_failed":"Target connection failed before the request was sent",
+    "tls_untrusted":"The target's TLS certificate is not trusted for its host; supply its private CA as target_ca_pem.",
     "timeout":"Target response was incomplete",
     "protocol_error":"Target response was incomplete",
     "deployment_changed":"Deployment identity changed or was not present",
@@ -444,6 +445,7 @@ class Supervisor:
             response=_target_transport.send_pinned_request(
                 scheme,host,port,pinned,method,path,headers,body,
                 timeout=remaining,max_response_bytes=MAX_BODY,
+                trusted_ca=self.manifest.get("target_ca_pem"),
                 deployment_header=self.manifest.get("deployment_header"),
                 deployment_id=self.manifest.get("deployment_id"),
                 egress=(self.sockets,self.socket_lock,self.revoked),

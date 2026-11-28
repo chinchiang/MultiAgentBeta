@@ -1012,6 +1012,7 @@ def test_supervisor_forward_delegates_to_target_transport_and_refuses_non_ascii_
             "revoked":"Egress revoked before the request was sent",
             "connect_timeout":"The request deadline passed before the request was sent",
             "connect_failed":"Target connection failed before the request was sent",
+            "tls_untrusted":"The target's TLS certificate is not trusted for its host; supply its private CA as target_ca_pem.",
         }
         expected_post_send={
             "timeout":"Target response was incomplete",
@@ -1049,6 +1050,34 @@ def test_supervisor_forward_delegates_to_target_transport_and_refuses_non_ascii_
     finally:
         sup.lease.close()
         raw_listener.close()
+
+
+def test_supervisor_forward_threads_the_manifests_target_ca_to_the_transport(runtime,monkeypatch):
+    from vibe_audit import target_transport as transport_module
+    from vibe_audit.target_transport import TransportRefused
+    from vibe_audit.worker_entry import NotSent
+
+    scope=manifest("http://127.0.0.1:9")
+    spec={"operation":"http_case","cases":[case()],"run_id":scope["run_id"]}
+    sup=_new_supervisor(runtime,monkeypatch,scope,spec)
+    monkeypatch.setattr(transport_module,"resolve_pinned_ip",lambda *a,**k:"127.0.0.1")
+    seen=[]
+    def capture(*a,**k):
+        seen.append(k.get("trusted_ca"))
+        raise TransportRefused("connect_failed",delivered=False)
+    monkeypatch.setattr(transport_module,"send_pinned_request",capture)
+    try:
+        # With no target_ca_pem in the manifest, forward leaves trusted_ca unset (None).
+        with pytest.raises(NotSent):
+            sup.forward("GET","/private",{},b"")
+        # With one, forward threads that exact PEM to the transport as the per-target CA.
+        ca="-----BEGIN CERTIFICATE-----\nMIIBprivateca\n-----END CERTIFICATE-----\n"
+        sup.manifest={**scope,"target_ca_pem":ca}
+        with pytest.raises(NotSent):
+            sup.forward("GET","/private",{},b"")
+        assert seen==[None,ca]
+    finally:
+        sup.lease.close()
 
 
 def test_worker_runtime_and_supervisor_redaction_cover_bound_models_and_skip_reserved_settings(runtime,monkeypatch):

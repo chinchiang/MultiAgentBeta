@@ -291,6 +291,7 @@ PIN_REFUSALS = {
 }
 TARGET_REFUSALS = {
     "revoked": "Run was cancelled before a request.",
+    "tls_untrusted": "The target's TLS certificate is not trusted for its host; supply its private CA as target_ca_pem.",
     "deployment_changed": "Deployment identity changed or was not present",
     "redirect": "Target returned a redirect; redirects are never followed.",
     "unsafe_redirect": "Target answered a state-changing request with a redirect; its effect is unverified and redirects are never followed.",
@@ -439,14 +440,15 @@ async def execute_case(manifest: dict, case: dict, *, cancel_event, request_hook
                         timeout=REQUEST_TIMEOUT_SECONDS, max_response_bytes=MAX_RESPONSE_BYTES,
                         deployment_header=manifest.get("deployment_header"),
                         deployment_id=manifest.get("deployment_id"),
+                        trusted_ca=manifest.get("target_ca_pem"),
                     )
                 except asyncio.CancelledError:
                     requests += 1
                     raise
             except _target_transport.TransportRefused as exc:
                 if not exc.delivered:
-                    if exc.rule == "revoked":
-                        raise AdapterBlocked(TARGET_REFUSALS["revoked"]) from None
+                    if exc.rule in {"revoked", "tls_untrusted"}:
+                        raise AdapterBlocked(TARGET_REFUSALS[exc.rule]) from None
                     if exc.rule in PIN_REFUSALS:
                         raise AdapterBlocked(PIN_REFUSALS[exc.rule]) from None
                     if exc.rule == "connect_timeout":

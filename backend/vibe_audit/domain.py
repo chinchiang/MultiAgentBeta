@@ -4,6 +4,7 @@ import hashlib
 import ipaddress
 import json
 import re
+import ssl
 from datetime import datetime, timezone
 from typing import Any, Literal
 
@@ -162,6 +163,25 @@ class RunInput(StrictModel):
     cases: list[dict] = Field(default_factory=list, max_length=100)
     # Exact strings the operator declares synthetic test credentials, so the source snapshot leaves them readable.
     unredacted_literals: list[str] = Field(default_factory=list, max_length=50)
+    # PEM CA certificates the operator trusts for an HTTPS target behind a private CA, on top of the system's. Frozen
+    # with the manifest, so the run records which CA it trusted.
+    target_ca_pem: str | None = None
+
+    @field_validator("target_ca_pem")
+    @classmethod
+    def target_ca(cls, value):
+        if value is None:
+            return value
+        blocks = re.findall(r"-----BEGIN ([A-Z0-9 ]+)-----", value)
+        refused = ValueError("target_ca_pem must hold PEM CA certificates only, at most 64 KiB, that TLS can load")
+        # Certificates only: a private key has no business in a trust anchor, and nothing else is a CA.
+        if len(value.encode()) > 64 * 1024 or not blocks or any(block != "CERTIFICATE" for block in blocks):
+            raise refused
+        try:
+            ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT).load_verify_locations(cadata=value)
+        except (ssl.SSLError, ValueError):
+            raise refused from None
+        return value
 
     @field_validator("unredacted_literals")
     @classmethod

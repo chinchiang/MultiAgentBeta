@@ -186,7 +186,7 @@ def test_chinese_report_shows_the_run_error_in_chinese():
 
 def test_broker_refusals_have_traditional_chinese_wording():
     from vibe_audit.worker_entry import BROKER_REFUSALS
-    assert len(BROKER_REFUSALS) == 18
+    assert len(BROKER_REFUSALS) == 19
     for rule, message in BROKER_REFUSALS.items():
         chinese = zh(message)
         assert chinese is not None and CJK.search(chinese), (rule, message, chinese)

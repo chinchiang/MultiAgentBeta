@@ -275,6 +275,7 @@ ZH.update({
     "Positive controls exceed the bounded adapter limit.": "positive control 數量超過 adapter 的上限。",
     "Positive controls require a name, GET path, expected 2xx status and explicit required text.": "positive control 需要名稱、GET 路徑、預期的 2xx 狀態碼與明確的必要文字。",
     "Run was cancelled before a request.": "執行在送出請求前已取消。",
+    "The target's TLS certificate is not trusted for its host; supply its private CA as target_ca_pem.": "目標的 TLS 憑證不被此主機名稱信任；請以 target_ca_pem 提供它的私有 CA。",
     "The request budget or lease hook refused execution.": "請求預算或 lease hook 拒絕執行。",
     "Target returned a redirect; redirects are never followed.": "目標回傳轉址；系統一律不跟隨轉址。",
     "Target answered a state-changing request with a redirect; its effect is unverified and redirects are never followed.": "目標以轉址回應會改變狀態的請求；其效果未經驗證，且系統一律不跟隨轉址。",
@@ -438,6 +439,7 @@ ZH.update({
     "A fallback must be a different model configuration from the Agent it stands in for": "備援必須是與被代替 Agent 不同的模型設定",
     "A reviewer's fallback must be a model family none of the other reviewers use": "審查員的備援必須是其他審查員都沒有使用的模型家族",
     "Unredacted test literals are exact single-line strings of 6 to 200 characters without surrounding spaces": "不遮蔽的測試字面值必須是 6 到 200 個字元的單行字串，前後不能有空白",
+    "target_ca_pem must hold PEM CA certificates only, at most 64 KiB, that TLS can load": "target_ca_pem 只能放 TLS 載入得了的 PEM CA 憑證，最多 64 KiB",
     "An unredacted test literal equals a model credential; list only synthetic test values": "不遮蔽的測試字面值與模型金鑰相同；只能列出合成的測試值",
 })
 

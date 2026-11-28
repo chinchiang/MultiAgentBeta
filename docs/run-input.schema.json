@@ -484,6 +484,18 @@
       "maxItems": 50,
       "title": "Unredacted Literals",
       "type": "array"
+    },
+    "target_ca_pem": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Target Ca Pem"
     }
   },
   "title": "RunInput",

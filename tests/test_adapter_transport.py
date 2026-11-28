@@ -28,8 +28,10 @@ ORIGINS = adapters.TARGET_CREDENTIAL_ORIGINS_ENV
 class Listener:
     """Answers every connection with `reply`: bytes sent as they are, or a function given the socket and request."""
 
-    def __init__(self, reply):
+    def __init__(self, reply, ssl_context=None):
         self.reply = reply
+        # With a server context, each connection is answered over TLS; a client that refuses the certificate is dropped.
+        self.ssl_context = ssl_context
         self.requests = []
         self.socket = socket.socket()
         self.socket.bind(("127.0.0.1", 0))
@@ -43,6 +45,12 @@ class Listener:
                 conn, _ = self.socket.accept()
             except OSError:
                 return
+            if self.ssl_context is not None:
+                try:
+                    conn = self.ssl_context.wrap_socket(conn, server_side=True)
+                except OSError:
+                    conn.close()
+                    continue
             with conn:
                 conn.settimeout(2)
                 request = b""
@@ -74,8 +82,8 @@ def response(status=200, body=b"", headers=()):
 def listen():
     listeners = []
 
-    def start(reply):
-        listeners.append(Listener(reply))
+    def start(reply, ssl_context=None):
+        listeners.append(Listener(reply, ssl_context))
         return listeners[-1]
     yield start
     for listener in listeners:
@@ -674,10 +682,11 @@ def test_ledger_oracle_reasons():
 class Target:
     """A loopback HTTP target: GET /ok answers "safe fixture", GET /leak answers the canary, POST /echo echoes the body."""
 
-    def __init__(self, listen):
+    def __init__(self, listen, ssl_context=None):
         self.seen = []
-        self.listener = listen(self.answer)
-        self.manifest = {"mode": "live", "target_url": f"http://127.0.0.1:{self.listener.port}", "allowed_target_ips": ["127.0.0.1"]}
+        self.listener = listen(self.answer, ssl_context)
+        scheme = "https" if ssl_context else "http"
+        self.manifest = {"mode": "live", "target_url": f"{scheme}://127.0.0.1:{self.listener.port}", "allowed_target_ips": ["127.0.0.1"]}
 
     def answer(self, conn, request):
         line = request.split(b"\r\n", 1)[0].decode()
@@ -1070,3 +1079,46 @@ def test_pinned_transport_and_credential_redaction_have_a_single_source_of_truth
             if isinstance(node, ast.ImportFrom) and (node.module or "").endswith("adapters"):
                 leaked = {alias.name for alias in node.names} & (moved | {"_request"})
                 assert not leaked, f"tests/{path.name} still imports {sorted(leaked)} from adapters"
+
+
+@pytest.fixture(scope="module")
+def private_ca(tmp_path_factory):
+    """A self-signed certificate for 127.0.0.1, standing for a target behind a CA no system trusts: its PEM text and
+    a server context that presents it."""
+    import ssl
+    import subprocess
+    folder = tmp_path_factory.mktemp("private-ca")
+    cert, key = folder / "cert.pem", folder / "key.pem"
+    subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", str(key), "-out", str(cert),
+                    "-days", "1", "-subj", "/CN=127.0.0.1", "-addext", "subjectAltName=IP:127.0.0.1"], check=True, capture_output=True)
+    server = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    server.load_cert_chain(certfile=str(cert), keyfile=str(key))
+    return cert.read_text(), server, key.read_text()
+
+
+@pytest.mark.asyncio
+async def test_a_case_reaches_a_target_behind_a_private_ca_only_with_the_ca_its_manifest_trusts(listen, private_ca):
+    pem, server, _ = private_ca
+    target = Target(listen, ssl_context=server)
+    # No CA the run trusts signs the target's certificate: the case is blocked before anything is sent, and says why.
+    assert await run(target, live_case()) == _result("blocked", "The target's TLS certificate is not trusted for its host; supply its private CA as target_ca_pem.")
+    assert target.seen == []
+    # The manifest's CA is trusted on top of the system's: the same case reaches the target.
+    target.manifest["target_ca_pem"] = pem
+    assert (await run(target, live_case()))["requests"] == 1
+    assert target.seen == [("GET", "/ok")]
+
+
+def test_a_run_input_takes_a_target_ca_of_pem_certificates_only(private_ca):
+    from pydantic import ValidationError
+    from vibe_audit.domain import RunInput
+    pem, _, key = private_ca
+    # Frozen with the rest of the manifest, so the run records which CA it trusted.
+    assert RunInput(target_ca_pem=pem).model_dump()["target_ca_pem"] == pem
+    assert RunInput().model_dump()["target_ca_pem"] is None
+    import re
+    refusal = re.escape("target_ca_pem must hold PEM CA certificates only, at most 64 KiB, that TLS can load")
+    broken = pem.replace(pem.splitlines()[1], "A" * len(pem.splitlines()[1]))
+    for value in ["not a certificate", key, pem + key, broken, pem + "\n" + "x" * (64 * 1024)]:
+        with pytest.raises(ValidationError, match=refusal):
+            RunInput(target_ca_pem=value)

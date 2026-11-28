@@ -198,8 +198,12 @@ def send_pinned_request(
     deployment_header: str | None = None,
     deployment_id: str | None = None,
     egress: tuple[set[socket.socket], threading.Lock, threading.Event] | None = None,
+    trusted_ca: str | None = None,
 ) -> dict[str, Any]:
-    """Send one origin-pinned HTTP(S) request without retries or redirect following."""
+    """Send one origin-pinned HTTP(S) request without retries or redirect following.
+
+    trusted_ca is PEM text of a CA the operator trusts for this target, on top of the system's: a target behind a
+    private CA is reached only with it. A certificate no trusted CA signs for the host is refused as tls_untrusted."""
     try:
         if not isinstance(pinned_ip, str):
             raise ValueError
@@ -247,7 +251,10 @@ def send_pinned_request(
                 if remaining <= 0:
                     raise TimeoutError
                 sock.settimeout(remaining)
-                secure = ssl.create_default_context().wrap_socket(
+                context = ssl.create_default_context()
+                if trusted_ca:
+                    context.load_verify_locations(cadata=trusted_ca)
+                secure = context.wrap_socket(
                     sock, server_hostname=host, do_handshake_on_connect=False
                 )
                 with lock:
@@ -266,6 +273,10 @@ def send_pinned_request(
             sock.settimeout(remaining)
         except TransportRefused:
             raise
+        except ssl.SSLCertVerificationError:
+            # No trusted CA signs the certificate for this host: nothing was sent, and the operator can supply the
+            # target's private CA rather than look for a network fault.
+            raise TransportRefused("tls_untrusted", delivered=False) from None
         except OSError as exc:
             if isinstance(exc, TimeoutError) or expired.is_set():
                 raise TransportRefused("connect_timeout", delivered=False) from None
