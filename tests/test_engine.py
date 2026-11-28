@@ -455,6 +455,22 @@ async def test_time_budget_counts_active_time_across_resume_and_restart(engine,t
         engine.policy.authorize(restarted,restarted["cases"][0],asyncio.Event())
 
 
+async def test_resume_skips_completed_stages_from_the_store_not_a_checkpoint(engine):
+    run=await finished_demo(engine)
+    assert run["stage"]=="complete" and len(run["executions"])==3
+    original_ids=[e["id"] for e in run["executions"]]
+    original_usage=dict(run["usage"])
+    # A fresh engine shares no in-memory state with the one that ran, so a correct resume can only come from the
+    # stored run records (completed_stages), never from graph state. It must skip every done stage and re-run nothing.
+    restarted=Engine(engine.store)
+    restarted.start(run["id"],resume=True)
+    await restarted.tasks[run["id"]]
+    resumed=engine.store.get(run["id"])
+    assert resumed["stage"]=="complete"
+    assert [e["id"] for e in resumed["executions"]]==original_ids
+    assert resumed["usage"]==original_usage
+
+
 @pytest.mark.parametrize("outcome",["success","known_failure","unknown_failure"])
 async def test_model_call_returns_its_reservation_once_usage_is_counted(engine,outcome):
     run=engine.create(RunInput(name="Reservation"))

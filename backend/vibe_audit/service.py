@@ -12,7 +12,6 @@ from functools import partial
 from typing import Any, TypedDict
 
 from langgraph.graph import StateGraph, START, END
-from langgraph.checkpoint.memory import InMemorySaver
 
 from .catalog import CatalogError
 from .diagnostics import note_failure
@@ -56,7 +55,6 @@ class Engine:
         self.cancel_flags: dict[str,asyncio.Event]={}
         self.runs: dict[str,dict]={}
         self.locks: dict[str,asyncio.Lock]={}
-        self.checkpointer=InMemorySaver()
         self.runtimes: dict[str,Any]={}
         self.runtime_configs: dict[str,dict]={}
         # Finished attempts whose last save failed: their final state, kept until a save succeeds.
@@ -421,14 +419,10 @@ class Engine:
                 graph.add_edge(previous,stage)
                 previous=stage
             graph.add_edge(previous,END)
-            config={"configurable":{"thread_id":run["id"]},"recursion_limit":30}
-            if self.database_url:
-                from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-                async with AsyncPostgresSaver.from_conn_string(self.database_url) as cp:
-                    await cp.setup()
-                    await graph.compile(checkpointer=cp).ainvoke({"run_id":run["id"]},config)
-            else:
-                await graph.compile(checkpointer=self.checkpointer).ainvoke({"run_id":run["id"]},config)
+            # No checkpointer: resume re-checks the gates against the stored run records and skips completed stages
+            # (the node guard above), which a graph checkpoint of only run_id could never drive, so writing one was
+            # dead weight. Progress lives in the run dict and the store, not in graph state.
+            await graph.compile().ainvoke({"run_id":run["id"]},{"recursion_limit":30})
             run["stage"]="complete"
             # Before the status, so a write-back gap it records counts against completion.
             try:

@@ -25,7 +25,7 @@ requirements.lock.txt 為每個鎖定版本列出 PyPI 上所有發布檔的 sha
 
 ## 2. 資料庫與工作目錄
 
-準備專用 PostgreSQL role/database，允許建立本工具的表與 LangGraph checkpoint。以 VIBEAUDIT_DATABASE_URL 保存連線資訊，勿把密碼寫進專案設定或 prompt。使用管理者預建的資料目錄，控制處理程序對其有權限；受測來源只放在明確准許的根目錄。
+準備專用 PostgreSQL role/database，允許建立本工具的表。以 VIBEAUDIT_DATABASE_URL 保存連線資訊，勿把密碼寫進專案設定或 prompt。使用管理者預建的資料目錄，控制處理程序對其有權限；受測來源只放在明確准許的根目錄。
 
 ```sh
 export VIBEAUDIT_DATABASE_URL='postgresql://USER:PASSWORD@127.0.0.1:5432/vibeaudit'
@@ -125,7 +125,7 @@ requirements.lock.txt lists, for each locked version, the sha256 of every releas
 
 ## 2. Database and working directories
 
-Prepare a dedicated PostgreSQL role/database, allowed to create this tool's tables and LangGraph checkpoints. Keep the connection details in VIBEAUDIT_DATABASE_URL; never write the password into project settings or prompts. Use a data directory pre-created by the administrator, for which the control program has permissions; sources under test go only under explicitly approved root directories.
+Prepare a dedicated PostgreSQL role/database, allowed to create this tool's tables. Keep the connection details in VIBEAUDIT_DATABASE_URL; never write the password into project settings or prompts. Use a data directory pre-created by the administrator, for which the control program has permissions; sources under test go only under explicitly approved root directories.
 
 ```sh
 export VIBEAUDIT_DATABASE_URL='postgresql://USER:PASSWORD@127.0.0.1:5432/vibeaudit'

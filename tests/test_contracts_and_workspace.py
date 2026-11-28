@@ -436,20 +436,19 @@ def test_finding_decision_needs_independent_execution_evidence(tmp_path):
         assert response.status_code==409 and response.json()["detail"]=="Evidence integrity check failed",response.text
 
 
-async def test_postgres_checkpoints_and_resume_do_not_duplicate_executions(tmp_path):
+async def test_postgres_resume_from_stored_records_does_not_duplicate_executions(tmp_path):
     url=os.getenv("VIBEAUDIT_TEST_DATABASE_URL")
     if not url:
         pytest.skip("Provide dedicated PostgreSQL integration database")
     store=Store(tmp_path,url)
     engine=Engine(store,url)
-    run=engine.create(RunInput(name="PostgreSQL durable checkpoint integration"))
+    run=engine.create(RunInput(name="PostgreSQL resume integration"))
     engine.start(run["id"])
     await engine.tasks[run["id"]]
     original=store.get(run["id"])
     assert original["stage"]=="complete",original.get("error")
     assert len(original["executions"])==3
-    checkpoints=store._execute(placeholders("SELECT count(*) FROM checkpoints WHERE thread_id=?",store.postgres),(run["id"],)).fetchone()[0]
-    assert checkpoints>0
+    # A fresh controller resumes from the stored run records (completed_stages), not from a graph checkpoint.
     restarted=Engine(store,url)
     restarted.start(run["id"],resume=True)
     await restarted.tasks[run["id"]]

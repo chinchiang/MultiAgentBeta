@@ -4,7 +4,7 @@
 
 | 決策 | 主要參考資料 | 驗證界線 |
 |---|---|---|
-| LangGraph 檢查點與副作用 | https://docs.langchain.com/oss/python/langgraph/persistence ; https://docs.langchain.com/oss/python/langgraph/interrupts ; https://github.com/langchain-ai/langgraph | 以已安裝的圖譜與真實 PostgreSQL 進行檢查點／交易測試；詳見 VALIDATION.md |
+| LangGraph 檢查點與副作用 | https://docs.langchain.com/oss/python/langgraph/persistence ; https://docs.langchain.com/oss/python/langgraph/interrupts ; https://github.com/langchain-ai/langgraph | 以已安裝的圖譜與真實 PostgreSQL 進行交易與 resume 測試（詳見 VALIDATION.md）；圖不使用 checkpointer（見 service.py） |
 | 各模型轉接器 | https://docs.litellm.ai/docs/providers/nvidia_nim ; https://github.com/BerriAI/litellm/blob/main/litellm/llms/nvidia_nim/chat/transformation.py | 已以實際 SDK 與合成 HTTP 驗證；未進行真實憑證測試 |
 | 威脅建模 | https://cheatsheetseries.owasp.org/cheatsheets/Threat_Modeling_Cheat_Sheet.html ; https://github.com/OWASP/CheatSheetSeries | 供 schema 設計參考；完整性仍取決於應用程式需求 |
 | ASVS/WSTG | https://github.com/OWASP/ASVS ; https://wstg.owasp.org/v4.2/ | 以官方 JSON/CSV 匯入標準目錄並與來源交叉核對；詳見 catalogs/manifest.json；非合規認證 |
@@ -26,7 +26,7 @@ Accessed 2026-09-24 during planning; implementation dependencies are separately 
 
 | Decision | Primary references | Verification boundary |
 |---|---|---|
-| LangGraph checkpoints and side effects | https://docs.langchain.com/oss/python/langgraph/persistence ; https://docs.langchain.com/oss/python/langgraph/interrupts ; https://github.com/langchain-ai/langgraph | Installed graph and real PostgreSQL checkpoint/transaction tests; see VALIDATION.md |
+| LangGraph checkpoints and side effects | https://docs.langchain.com/oss/python/langgraph/persistence ; https://docs.langchain.com/oss/python/langgraph/interrupts ; https://github.com/langchain-ai/langgraph | Installed graph and real PostgreSQL transaction and resume tests (see VALIDATION.md); the graph uses no checkpointer (service.py) |
 | Per-model adapters | https://docs.litellm.ai/docs/providers/nvidia_nim ; https://github.com/BerriAI/litellm/blob/main/litellm/llms/nvidia_nim/chat/transformation.py | Actual SDK + synthetic HTTP verified; no real credential tests |
 | Threat modeling | https://cheatsheetseries.owasp.org/cheatsheets/Threat_Modeling_Cheat_Sheet.html ; https://github.com/OWASP/CheatSheetSeries | Informs schema; completeness still depends on application requirements |
 | ASVS/WSTG | https://github.com/OWASP/ASVS ; https://wstg.owasp.org/v4.2/ | Canonical catalog ingestion with official JSON/CSV and source cross-checks; see catalogs/manifest.json; not compliance certification |
