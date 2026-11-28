@@ -2743,6 +2743,94 @@ async def test_each_reviewer_limit_names_the_reviewer_that_reported_it(engine):
     assert run["reviews"][1]["agent_id"]+": already attributed" in run["limitations"]
 
 
+async def test_adjudication_merges_same_weakness_findings_despite_different_titles(engine):
+    run=await finished_demo(engine)
+    run.update(mode="demo",findings=[],artifacts=[],gaps=[])
+    for review in run["reviews"]:
+        review.pop("evidence",None)
+    # Two reviewers report the same weakness (same file/line/cwe) but word the title differently.
+    run["reviews"][0].update(gaps=[],findings=[dict(id="fa",title="SQL injection in login",severity="high",description="d",
+                                                    file="app/auth.py",line=42,cwe="CWE-89",agent_ids=["reviewer-a"],evidence_ids=[],threat_ids=[])])
+    run["reviews"][1].update(gaps=[],findings=[dict(id="fb",title="Unsanitized query parameter reaches the SQL layer",severity="high",description="d",
+                                                    file="app/auth.py",line=42,cwe="CWE-89",agent_ids=["reviewer-b"],evidence_ids=[],threat_ids=[])])
+    run["reviews"]=run["reviews"][:2]
+    await engine._adjudication(run)
+    # One finding, carrying both reviewers and both sealed evidence records.
+    assert len(run["findings"])==1
+    merged=run["findings"][0]
+    assert merged["agent_ids"]==["reviewer-a","reviewer-b"]
+    assert len(merged["evidence_ids"])==2
+
+
+async def test_adjudication_keeps_unlocated_and_distinct_findings_separate(engine):
+    run=await finished_demo(engine)
+    run.update(mode="demo",findings=[],artifacts=[],gaps=[])
+    for review in run["reviews"]:
+        review.pop("evidence",None)
+    # Two findings with no structured identity (file/line/cwe all None) must stay distinct, not collapse into one.
+    run["reviews"][0].update(gaps=[],findings=[dict(id="u1",title="Unclear secret handling",severity="low",description="d",
+                                                    file=None,line=None,cwe=None,agent_ids=["reviewer-a"],evidence_ids=[],threat_ids=[])])
+    run["reviews"][1].update(gaps=[],findings=[dict(id="u2",title="Weak session entropy",severity="low",description="d",
+                                                    file=None,line=None,cwe=None,agent_ids=["reviewer-b"],evidence_ids=[],threat_ids=[]),
+                                               dict(id="d1",title="Path traversal",severity="high",description="d",
+                                                    file="app/files.py",line=10,cwe="CWE-22",agent_ids=["reviewer-b"],evidence_ids=[],threat_ids=[])])
+    run["reviews"]=run["reviews"][:2]
+    await engine._adjudication(run)
+    assert {f["title"] for f in run["findings"]}=={"Unclear secret handling","Weak session entropy","Path traversal"}
+    assert len(run["findings"])==3
+
+
+async def test_adjudication_does_not_merge_findings_without_a_concrete_location(engine):
+    run=await finished_demo(engine)
+    run.update(mode="demo",findings=[],artifacts=[],gaps=[])
+    for review in run["reviews"]:
+        review.pop("evidence",None)
+    # A located finding needs both file and line. A file without a line, and a cwe with no location (what whitebox
+    # leaves when it removes an out-of-source location), are not concrete identities and must not merge.
+    run["reviews"][0].update(gaps=[],findings=[dict(id="p1",title="Open redirect",severity="high",description="d",file="app/web.py",line=None,cwe=None,agent_ids=["reviewer-a"],evidence_ids=[],threat_ids=[],source_refs=[]),
+                                               dict(id="w1",title="Reflected XSS somewhere",severity="high",description="d",file=None,line=None,cwe="CWE-79",agent_ids=["reviewer-a"],evidence_ids=[],threat_ids=[],source_refs=[])])
+    run["reviews"][1].update(gaps=[],findings=[dict(id="p2",title="Different open redirect",severity="high",description="d",file="app/web.py",line=None,cwe=None,agent_ids=["reviewer-b"],evidence_ids=[],threat_ids=[],source_refs=[]),
+                                               dict(id="w2",title="Stored XSS somewhere",severity="high",description="d",file=None,line=None,cwe="CWE-79",agent_ids=["reviewer-b"],evidence_ids=[],threat_ids=[],source_refs=[])])
+    run["reviews"]=run["reviews"][:2]
+    await engine._adjudication(run)
+    assert len(run["findings"])==4
+
+
+async def test_adjudication_merge_keeps_the_higher_severity_and_unions_source_refs(engine):
+    run=await finished_demo(engine)
+    run.update(mode="demo",findings=[],artifacts=[],gaps=[])
+    for review in run["reviews"]:
+        review.pop("evidence",None)
+    ref_a={"file":"app/auth.py","quote":"first reviewer"}
+    ref_b={"file":"app/auth.py","quote":"second reviewer"}
+    # Same located weakness: reviewer-a rates it low (seen first), reviewer-b rates it critical. The merge must keep
+    # the higher severity and both reviewers' cited sources, not just the first one's.
+    run["reviews"][0].update(gaps=[],findings=[dict(id="s1",title="SQL injection",severity="low",description="d",file="app/auth.py",line=42,cwe="CWE-89",agent_ids=["reviewer-a"],evidence_ids=[],threat_ids=[],source_refs=[ref_a])])
+    run["reviews"][1].update(gaps=[],findings=[dict(id="s2",title="Query is not parameterized",severity="critical",description="d",file="app/auth.py",line=42,cwe="CWE-89",agent_ids=["reviewer-b"],evidence_ids=[],threat_ids=[],source_refs=[ref_b])])
+    run["reviews"]=run["reviews"][:2]
+    await engine._adjudication(run)
+    assert len(run["findings"])==1
+    merged=run["findings"][0]
+    assert merged["severity"]=="critical"
+    assert ref_a in merged["source_refs"] and ref_b in merged["source_refs"]
+
+
+async def test_adjudication_records_a_reviews_evidence_once_for_its_colocated_findings(engine):
+    run=await finished_demo(engine)
+    run.update(mode="demo",findings=[],artifacts=[],gaps=[])
+    for review in run["reviews"]:
+        review.pop("evidence",None)
+    # One review reports two findings at the same concrete location: they merge, and the review's single evidence
+    # record is listed once, not once per finding.
+    run["reviews"][0].update(gaps=[],findings=[dict(id="c1",title="SQL injection",severity="high",description="d",file="app/auth.py",line=42,cwe="CWE-89",agent_ids=["reviewer-a"],evidence_ids=[],threat_ids=[],source_refs=[]),
+                                               dict(id="c2",title="SQL injection variant",severity="high",description="d",file="app/auth.py",line=42,cwe="CWE-89",agent_ids=["reviewer-a"],evidence_ids=[],threat_ids=[],source_refs=[])])
+    run["reviews"]=run["reviews"][:1]
+    await engine._adjudication(run)
+    assert len(run["findings"])==1
+    evidence_ids=run["findings"][0]["evidence_ids"]
+    assert len(evidence_ids)==1 and evidence_ids==list(dict.fromkeys(evidence_ids))
+
+
 def fallback_models(**fallback):
     endpoint="http://127.0.0.1:9/v1"
     models=[{"id":"commander","role":"commander","provider":"openai_compatible","model_id":"m-c","family":"fc","endpoint":endpoint},
