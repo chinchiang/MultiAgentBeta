@@ -433,6 +433,21 @@ def test_send_pinned_request_defense_in_depth_and_http_https_dial(serve, tls_pai
     assert f"Host: [::1]:{v6.port}\r\n".encode() in v6.requests[0]
 
 
+def test_a_target_signed_by_a_private_ca_is_reached_only_with_that_ca_and_refused_as_untrusted_without_it(serve, tls_pair):
+    server_ctx, cert_file = tls_pair
+    tls_server = serve(wire_response(200, b"private"), ssl_context=server_ctx)
+    # The system's CAs do not sign it: the handshake fails before anything is sent, and says why.
+    with pytest.raises(TransportRefused) as refused:
+        send_pinned_request("https", "secure.fixture", tls_server.port, "127.0.0.1", timeout=2.0)
+    assert (refused.value.rule, refused.value.delivered, refused.value.status_code) == ("tls_untrusted", False, None)
+    assert tls_server.requests == []
+    # With the operator's CA trusted as well, the same request goes through.
+    response = send_pinned_request("https", "secure.fixture", tls_server.port, "127.0.0.1", timeout=2.0,
+                                   trusted_ca=cert_file.read_text())
+    assert (response["status_code"], response["body"]) == (200, "private")
+    assert len(tls_server.requests) == 1
+
+
 def test_bodiless_head_and_204_ignore_declared_content_length_while_304_is_refused_as_3xx(serve):
     head_server = serve(b"HTTP/1.1 200 OK\r\nContent-Length: 99\r\nConnection: close\r\n\r\n")
     assert send_pinned_request("http", "127.0.0.1", head_server.port, "127.0.0.1", "HEAD", "/") == {
@@ -485,7 +500,8 @@ def test_pre_send_failures_never_mark_delivered_and_clean_up_egress_sockets(serv
     assert (exc_info.value.rule, exc_info.value.delivered, exc_info.value.status_code) == ("connect_failed", False, None)
     assert sockets == set()
 
-    # TLS hostname mismatch fails during handshake (pre-send: delivered=False).
+    # TLS hostname mismatch fails during handshake (pre-send: delivered=False): the certificate is not trusted for
+    # this host, whichever CA signed it.
     server_ctx, cert_file = tls_pair
     tls_server = serve(wire_response(200, b"secret"), ssl_context=server_ctx)
     real_default_ctx = ssl.create_default_context
@@ -494,7 +510,7 @@ def test_pre_send_failures_never_mark_delivered_and_clean_up_egress_sockets(serv
             send_pinned_request(
                 "https", "wrong.fixture", tls_server.port, "127.0.0.1", timeout=2.0, egress=fresh_egress
             )
-    assert (exc_info.value.rule, exc_info.value.delivered, exc_info.value.status_code) == ("connect_failed", False, None)
+    assert (exc_info.value.rule, exc_info.value.delivered, exc_info.value.status_code) == ("tls_untrusted", False, None)
     assert tls_server.requests == []
     assert sockets == set()
 
