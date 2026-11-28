@@ -182,8 +182,6 @@ class ModelAnswers:
         validator = checked_validator(schema)
         system = SYSTEM + "\n" + instruction
         amount = reservation(instruction, payload, response_schema, profile["max_output_tokens"])
-        # What a cancelled attempt is charged: the reservation is an estimate, and no metering will correct it.
-        bound = upper_bound(instruction, payload, response_schema, profile["max_output_tokens"])
         # None for either flag is the same as False, so those two mutants cannot be told apart.
         payload_json = json.dumps(payload, ensure_ascii=False, allow_nan=False)  # pragma: no mutate
         if len(payload_json.encode()) > MAX_PAYLOAD_BYTES or len(system.encode()) > 64 * 1024:
@@ -270,8 +268,9 @@ class ModelAnswers:
             self.run["usage"]["tokens"] += spent
             if cancelled and pending:
                 # A call in flight when the run stopped may still be billed and will never be metered: charge the most it
-                # could cost, on top of what the attempts before it were metered at.
-                self.run["usage"]["tokens"] += bound
+                # could cost, on top of what the attempts before it were metered at. The reservation is an estimate that
+                # no metering will correct; upper_bound is counted only here, on the rare cancellation.
+                self.run["usage"]["tokens"] += upper_bound(instruction, payload, response_schema, profile["max_output_tokens"])
                 self.run["usage"]["tokens_estimated"] = True
             if not keep:
                 self.run["reserved_tokens"] = max(0, self.run.get("reserved_tokens", 0) - held)

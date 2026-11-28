@@ -2807,6 +2807,20 @@ async def test_the_operators_fallback_answers_a_refusal_or_truncation_and_says_s
     assert again.answered_by=="local" and len(calls)==2
 
 
+def test_limits_records_several_capability_limits_each_once(engine):
+    run={"limitations":["kept"]}
+    # Extend past what is already recorded, and drop duplicates both against it and within the batch.
+    engine.limits(run,["kept","new","new","later"])
+    assert run["limitations"]==["kept","new","later"]
+    # A second batch keeps only what is not there yet, in order.
+    engine.limits(run,["later","last"])
+    assert run["limitations"]==["kept","new","later","last"]
+    # An empty run grows its own list.
+    fresh={}
+    engine.limits(fresh,["only","only"])
+    assert fresh["limitations"]==["only"]
+
+
 @pytest.mark.parametrize("failure",[{"code":"schema_validation"},{"code":"refusal","fallback":True}])
 async def test_other_failures_and_a_failing_fallback_still_stop_the_call(engine,failure):
     from vibe_audit.providers import ProviderError
