@@ -32,7 +32,10 @@ def _read_checked(root: Path, relative: str, expected: str) -> bytes:
         data = path.read_bytes()
     except OSError as exc:
         raise CatalogError(f"Catalog file unavailable: {relative}") from exc
-    if len(data) > 30_000_000 or hashlib.sha256(data).hexdigest() != expected:
+    # Past the size limit a file is refused whatever its hash: no line ending explains that.
+    if len(data) > 30_000_000:
+        raise CatalogError(f"Catalog integrity mismatch: {relative}")
+    if hashlib.sha256(data).hexdigest() != expected:
         if hashlib.sha256(data.replace(b"\r\n", b"\n")).hexdigest() == expected:
             raise CatalogError(f"Catalog integrity mismatch: {relative} has converted line endings; check it out again with the repository .gitattributes")
         raise CatalogError(f"Catalog integrity mismatch: {relative}")
@@ -74,7 +77,9 @@ class CatalogRegistry:
             identifier = "ASVS-" + identifier
         if not isinstance(identifier, str) or identifier not in self._entries:
             raise CatalogError(f"Unknown or unversioned standard identifier: {identifier!r}")
-        return copy.deepcopy(self._entries[identifier])
+        # An entry holds only strings, integers and nulls (CATALOG_ENTRY_SCHEMA allows nothing else), so a shallow copy
+        # is the same as a deep one: that mutant cannot be told apart.
+        return copy.deepcopy(self._entries[identifier])  # pragma: no mutate
 
     def validate_ids(self, identifiers: list[str]) -> list[dict]:
         if not isinstance(identifiers, list) or len(identifiers) > 1000:
@@ -82,7 +87,9 @@ class CatalogRegistry:
         return [self.resolve(identifier) for identifier in identifiers]
 
     def entries(self, standard: str | None = None) -> list[dict]:
-        return [copy.deepcopy(e) for e in self._entries.values() if standard is None or e["standard"] == standard]
+        chosen = [e for e in self._entries.values() if standard is None or e["standard"] == standard]
+        # As in resolve(): an entry holds nothing nested, so a shallow copy is the same as a deep one.
+        return [copy.deepcopy(e) for e in chosen]  # pragma: no mutate
 
     def manifest(self) -> dict:
         return copy.deepcopy(self._manifest)

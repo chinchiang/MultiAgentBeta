@@ -162,6 +162,7 @@ ZH.update({
     "Worker cleanup was attested by the local operator, not confirmed by the supervisor": "worker 清理是本機操作者確認的，不是 supervisor 確認的",
     "Source-to-deployment association is unverified: deployment identity or verification header missing": "原始碼與部署的對應未經驗證：缺少部署識別或驗證 header",
     "Scanner and model intake omitted skipped directories, links and repository-controlled ignore/config files": "掃描器與模型的輸入省略了略過的目錄、連結，以及儲存庫控制的 ignore／設定檔",
+    "Scanner and model intake skipped links named as source files": "掃描器與模型的輸入略過了以原始碼命名的連結",
     "Scanner did not establish coverage": "掃描器沒有建立涵蓋範圍",
     "Scanner finding location is outside the staged snapshot": "掃描器發現的位置不在 staging 快照內",
     "Automated threats without a provided case were not tested": "沒有提供案例的自動化威脅未經測試",
@@ -188,6 +189,9 @@ ZH.update({
     "Unreadable file omitted": "省略無法讀取的檔案",
     "No eligible source files were included.": "沒有納入任何符合條件的原始碼檔案。",
     "Additional omitted-file gaps suppressed at bounded gap limit.": "已達缺口數上限，其餘省略檔案的缺口不再列出。",
+    "Additional exclusions suppressed at bounded limit.": "已達上限，其餘依設計排除的項目不再列出。",
+    "Snapshot is bounded; route extraction and secret redaction are heuristic, not exhaustive. Repository code was not executed.":
+        "快照有上限；路由抽取與機密遮蔽都是啟發式，並非窮盡。未執行儲存庫的程式碼。",
     # sandbox.py and worker_runtime.py: scanner gaps and reasons
     "Semgrep reported analysis errors; affected coverage is incomplete.": "Semgrep 回報分析錯誤；受影響的涵蓋範圍不完整。",
     "Semgrep did not provide a non-empty scanned path list.": "Semgrep 沒有提供非空的已掃描路徑清單。",
@@ -521,6 +525,7 @@ PATTERNS = [
     (r"Static tool completed: (.+) / (\w+)", "靜態工具已結束：{0}／{1}"),
     (r"Scanner staging copy could not be removed: (.+)", "無法刪除掃描器的 staging 副本：{0}"),
     (r"(.+): dropped (\d+) citation\(s\) of (.+) that do not match the frozen snapshot", "{0}：捨棄了 {2} 的 {1} 個與凍結快照不符的引用"),
+    (r"(\d+) finding\(s\) named a file or line outside the staged snapshot and were not imported", "{0} 筆發現指向暫存快照之外的檔案或行號，未匯入"),
     (r"(.+): dropped (\d+) source reference\(s\) of '(.+)' that do not match the frozen snapshot", "{0}：捨棄了「{2}」的 {1} 個與凍結快照不符的原始碼參照"),
     (r"(.+): '(.+)' named a location outside the frozen source; the location was removed", "{0}：「{1}」指向凍結原始碼以外的位置；該位置已移除"),
     (r"(.+) received full text only for files that findings cite; the model payload limit omitted the other files' text",

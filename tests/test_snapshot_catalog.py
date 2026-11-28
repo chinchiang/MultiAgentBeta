@@ -32,8 +32,14 @@ def digest_of(files):
     return hashlib.sha256(json.dumps(material, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
+def excluded(result):
+    """What the snapshot left out by design: its limitations but for the fixed note on how it is bounded and the
+    operator's notice of literals left unredacted, wherever either stands."""
+    return [item for item in result["limitations"] if item != snapshot.BOUNDED and not item.startswith("Operator-declared test literals")]
+
+
 def gaps_read_in_chinese(result):
-    assert all(zh(gap) is not None for gap in result["gaps"]), result["gaps"]
+    assert all(zh(item) is not None for item in result["gaps"] + result["limitations"]), (result["gaps"], result["limitations"])
 
 
 def test_snapshot_is_sorted_hashed_and_summed_exactly(tmp_path):
@@ -95,10 +101,23 @@ def test_windows_errors_that_mean_nothing_is_there_read_as_missing_and_others_ra
 def test_gap_list_is_bounded_with_one_closing_note(tmp_path, monkeypatch):
     monkeypatch.setattr(snapshot, "MAX_GAPS", 3)
     for index in range(5):
+        write(tmp_path, f"{index}.py", "x" * 11)
+    monkeypatch.setattr(snapshot, "MAX_FILE_BYTES", 10)
+    result = snapshot_source(str(tmp_path))
+    assert result["gaps"] == [f"File/byte limit omitted: {index}.py" for index in range(3)] + \
+        ["Additional omitted-file gaps suppressed at bounded gap limit."]
+    gaps_read_in_chinese(result)
+
+
+def test_exclusions_are_bounded_with_one_closing_note(tmp_path, monkeypatch):
+    monkeypatch.setattr(snapshot, "MAX_GAPS", 3)
+    write(tmp_path, "app.py")
+    for index in range(5):
         write(tmp_path, f".env.{index}", "NEVER_READ")
     result = snapshot_source(str(tmp_path))
-    assert result["gaps"] == [f"Secret-designated file excluded without reading: .env.{index}" for index in range(3)] + \
-        ["Additional omitted-file gaps suppressed at bounded gap limit."]
+    # Left out by design, they are no gap: the review covered all it was meant to.
+    assert result["gaps"] == [] and excluded(result) == [f"Secret-designated file excluded without reading: .env.{index}" for index in range(3)] + \
+        ["Additional exclusions suppressed at bounded limit."]
     gaps_read_in_chinese(result)
 
 
@@ -133,7 +152,8 @@ def test_depth_limit_and_excluded_directories(tmp_path, monkeypatch):
     write(tmp_path, "node_modules/m.js", "NEVER_READ")
     result = snapshot_source(str(tmp_path))
     assert [f["path"] for f in result["files"]] == ["d1/a.py"]
-    assert result["gaps"] == ["Excluded directory: credentials", "Excluded directory: node_modules", "Depth limit: d1/d2"]
+    assert excluded(result) == ["Excluded directory: credentials", "Excluded directory: node_modules"]
+    assert result["gaps"] == ["Depth limit: d1/d2"]
     gaps_read_in_chinese(result)
 
 
@@ -184,7 +204,9 @@ def test_binary_non_utf8_bom_and_redacted_files(tmp_path):
         ("bom.py", "bom = 1\n", False), ("config.py", '{"password": "[REDACTED]"}\n', True)]
     assert result["files"][1]["sha256"] == hashlib.sha256(b'{"password": "hunter2"}\n').hexdigest()
     assert result["files"][1]["content_sha256"] == hashlib.sha256(b'{"password": "[REDACTED]"}\n').hexdigest()
-    assert result["gaps"] == ["Binary content omitted: bin.py", "Secret-like literals redacted: config.py", "Non-UTF-8 file omitted: latin.py"]
+    # Named as source but not readable as UTF-8 text, they were not reviewed: gaps. Redaction leaves the file read.
+    assert result["gaps"] == ["Binary content omitted: bin.py", "Non-UTF-8 file omitted: latin.py"]
+    assert excluded(result) == ["Secret-like literals redacted: config.py"]
     gaps_read_in_chinese(result)
 
 
@@ -381,10 +403,11 @@ def test_snapshot_states_how_many_declared_literals_it_left_unredacted(tmp_path)
     (tmp_path / ".env").write_text("SECRET=x\n", newline="\n")
     result = snapshot_source(str(tmp_path), frozenset({"fixture-web-a", "never-in-source"}))
     assert result["files"][0]["content"] == "token = 'fixture-web-a'\n" and result["files"][0]["redacted"] is False
-    # Counted over the whole snapshot, and listed before every other gap.
-    assert result["gaps"][0] == "Operator-declared test literals left unredacted: 1 of 2 appear in the snapshot"
-    assert len(result["gaps"]) > 1
-    assert not any("unredacted" in gap for gap in snapshot_source(str(tmp_path))["gaps"])
+    # The operator's choice, so no gap: counted over the whole snapshot, and listed before every other limitation.
+    assert result["gaps"] == []
+    assert result["limitations"][0] == "Operator-declared test literals left unredacted: 1 of 2 appear in the snapshot"
+    assert result["limitations"][-1] == "Secret-designated file excluded without reading: .env"
+    assert not any("unredacted" in item for item in snapshot_source(str(tmp_path))["limitations"])
 
 # --- catalog ---------------------------------------------------------------------------------------------------------
 
@@ -473,6 +496,20 @@ def test_catalog_files_must_sit_under_the_root_unlinked_and_present(tmp_path):
     catalogs.refused("Catalog path escapes its configured root")
     catalogs.collection()["file"] = "absent.json"
     catalogs.refused("Catalog file unavailable: absent.json")
+
+
+def test_a_catalog_file_past_the_size_limit_is_refused_even_when_its_hash_matches(tmp_path):
+    catalogs = Catalogs(tmp_path)
+    source = catalogs.collection()["sources"][0]
+    def pin(size):
+        data = b"x" * size
+        (catalogs.root / source["file"]).write_bytes(data)
+        source["sha256"] = hashlib.sha256(data).hexdigest()
+    # 30,000,000 bytes is the most a catalog file may hold: at the limit it is read, one byte past it is not.
+    pin(30_000_000)
+    CatalogRegistry(catalogs.save())
+    pin(30_000_001)
+    catalogs.refused(f"Catalog integrity mismatch: {source['file']}")
 
 
 def test_identifier_lookups_are_bounded_and_copied():

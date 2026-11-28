@@ -21,6 +21,10 @@ MAX_ENTRIES = 5000
 MAX_DEPTH = 12
 MAX_GAPS = 256
 _SKIP_DIRS = {".git", ".hg", ".svn", "node_modules", ".venv", "venv", "env", "dist", "build", ".next", ".cache", "__pycache__", ".idea", ".vscode", ".ssh", ".aws", ".azure", ".config", ".docker", ".kube", ".gnupg", ".terraform"}
+# Every snapshot's first capability limit, after the operator's notice when literals were left unredacted.
+BOUNDED = "Snapshot is bounded; route extraction and secret redaction are heuristic, not exhaustive. Repository code was not executed."
+# How the operator's notice of literals left unredacted opens: the report shows it in its header as well.
+UNREDACTED = "Operator-declared test literals left unredacted"
 _TEXT_SUFFIXES = {".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json", ".yaml", ".yml", ".toml", ".md", ".html", ".css", ".sql", ".txt", ".go", ".rs", ".java", ".cs", ".php", ".rb", ".tf", ".sh", ".ps1"}
 _SECRET_SUFFIXES = {".pem", ".key", ".p12", ".pfx", ".jks", ".keystore", ".kdbx", ".crt", ".cer"}
 _SECRET_NAMES = {"credentials", "credentials.json", "credential.json", "secrets.json", "secrets.yaml", "secrets.yml", "id_rsa", "id_ed25519", "id_ecdsa", "id_dsa", ".npmrc", ".pypirc", ".netrc", "service-account.json", "service_account.json"}
@@ -118,6 +122,11 @@ def _safe_ancestors(path: Path) -> bool:
     return all(not _linklike(item) for item in (path, *path.parents))
 
 
+def _source_name(path: Path) -> bool:
+    """Whether the snapshot reads a file of this name: a text suffix, or a build file named by convention."""
+    return path.suffix.lower() in _TEXT_SUFFIXES or path.name.lower() in {"dockerfile", "makefile"}
+
+
 def _secret_path(path: Path) -> bool:
     name = path.name.lower()
     return (name.startswith(".env") or name in _SECRET_NAMES
@@ -161,11 +170,22 @@ def snapshot_source(path: str, keep: frozenset[str] = frozenset()) -> dict:
     entries_seen = 0
     stack = [(root, 0)]
 
+    # Source the snapshot could not read is a gap: the review did not cover it, and that includes a file named as source
+    # that is a link or is not UTF-8 text. What it leaves out by design (other links, excluded and secret paths,
+    # redacted literals) is left out, a limitation.
+    noted: list[str] = []
+
     def gap(message: str) -> None:
         if len(gaps) < MAX_GAPS:
             gaps.append(message)
         elif len(gaps) == MAX_GAPS:
             gaps.append("Additional omitted-file gaps suppressed at bounded gap limit.")
+
+    def left_out(message: str) -> None:
+        if len(noted) < MAX_GAPS:
+            noted.append(message)
+        elif len(noted) == MAX_GAPS:
+            noted.append("Additional exclusions suppressed at bounded limit.")
 
     while stack:
         directory, depth = stack.pop()
@@ -174,6 +194,7 @@ def snapshot_source(path: str, keep: frozenset[str] = frozenset()) -> dict:
             break
         try:
             if not _safe_ancestors(directory):
+                # Found safe when listed, it is not now: it changed during the walk and was not read, a gap.
                 gap("Skipped linked/reparse directory.")
                 continue
             with os.scandir(directory) as iterator:
@@ -190,20 +211,24 @@ def snapshot_source(path: str, keep: frozenset[str] = frozenset()) -> dict:
             relative = candidate.relative_to(root).as_posix()
             try:
                 if _linklike(candidate):
-                    gap(f"Skipped symlink/reparse path: {relative}")
+                    # A link named as source stands for source nobody read, a gap; any other link is left out by design.
+                    if _source_name(candidate):
+                        gap(f"Skipped symlink/reparse path: {relative}")
+                    else:
+                        left_out(f"Skipped symlink/reparse path: {relative}")
                     continue
                 if entry.is_dir(follow_symlinks=False):  # pragma: no mutate (a symlink was refused just above)
                     if entry.name.lower() in _SKIP_DIRS or _secret_path(candidate):
-                        gap(f"Excluded directory: {relative}")
+                        left_out(f"Excluded directory: {relative}")
                     elif depth >= MAX_DEPTH:
                         gap(f"Depth limit: {relative}")
                     else:
                         stack.append((candidate, depth + 1))
                     continue
                 if _secret_path(candidate):
-                    gap(f"Secret-designated file excluded without reading: {relative}")
+                    left_out(f"Secret-designated file excluded without reading: {relative}")
                     continue
-                if candidate.suffix.lower() not in _TEXT_SUFFIXES and candidate.name.lower() not in {"dockerfile", "makefile"}:
+                if not _source_name(candidate):
                     continue
                 info = candidate.lstat()
                 if not stat.S_ISREG(info.st_mode) or info.st_nlink > 1:
@@ -230,6 +255,7 @@ def snapshot_source(path: str, keep: frozenset[str] = frozenset()) -> dict:
                 if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
                     gap(f"File changed during read: {relative}")
                     continue
+                # Named as source but not readable as UTF-8 text (UTF-16 carries NUL bytes): source nobody read, a gap.
                 if b"\0" in raw:
                     gap(f"Binary content omitted: {relative}")
                     continue
@@ -240,7 +266,7 @@ def snapshot_source(path: str, keep: frozenset[str] = frozenset()) -> dict:
                     continue
                 content = redact_text(original, keep)
                 if content != original:
-                    gap(f"Secret-like literals redacted: {relative}")
+                    left_out(f"Secret-like literals redacted: {relative}")
                 files.append({"path": relative, "content": content, "sha256": hashlib.sha256(raw).hexdigest(), "redacted": content != original, "content_sha256": hashlib.sha256(content.encode()).hexdigest()})
                 total_bytes += len(raw)
                 routes.extend(_routes(relative, content))
@@ -251,9 +277,10 @@ def snapshot_source(path: str, keep: frozenset[str] = frozenset()) -> dict:
     digest = hashlib.sha256(json.dumps(material, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     if not files:
         gap("No eligible source files were included.")
+    limitations = [BOUNDED, *noted]
     if keep:
         found = sum(any(item in f["content"] for f in files) for item in keep)
-        # First and outside the gap limit: the readers of the report must see that redaction was relaxed.
-        gaps.insert(0, f"Operator-declared test literals left unredacted: {found} of {len(keep)} appear in the snapshot")
-    return {"digest": digest, "files": files, "gaps": gaps, "routes": routes[:500], "bytes_read": total_bytes,
-            "limitations": ["Snapshot is bounded; route extraction and secret redaction are heuristic, not exhaustive. Repository code was not executed."]}
+        # The operator's own choice, so no gap; but first and outside the limit: the readers of the report must see
+        # that redaction was relaxed.
+        limitations.insert(0, f"{UNREDACTED}: {found} of {len(keep)} appear in the snapshot")
+    return {"digest": digest, "files": files, "gaps": gaps, "routes": routes[:500], "bytes_read": total_bytes, "limitations": limitations}
