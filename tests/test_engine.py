@@ -2743,6 +2743,43 @@ async def test_each_reviewer_limit_names_the_reviewer_that_reported_it(engine):
     assert run["reviews"][1]["agent_id"]+": already attributed" in run["limitations"]
 
 
+async def test_adjudication_merges_same_weakness_findings_despite_different_titles(engine):
+    run=await finished_demo(engine)
+    run.update(mode="demo",findings=[],artifacts=[],gaps=[])
+    for review in run["reviews"]:
+        review.pop("evidence",None)
+    # Two reviewers report the same weakness (same file/line/cwe) but word the title differently.
+    run["reviews"][0].update(gaps=[],findings=[dict(id="fa",title="SQL injection in login",severity="high",description="d",
+                                                    file="app/auth.py",line=42,cwe="CWE-89",agent_ids=["reviewer-a"],evidence_ids=[],threat_ids=[])])
+    run["reviews"][1].update(gaps=[],findings=[dict(id="fb",title="Unsanitized query parameter reaches the SQL layer",severity="high",description="d",
+                                                    file="app/auth.py",line=42,cwe="CWE-89",agent_ids=["reviewer-b"],evidence_ids=[],threat_ids=[])])
+    run["reviews"]=run["reviews"][:2]
+    await engine._adjudication(run)
+    # One finding, carrying both reviewers and both sealed evidence records.
+    assert len(run["findings"])==1
+    merged=run["findings"][0]
+    assert merged["agent_ids"]==["reviewer-a","reviewer-b"]
+    assert len(merged["evidence_ids"])==2
+
+
+async def test_adjudication_keeps_unlocated_and_distinct_findings_separate(engine):
+    run=await finished_demo(engine)
+    run.update(mode="demo",findings=[],artifacts=[],gaps=[])
+    for review in run["reviews"]:
+        review.pop("evidence",None)
+    # Two findings with no structured identity (file/line/cwe all None) must stay distinct, not collapse into one.
+    run["reviews"][0].update(gaps=[],findings=[dict(id="u1",title="Unclear secret handling",severity="low",description="d",
+                                                    file=None,line=None,cwe=None,agent_ids=["reviewer-a"],evidence_ids=[],threat_ids=[])])
+    run["reviews"][1].update(gaps=[],findings=[dict(id="u2",title="Weak session entropy",severity="low",description="d",
+                                                    file=None,line=None,cwe=None,agent_ids=["reviewer-b"],evidence_ids=[],threat_ids=[]),
+                                               dict(id="d1",title="Path traversal",severity="high",description="d",
+                                                    file="app/files.py",line=10,cwe="CWE-22",agent_ids=["reviewer-b"],evidence_ids=[],threat_ids=[])])
+    run["reviews"]=run["reviews"][:2]
+    await engine._adjudication(run)
+    assert {f["title"] for f in run["findings"]}=={"Unclear secret handling","Weak session entropy","Path traversal"}
+    assert len(run["findings"])==3
+
+
 def fallback_models(**fallback):
     endpoint="http://127.0.0.1:9/v1"
     models=[{"id":"commander","role":"commander","provider":"openai_compatible","model_id":"m-c","family":"fc","endpoint":endpoint},
