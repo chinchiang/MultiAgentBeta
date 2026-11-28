@@ -460,8 +460,8 @@ async def test_resume_skips_completed_stages_from_the_store_not_a_checkpoint(eng
     assert run["stage"]=="complete" and len(run["executions"])==3
     original_ids=[e["id"] for e in run["executions"]]
     original_usage=dict(run["usage"])
-    # A fresh engine starts with an empty in-memory checkpointer, so a correct resume can only come from the stored
-    # run records (completed_stages), never from a graph checkpoint. It must skip every done stage and re-run nothing.
+    # A fresh engine shares no in-memory state with the one that ran, so a correct resume can only come from the
+    # stored run records (completed_stages), never from graph state. It must skip every done stage and re-run nothing.
     restarted=Engine(engine.store)
     restarted.start(run["id"],resume=True)
     await restarted.tasks[run["id"]]
